@@ -83,10 +83,6 @@ export interface WorkspaceState {
   pathBeliefs: Map<string, string>;
   planPath?: string | null;
   reviewOnly?: boolean;
-
-  reviewLocked?: boolean;
-  askLocked?: boolean;
-
   plan?: import('../agent/planning/plan.ts').Plan | null;
   /** The plan text the model gave present_plan, waiting to be read and put to the user for approval. */
   presentedPlan?: string | null;

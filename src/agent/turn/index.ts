@@ -150,11 +150,7 @@ export async function executeTurn({
   const askOnly = askMode && !reviewOnly;
   const readOnly = reviewOnly || askOnly;
 
-  if (workspace.state) {
-    workspace.state.reviewOnly = readOnly;
-    workspace.state.reviewLocked = reviewMode;
-    (workspace.state as any).askLocked = askMode;
-  }
+  if (workspace.state) workspace.state.reviewOnly = readOnly;
   if (reviewOnly) system.push({ role: 'system' as const, content: REVIEW_MODE });
   else if (askOnly) system.push({ role: 'system' as const, content: ASK_MODE });
 
