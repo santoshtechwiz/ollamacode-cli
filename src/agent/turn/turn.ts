@@ -5,7 +5,7 @@ import { isContextLengthError, type GatewayCallResult } from '../../model/gatewa
 import type { ContextStore } from '../../context/contracts';
 import type { Message, ToolResult, ToolSchema } from '../../types';
 import { compactForRecovery } from '../../context/builder';
-import type { ToolProfile } from '../../context/tool-surface';
+import { selectAlwaysToolDefs, selectToolDefs, type ToolProfile } from '../../context/tool-surface';
 import { type ToolExecutor } from '../../tool/execution/executor';
 import { defaultRegistry } from '../../tool/execution/registry';
 import { ToolResolver } from '../../tool/execution/tool-resolver';
@@ -189,24 +189,13 @@ export async function runTurn(
         callbacks.onCommandOutput,
     });
 
-  const schema = await import(
-    '../../context/tool-surface.ts'
-  );
-
   // On-demand discovery: the request carries the index, the always-tools and whatever the conversation has loaded.
-  const discoverable = new Set(
-    schema
-      .selectToolDefs({
-        core: toolProfile.core,
-        readOnly,
-      })
-      .map((def) => def.name),
-  );
+  const discoverable = new Set(selectToolDefs({ core: toolProfile.core, readOnly }).map((def) => def.name));
 
   const resolver = new ToolResolver({
     registry: defaultRegistry,
     compact: toolProfile.compact,
-    always: schema.selectAlwaysToolDefs({
+    always: selectAlwaysToolDefs({
       core: toolProfile.core,
       readOnly,
       always: toolProfile.always,
