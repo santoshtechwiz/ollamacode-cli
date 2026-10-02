@@ -12,6 +12,14 @@ export type ToolDecision =
   | { kind: 'REJECT'; reason: string; hint: string }
   | { kind: 'STOP'; reason: StopReason };
 
+/** A failure the same arguments would only reproduce. */
+const RETRY_BLOCKING_CODES: readonly string[] = [
+  TOOL_ERROR_CODE.EINVAL,
+  TOOL_ERROR_CODE.EAMBIGUOUS,
+  TOOL_ERROR_CODE.ENOMATCH,
+  TOOL_ERROR_CODE.EDENIED,
+];
+
 function actuallyRan(call: ToolCallRecord): boolean {
   if (call.isRepeat) return false;
   const code = call.result?.code;
@@ -97,33 +105,15 @@ export function decideToolExecution(
     return { kind: 'REUSE', priorResult: reusedResult(prior.result, reason), reason };
   }
 
-  // A refusal that only loaded the schema is not an attempt the model has already made.
-  // Counting it would lock the tool for the rest of the turn, which is the opposite of
-  // what refusing it was for.
-  const attempted = (c: (typeof turnState.toolCalls)[number]): boolean => !c.schemaPending;
+  // The same call failed in this world. A refusal that only loaded the schema is not an attempt the
+  // model has already made: counting it would lock the tool for the rest of the turn, which is the
+  // opposite of what refusing it was for.
+  const failedHere = (c: ToolCallRecord): boolean => !c.schemaPending && sameCall(c) && !c.result?.ok && c.world === world;
 
   const priorFailed = turnState.toolCalls.find(
-    (c) =>
-      attempted(c) &&
-      sameCall(c) &&
-      actuallyRan(c) &&
-      !c.result?.ok &&
-      c.world === world &&
-      c.result?.code &&
-      (c.result.code === TOOL_ERROR_CODE.EINVAL ||
-        c.result.code === TOOL_ERROR_CODE.EAMBIGUOUS ||
-        c.result.code === TOOL_ERROR_CODE.ENOMATCH ||
-        c.result.code === TOOL_ERROR_CODE.EDENIED)
+    (c) => failedHere(c) && actuallyRan(c) && RETRY_BLOCKING_CODES.includes(c.result?.code ?? ''),
   );
-
-  const priorDeclined = turnState.toolCalls.find(
-    (c) =>
-      attempted(c) &&
-      sameCall(c) &&
-      !actuallyRan(c) &&
-      !c.result?.ok &&
-      c.world === world
-  );
+  const priorDeclined = turnState.toolCalls.find((c) => failedHere(c) && !actuallyRan(c));
 
   if (priorFailed || priorDeclined) {
     return {
