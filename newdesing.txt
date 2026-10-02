@@ -1,0 +1,232 @@
+Based on my analysis of the current architecture, here's the comprehensive redesign plan:
+Turn Architecture Redesign Plan
+Current Architecture Summary
+Core Modules:
+- src/agent/turn/turn.ts (519 lines) - Main orchestration loop
+- src/agent/turn/turn-state.ts (211 lines) - State management with many helper functions
+- src/agent/turn/scope.ts (326 lines) - Task scoping and plan handling
+- src/agent/turn/plan-loop.ts (186 lines) - Plan approval loop
+- src/agent/turn/index.ts (399 lines) - Entry point executeTurn
+- src/agent/turn/helpers.ts, config.ts, context.ts, prewarm.ts - Supporting modules
+Key Complexity Areas:
+1. Tool deduplication - 7+ functions: findCallById, findPriorCall, findPriorNoOp, findPriorDeclined, findPriorSequentialThought, attemptCount, lastRun, MAX_RUNS_PER_SIGNATURE
+2. Progress tracking - Weak hasProgress() based on display text, simple noProgressStreak counter
+3. Verification state - normalizeCommand, setVerification, getVerification, isVerificationValid (30-second TTL)
+4. Notices/verdicts - Many notice types in prompts/notices.ts, mixed with stop reasons
+5. State duplication - Multiple overlapping flags across TurnState, AgentStateBox, workspace.state
+Redesign Plan
+1. Simplify turn.ts - Focus on Orchestration Only
+New Structure:
+runTurn() {
+  while (!shouldStop) {
+    // 1. Build request
+    request = buildModelRequest(history, tools, state)
+    
+    // 2. Call model
+    response = await gateway.stream(request)
+    
+    // 3. Process tool calls (batch)
+    results = await processToolCalls(response.toolCalls, state)
+    
+    // 4. Record in history
+    recordExchange(history, response.toolCalls, results)
+    
+    // 5. Ask progress layer for decision
+    decision = progressLayer.decide(state, results)
+    
+    // 6. Act on decision
+    shouldStop = decision === STOP || decision === COMPLETE
+    if (decision === ACT) { /* continue loop */ }
+    if (decision === VERIFY) { /* run verification */ }
+  }
+  return buildResult(state)
+}
+Remove from turn.ts:
+- All findPrior* logic → move to ToolExecutionDecider
+- Progress streak logic → move to ProgressTracker
+- oscillating, announced set, askedToAnswer flag
+- reusedResult, repeatedThoughtResult, noOpResult, notRunRepeatResult, disabledResult
+- ranSummary, outcomeLine, isStructuredBlock
+- All notice/verdict emission → centralize in progress layer
+2. New Module: ToolExecutionDecider (replaces turn-state.ts helpers)
+Single decision function:
+type ToolDecision = 
+  | { kind: 'EXECUTE' }
+  | { kind: 'REUSE'; priorResult: ToolResult; reason: string }
+  | { kind: 'REJECT'; reason: string; hint: string }
+  | { kind: 'STOP'; reason: StopReason }
+
+function decideToolExecution(
+  call: ToolCall,
+  turnState: TurnState,
+  workspaceState: WorkspaceState
+): ToolDecision
+Consolidates:
+- findCallById → exact callId match
+- findPriorCall → identical signature + actually ran + file unchanged
+- findPriorDeclined → identical signature + never ran (refused/cancelled)
+- findPriorNoOp → file-targeted + ESKIPPED + file unchanged
+- findPriorSequentialThought → sequential thought number without revision
+- attemptCount / MAX_RUNS_PER_SIGNATURE → oscillation detection (max 2 runs)
+- lastRun → for reuse result
+Key semantic distinctions:
+- REUSE (EXECUTE → succeeded): Same call, same args, file unchanged → show prior result
+- REUSE (failed/declined): Same call, same args, never succeeded → reject with reason
+- REJECT (oscillating): 3rd attempt at same signature → STOP with GUARD_STUCK
+- EXECUTE: New call or file changed since last run
+3. New Module: ProgressTracker (replaces hasProgress/noProgressStreak)
+Explicit Phase Model:
+type Phase = 'OBSERVE' | 'REPRODUCE' | 'DIAGNOSE' | 'ACT' | 'VERIFY' | 'COMPLETE'
+
+interface ProgressDecision {
+  action: 'CONTINUE' | 'ACT' | 'VERIFY' | 'COMPLETE' | 'STOP'
+  phase: Phase
+  reason: string
+  evidence: string[]
+}
+
+class ProgressTracker {
+  private phase: Phase = 'OBSERVE'
+  private evidence: Evidence[] = []
+  
+  recordResult(call: ToolCall, result: ToolResult): void
+  decide(): ProgressDecision
+  
+  // Phase transitions:
+  // OBSERVE → REPRODUCE (after failed test/error found)
+  // REPRODUCE → DIAGNOSE (after root cause identified)  
+  // DIAGNOSE → ACT (after fix planned)
+  // ACT → VERIFY (after mutation made)
+  // VERIFY → COMPLETE (test passes) or DIAGNOSE (test fails)
+  // COMPLETE → done
+}
+Evidence Types:
+- READ / GREP / GLOB → observation (count toward OBSERVE budget)
+- EDIT / WRITE / SHELL(mutating) → ACT phase
+- SHELL(test/lint/build) → VERIFY phase
+- SEQUENTIAL_THINKING → DIAGNOSE phase
+Prevents Read/Grep loops:
+- Track observationCount in OBSERVE phase
+- After N observations without ACT transition → force ACT or STOP
+- Not arbitrary "after N reads" - based on phase transition logic
+4. Verification State - Make It Work Properly
+Current problems:
+- normalizeCommand uses string matching (fails on npm test vs npm test 2>&1)
+- 30-second TTL too short
+- No workspace state invalidation
+New Design:
+interface VerificationRecord {
+  intent: 'test' | 'lint' | 'build' | 'typecheck'  // normalized intent
+  fingerprint: WorkspaceFingerprint  // relevant files hash
+  passed: boolean
+  timestamp: number
+}
+
+function getVerificationKey(call: ToolCall): string
+function getWorkspaceFingerprint(call: ToolCall, workspace: Workspace): string
+function isVerificationValid(record: VerificationRecord, workspace: Workspace): boolean
+Normalization:
+- npm test, npm test 2>&1, npm test 2>&1 | tail -100 → same intent 'test'
+- Fingerprint: hash of package.json, test files, config files
+- Invalidate on ANY relevant file change (not just mutationCount)
+5. Notices/Verdicts - Consolidate to Three Layers
+STATE (what happened)      → TurnState, ToolCallRecord
+    ↓
+DECISION (what next)       → ProgressTracker.decide(), ToolExecutionDecider.decide()
+    ↓
+NOTICE (how communicated)  → single emitNotice() call per decision
+Remove:
+- onWrapUp, onNotice, onToolPhase, onSegmentBreak callbacks from turn loop
+- notices.ts verdicts → keep only user-facing messages
+- STOP_SUMMARY, OUTCOME_SUMMARY → single formatDecision() function
+- ANSWER_NOW, repeatFailureNotice → generated from Decision
+6. Context/Memory Cleanup
+Current issues:
+- Duplicate tool results in history (reused entries)
+- Ephemeral messages not cleaned
+- Listeners/timers/closures in callbacks
+Fixes:
+- recordExchange: Don't add assistant message for reused calls
+- ContextStore: Auto-clean ephemeral on turn end (already has dropEphemeral)
+- Callbacks: Pass plain functions, no closures over turn state
+- Single cleanup() call on turn end (success/failure/cancel/stop)
+7. Model Output Limits
+Current: Reasoning consumes budget → retry without thinking (works)
+Keep but make explicit:
+if (finishReason === 'length' && reasoning && !thinkingOff) {
+  thinkingOff = true
+  continue  // retry WITHOUT thinking, from SAME state
+}
+- Don't reset turn state
+- Resume from existing toolCalls, answer, iteration
+8. State Ownership - Single Source of Truth
+Consolidate:
+Current Location	Move To
+TurnState.noProgressStreak	ProgressTracker
+TurnState.verification	VerificationStore (per-workspace, not per-turn)
+TurnState.answer	Keep in TurnState
+TurnState.stopReason	Keep in TurnState
+AgentStateBox.state	Keep (agent lifecycle)
+workspace.state.plan	Keep (plan lifecycle)
+workspace.state.mutationCount	Keep (workspace mutation counter)
+Delete:
+- turnState.telemetry → move to callback onTelemetry
+- oscillating, announced, askedToAnswer flags
+- noProgressStreak from TurnState
+9. Cleanup - Obsolete Code to Delete
+Functions to remove from turn-state.ts:
+- findPriorNoOp → merged into ToolExecutionDecider
+- findPriorDeclined → merged
+- findPriorSequentialThought → merged
+- attemptCount → merged
+- lastRun → merged
+- hasProgress → replaced by ProgressTracker.recordResult
+- markProgress / markNoProgress → replaced
+- NO_PROGRESS_LIMIT → replaced by phase budget
+- normalizeCommand / setVerification / getVerification / isVerificationValid → replaced by VerificationStore
+Functions to remove from turn.ts:
+- reusedResult, repeatedThoughtResult, noOpResult, notRunRepeatResult, disabledResult
+- ranSummary, outcomeLine, isStructuredBlock
+- firstLine, truncateMiddle, truncate
+Modules to review for deletion:
+- src/agent/turn/scope.ts - split: task scoping → keep, plan notices → move
+- src/agent/turn/plan-loop.ts - keep (plan approval is separate concern)
+- src/prompts/notices.ts - drastically reduce, keep only user-facing messages
+Test Coverage Requirements (from user's constraints)
+Add focused regression tests for:
+ 1. Model reading forever without acting - ProgressTracker forces ACT after observation budget
+ 2. Debugging Read/Grep loop - Phase transitions: DETECT → REPRODUCE → DIAGNOSE → ACT
+ 3. continue resuming pending fix - Model output limit retry preserves turn state
+ 4. Successful test not rerun without state change - VerificationStore fingerprint match
+ 5. Test rerunning after relevant edit - VerificationStore fingerprint mismatch
+ 6. Truncated command output - Structured result with exitCode, stdout, stderr, truncated flag
+ 7. Invalid tool arguments - Validation error returned, model corrects, doesn't retry same
+ 8. Identical successful tool call - REUSE decision, shows prior result
+ 9. Identical failed/declined call - REJECT decision with reason
+10. Legitimate repeated call after state change - File changed → EXECUTE again
+11. Cancellation cleanup - Single cleanup call on all exit paths
+12. Output/reasoning limit recovery - Retry without thinking from same state
+13. Context/result duplication - No duplicate assistant messages for reused calls
+Implementation Order
+1. Create ToolExecutionDecider - Consolidate all tool deduplication logic
+2. Create ProgressTracker - Implement phase-based progress with explicit decisions
+3. Create VerificationStore - Fix verification with intent normalization + fingerprinting
+4. Refactor turn.ts - Use new modules, remove inline logic
+5. Consolidate notices/verdicts - Single decision → notice emission
+6. Update turn-state.ts - Remove obsolete functions, keep only TurnState interface + createTurnState
+7. Add regression tests - Focus on the 13 scenarios above
+8. Run existing test suite - Ensure no regressions
+9. Delete dead code - Remove unused functions/modules
+Questions for Clarification
+1. Verification fingerprinting: Should it hash all files in the project, or only files relevant to the command (e.g., package.json + test files for npm test)?
+2. Progress phase budget: What's a reasonable observation limit before forcing ACT? (e.g., 5-10 Read/Grep calls)
+3. Plan-loop integration: Should runPlanApprovalLoop also use the new ProgressTracker, or stay separate?
+4. Scope.ts: The applyTaskScope and noticeMissingProjectDoc seem orthogonal to turn execution - keep as-is?
+5. Telemetry: Currently pushed to turnState.telemetry AND onTelemetry callback. Keep both or just callback?
+6. MCP sequential thinking: Special handling for thoughtNumber deduplication - keep in ToolExecutionDecider or generalize?
+Risk Mitigation
+- Phase 1: New modules alongside old code, feature-flagged
+- Phase 2: Switch turn.ts to new modules, run full test suite
+- Phase 3: Delete old code, add regression tests
+- Rollback: Keep old turn-state.ts functions until new ones proven
+This plan addresses all 14 user constraints while making the smallest architectural refactor that gives clear ownership. The key insight is separating tool execution decisions (semantic: EXECUTE/REUSE/REJECT/STOP) from progress decisions (phase-based: CONTINUE/ACT/VERIFY/COMPLETE/STOP) from communication (notices).

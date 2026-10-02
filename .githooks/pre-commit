@@ -1,0 +1,21 @@
+#!/bin/sh
+# main and develop change only through pull requests; every other branch follows the naming in docs/BRANCHING.md.
+. "$(dirname "$0")/branch-rules.sh"
+
+branch=$(git symbolic-ref --short -q HEAD)
+# No branch (a rebase or bisect in progress): nothing to check.
+[ -z "$branch" ] && exit 0
+
+case "$branch" in
+  main|develop)
+    echo "ocode: no commits straight to '$branch'. Start a branch first, e.g.: git switch -c fix/<topic>   (docs/BRANCHING.md)" >&2
+    exit 1
+    ;;
+esac
+
+problem=$(branch_name_problem "$branch")
+if [ -n "$problem" ]; then
+  echo "ocode: $problem. Rename it with: git branch -m <new-name>" >&2
+  exit 1
+fi
+exit 0

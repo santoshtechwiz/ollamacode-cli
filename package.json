@@ -1,0 +1,83 @@
+{
+  "name": "@ollamacode/cli",
+  "version": "0.2.4",
+  "description": "Local-first terminal coding agent. Runs against your own Ollama models; also speaks HuggingFace Inference. WebAssembly-powered core. Not affiliated with Ollama.",
+  "type": "module",
+  "bin": {
+    "ocode": "./bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "ollama.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "start": "node bin/cli.js chat",
+    "init": "node bin/cli.js init",
+    "link": "npm link",
+    "build": "npm run typecheck && npm test &&  tsc --noEmit && npm install -g .",
+    "build:wasm": "node scripts/build-wasm.js",
+    "lint": "oxlint src bin",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/test.mjs",
+    "eval": "node scripts/eval.mjs",
+    "prepare": "node scripts/install-hooks.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "cli",
+    "llm",
+    "ollama",
+    "ollama-code",
+    "huggingface",
+    "agent",
+    "wasm",
+    "coding-assistant",
+    "local-llm",
+    "offline",
+    "terminal-agent"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/cross-spawn": "^6.0.6",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.31",
+    "@types/turndown": "^5.0.6",
+    "assemblyscript": "^0.28.20",
+    "oxlint": "^1.80.0"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-sandbox-windows-acl": "^0.0.1-rc.1",
+    "@ekaone/killx": "^0.1.2",
+    "@joplin/turndown-plugin-gfm": "^1.0.68",
+    "@sanity/diff-match-patch": "^3.2.1",
+    "@tanstack/ai": "^0.58.0",
+    "@tanstack/ai-compaction": "^0.1.6",
+    "@vscode/tree-sitter-wasm": "^0.3.1",
+    "better-sqlite3": "^12.11.1",
+    "citty": "^0.2.2",
+    "cross-spawn": "^7.0.6",
+    "ink": "^5.2.1",
+    "ipaddr.js": "^2.5.0",
+    "jsonc-parser": "^3.3.1",
+    "magic-string": "^1.4.1",
+    "marked": "^15.0.12",
+    "marked-terminal": "^7.3.0",
+    "ora": "^9.4.1",
+    "pdf-lib": "^1.17.1",
+    "pino": "^10.3.1",
+    "react": "^18.3.1",
+    "tsx": "^4.23.13",
+    "turndown": "^7.2.4",
+    "typescript": "^5.6.0",
+    "unpdf": "^1.8.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "yaml": "^2.9.1"
+  }
+}

@@ -1,0 +1,704 @@
+Refactor and redesign the existing planning module in this repository.
+
+The goal is to replace the current planning implementation with a small, reliable, production-ready TypeScript design.
+
+Do NOT blindly rewrite the repository. First trace the current planning flow and understand how it connects to Turn, TurnState, model gateway, tools, approval/permissions, progress tracking, execution, verification, and final response handling.
+
+## Primary goals
+
+1. Inspect the entire existing planning module and all of its callers.
+2. Identify duplicated, unused, obsolete, defensive, brute-force, fallback, retry, counter, flag, and compatibility code.
+3. Remove code that is no longer needed after the redesign.
+4. Redesign planning around a simple typed contract.
+5. Keep Turn as the ONLY owner of the overall agent loop.
+6. Planning must NOT execute tools.
+7. Planning must NOT contain its own loop.
+8. Planning must NOT contain hidden retries or recursive planning.
+9. Planning must NOT duplicate ProgressTracker responsibilities.
+10. Preserve existing behavior outside planning unless it is clearly part of the broken/obsolete planning design.
+11. Do not add unnecessary abstractions or framework-like architecture.
+12. Use proper TypeScript types. Avoid `any`, unsafe casts, magic strings, and loosely typed objects.
+13. Keep the implementation production-ready and easy to understand.
+
+## Target architecture
+
+Use this conceptual flow:
+
+User
+↓
+Turn
+↓
+Observe
+↓
+Planning
+↓
+Approval (when required)
+↓
+Execution
+↓
+Verification
+↓
+Planning again only when genuinely required
+↓
+Final answer
+
+Turn owns the lifecycle.
+
+Planning only answers:
+
+"What should be done next?"
+
+Execution answers:
+
+"How do I perform that action?"
+
+Verification answers:
+
+"Did it actually work?"
+
+Progress/state answers:
+
+"What has already happened?"
+
+Do not mix these responsibilities.
+
+## Target planning contract
+
+Prefer a small model similar to this:
+
+```ts
+export type PlanStepType =
+  | 'inspect'
+  | 'edit'
+  | 'run'
+  | 'verify';
+
+export type PlanStepStatus =
+  | 'pending'
+  | 'completed'
+  | 'failed';
+
+export interface PlanStep {
+  readonly id: string;
+  readonly description: string;
+  readonly type: PlanStepType;
+  status: PlanStepStatus;
+}
+
+export interface Plan {
+  readonly id: string;
+  readonly goal: string;
+  readonly steps: readonly PlanStep[];
+}
+```
+
+Adapt these types to the existing repository conventions instead of blindly copying them.
+
+Planning should return a discriminated result:
+
+```ts
+export type PlanningResult =
+  | {
+      readonly kind: 'PLAN';
+      readonly plan: Plan;
+    }
+  | {
+      readonly kind: 'NO_PLAN';
+      readonly reason: string;
+    }
+  | {
+      readonly kind: 'CLARIFICATION';
+      readonly reason: string;
+    };
+```
+
+If the existing application needs different states, preserve the existing domain semantics but keep the result discriminated and strongly typed.
+
+## Important planning rules
+
+### Simple requests
+
+Do not create unnecessary plans.
+
+Example:
+
+```text
+User: "What does this function do?"
+```
+
+This should be able to proceed without constructing a multi-step implementation plan.
+
+### Complex coding requests
+
+Create a concise plan.
+
+Example:
+
+```text
+Goal: Fix duplicate tool execution.
+
+1. Inspect the turn/progress logic.
+2. Identify why successful calls are repeated.
+3. Apply the smallest safe fix.
+4. Add or update the regression test.
+5. Verify the behavior.
+```
+
+The plan should describe work, not individual tool invocations.
+
+Do NOT generate plans like:
+
+```text
+read_file("src/foo.ts")
+read_file("src/bar.ts")
+edit_file(...)
+run_command(...)
+```
+
+Those are execution decisions and belong to the executor/model.
+
+## Planning must not become another agent loop
+
+Do NOT implement:
+
+```ts
+while (...) {
+  observe();
+  askModel();
+  execute();
+  replan();
+}
+```
+
+inside the planning module.
+
+Planning should be a bounded operation:
+
+```ts
+const result = await planner.create(context);
+```
+
+Then return control to Turn.
+
+If more information is needed, transition back through the normal Turn/Observe flow.
+
+## Suggested interface
+
+Use an interface along these lines if it fits the existing architecture:
+
+```ts
+export interface PlanningContext {
+  readonly goal: string;
+  readonly observations: readonly Observation[];
+  readonly state: TurnState;
+}
+
+export interface Planner {
+  create(context: PlanningContext): Promise<PlanningResult>;
+}
+```
+
+Do not introduce unnecessary interfaces merely to follow this example.
+
+Reuse existing repository types when they already represent the same concept.
+
+## Plan lifecycle
+
+The intended lifecycle should be:
+
+```text
+OBSERVING
+   ↓
+PLANNING
+   ↓
+AWAITING_APPROVAL
+   ↓
+EXECUTING
+   ↓
+VERIFYING
+   ↓
+COMPLETE
+```
+
+And when verification determines that additional work is genuinely necessary:
+
+```text
+VERIFYING
+   ↓
+PLANNING
+   ↓
+EXECUTING
+```
+
+Do not allow arbitrary phase transitions.
+
+Planning should not directly transition itself through the entire lifecycle.
+
+## Replanning
+
+Replanning must be explicit.
+
+Only replan when there is a real reason such as:
+
+```ts
+export type PlanningReason =
+  | 'INITIAL'
+  | 'NEW_INFORMATION'
+  | 'VERIFICATION_FAILED'
+  | 'BLOCKED';
+```
+
+Do not replan simply because a tool returned a normal result.
+
+Do not use arbitrary counters such as:
+
+```ts
+if (attempts > 3) ...
+if (planCount > 5) ...
+if (retries > 10) ...
+```
+
+unless the repository already has a clearly justified global safety limit owned by Turn.
+
+Do not use counters to compensate for incorrect state transitions.
+
+## Remove brute-force behavior
+
+Search specifically for:
+
+* retry loops
+* recursive planner calls
+* repeated plan generation
+* `while`/`for` loops around model planning
+* arbitrary retry counts
+* plan counters
+* phase counters
+* duplicate state flags
+* `isPlanning`
+* `hasPlan`
+* `planningComplete`
+* `needsReplan`
+* `shouldRetry`
+* `retryCount`
+* `attemptCount`
+* fallback planning paths
+* duplicated planner implementations
+* old plan formats
+* compatibility adapters that are no longer required
+* dead helper functions
+* unreachable branches
+* duplicated validation
+* duplicated state ownership
+* unused event handlers
+* unused callbacks
+* stale TODO-based planning logic
+* code that exists only to recover from another planning implementation
+
+Do not remove something merely because it looks unused. Verify references first.
+
+Use repository-wide search before deleting files/functions/types.
+
+## Do not preserve dead architecture
+
+If the old design contains multiple planning components such as:
+
+```text
+PlanningManager
+PlanningController
+PlanningLoop
+PlanEngine
+PlanProgress
+PlanRecovery
+PlanCoordinator
+```
+
+do not preserve them automatically.
+
+Determine whether they have unique responsibilities.
+
+If their responsibilities can be handled by a single Planner and TurnState, remove the redundant components.
+
+The target should be approximately:
+
+```text
+planning/
+  planner.ts
+  plan-types.ts
+```
+
+or even fewer files if the existing repository is small enough.
+
+Do not create files just for organizational appearance.
+
+## State ownership
+
+There must be ONE source of truth for plan state.
+
+Prefer:
+
+```ts
+interface TurnState {
+  phase: Phase;
+  plan?: Plan;
+  ...
+}
+```
+
+rather than separate mutable state such as:
+
+```ts
+planner.currentPlan
+planner.planStatus
+planner.stepIndex
+progressTracker.plan
+turn.plan
+```
+
+Do not duplicate plan state across components.
+
+If the existing TurnState already has a suitable representation, extend it rather than creating another state store.
+
+## Step execution
+
+Planning must not mark steps as completed merely because a tool was requested.
+
+Bad:
+
+```ts
+step.status = 'completed';
+await executeTool(...);
+```
+
+Completion should be based on the actual execution/verification result.
+
+Prefer immutable state transitions where practical:
+
+```ts
+function completeStep(plan: Plan, stepId: string): Plan {
+  return {
+    ...plan,
+    steps: plan.steps.map(step =>
+      step.id === stepId
+        ? { ...step, status: 'completed' }
+        : step,
+    ),
+  };
+}
+```
+
+Adapt this to existing state-management conventions.
+
+## Model output validation
+
+Do not trust raw model output.
+
+If planning uses structured JSON, validate it at the boundary.
+
+Reject:
+
+* missing goal
+* missing steps when a plan is required
+* malformed step objects
+* invalid step types
+* invalid statuses
+* duplicate step IDs
+* empty descriptions
+* unexpected structure
+
+Prefer a small existing validation mechanism if the repository already has one.
+
+Do not introduce a large validation framework for this.
+
+## Prompt design
+
+Keep the planner prompt small and deterministic.
+
+The model should receive:
+
+* user goal
+* relevant observations
+* relevant existing state
+* constraints
+
+It should NOT receive every tool schema if planning does not need them.
+
+Use a prompt conceptually similar to:
+
+```text
+You are the planning phase of a coding agent.
+
+Create a concise implementation plan for the user's request.
+
+Rules:
+- Do not execute tools.
+- Do not invent files, APIs, or project behavior.
+- Use only available observations.
+- Keep the plan proportional to the task.
+- Prefer the smallest safe change.
+- Do not include tool calls.
+- Separate implementation work from verification.
+- Do not create a plan for simple informational requests.
+- If required information is missing, request clarification.
+- Do not modify files.
+- Return only the requested structured result.
+```
+
+Adapt the prompt to the existing model gateway and message abstractions.
+
+Do not duplicate system prompts already owned by the model layer.
+
+## Turn integration
+
+After the refactor, Turn should be understandable from one place.
+
+The high-level logic should resemble:
+
+```ts
+switch (state.phase) {
+  case 'OBSERVING':
+    await observe(state);
+    break;
+
+  case 'PLANNING':
+    await planning.create(state);
+    break;
+
+  case 'AWAITING_APPROVAL':
+    await handleApproval(state);
+    break;
+
+  case 'EXECUTING':
+    await executor.run(state);
+    break;
+
+  case 'VERIFYING':
+    await verifier.run(state);
+    break;
+
+  case 'COMPLETE':
+    return finish(state);
+}
+```
+
+Do not introduce another loop inside any of these phases.
+
+Adapt this to the repository's actual architecture.
+
+## Error handling
+
+Planning failures should have explicit typed outcomes.
+
+Do not use:
+
+```ts
+catch {
+  return false;
+}
+```
+
+Do not silently fall back to execution when planning fails.
+
+Do not swallow model/parser errors.
+
+Use the repository's existing error/result conventions.
+
+A malformed planner response should be distinguishable from:
+
+* user clarification required
+* planning blocked
+* verification failure
+* execution failure
+
+## TypeScript quality
+
+Use:
+
+* `readonly` where appropriate
+* discriminated unions
+* explicit return types for important public functions
+* existing domain types
+* narrow types
+* type-safe state transitions
+
+Avoid:
+
+```ts
+any
+as any
+as unknown as X
+Record<string, any>
+string-based phase comparisons everywhere
+optional fields used as hidden state machines
+```
+
+Do not add excessive generics or abstractions.
+
+Prefer straightforward TypeScript.
+
+## Tests
+
+Before modifying tests, inspect the existing test architecture.
+
+Add/update focused tests for:
+
+1. Simple task does not unnecessarily create a plan.
+2. Complex task creates a valid plan.
+3. Planner output is validated.
+4. Invalid planner output is rejected.
+5. Duplicate step IDs are rejected.
+6. Planning does not execute tools.
+7. Planning does not retry internally.
+8. Planning does not recursively call itself.
+9. Replanning happens only for an explicit reason.
+10. Verification failure can return to planning.
+11. Successful execution does not cause unnecessary replanning.
+12. Plan state exists in only one place.
+13. Existing successful tool-call deduplication behavior remains intact.
+14. Planning failure produces the correct terminal/intermediate state.
+15. Simple requests still work without unnecessary planning overhead.
+
+Do not write tests that merely assert implementation details if behavior can be tested instead.
+
+## Cleanup
+
+After the redesign:
+
+* Find imports that became unused.
+* Find files that became unreachable.
+* Find duplicate types.
+* Find obsolete exports.
+* Find dead planning helpers.
+* Find old planning tests that test deleted behavior.
+* Find stale documentation/comments.
+* Remove obsolete code instead of leaving compatibility shims.
+
+Run:
+
+```text
+oxlint
+knip
+```
+
+and the relevant Node test suite.
+
+If Knip reports something questionable, verify the reference before deleting it.
+
+Do not blindly delete code based only on static-analysis output.
+
+## Important constraints
+
+* Do not break public APIs unless they belong exclusively to the obsolete planning implementation.
+* Do not modify unrelated modules.
+* Do not perform a repository-wide rewrite.
+* Do not introduce a new framework.
+* Do not add excessive comments.
+* Do not add unnecessary logging.
+* Do not add magic constants.
+* Do not create compatibility code for code that you are deleting.
+* Do not overwrite entire files unnecessarily; make targeted changes.
+* Preserve user changes already present in Git.
+* Before editing, inspect `git diff` and understand existing modifications.
+* Never discard unrelated user changes.
+* Keep the final implementation smaller than the old implementation where possible.
+
+## Required workflow
+
+Follow this order:
+
+### Phase 1 — Understand
+
+Inspect:
+
+* current planning module
+* Turn
+* TurnState
+* phase definitions
+* progress tracker
+* model gateway
+* tool execution
+* permission handling
+* verification
+* planning tests
+* all planning imports/usages
+
+Produce a short dependency/ownership map before editing.
+
+### Phase 2 — Identify obsolete code
+
+List:
+
+* duplicate responsibilities
+* brute-force loops
+* retries
+* counters
+* flags
+* dead code
+* duplicated state
+* unnecessary abstractions
+
+Do not edit yet.
+
+### Phase 3 — Design
+
+Define the smallest planning contract that fits the existing architecture.
+
+Show:
+
+```text
+Turn
+ ├── Observe
+ ├── Planner
+ ├── Approval
+ ├── Executor
+ ├── Verifier
+ └── Final
+```
+
+Explain what each component owns.
+
+### Phase 4 — Implement
+
+Refactor incrementally.
+
+Delete obsolete code once the new path is wired.
+
+Do not keep two planning implementations running in parallel.
+
+### Phase 5 — Verify
+
+Run focused tests first.
+
+Then run:
+
+```text
+oxlint
+knip
+```
+
+Then the relevant full Node test suite.
+
+Inspect:
+
+```text
+git diff
+git status
+```
+
+Make sure no unrelated files changed.
+
+### Final response
+
+Report:
+
+1. What was removed.
+2. What was redesigned.
+3. New planning contract.
+4. How Turn now owns the lifecycle.
+5. Any files deleted.
+6. Tests run and results.
+7. Lint/Knip results.
+8. Any remaining concerns.
+
+Do not claim tests passed unless you actually ran them.
+
+The final implementation should be simple enough that another developer can understand the complete planning lifecycle by reading Turn + Planner + TurnState without following a chain of managers/controllers/recovery loops.
