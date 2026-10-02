@@ -77,7 +77,6 @@ export interface WorkspaceState {
   /** The task that wrote `todos`; a list from another task is not shown as the running one's. */
   todosTask?: string | null;
 
-  pathBeliefs: Map<string, string>;
   planPath?: string | null;
   reviewOnly?: boolean;
   plan?: import('../agent/planning/plan.ts').Plan | null;
@@ -139,7 +138,6 @@ const state: WorkspaceState = {
     background: new BackgroundInbox(),
     readFiles: new Set(),
     todos: [],
-    pathBeliefs: new Map(),
     planPath: null,
 
     note(op, rel, type) {
@@ -198,8 +196,6 @@ const state: WorkspaceState = {
       state.background.clear();
       state.readFiles = new Set();
       state.todos = [];
-      // A new conversation re-learns the filesystem rather than inheriting the old one's assumptions about it.
-      state.pathBeliefs = new Map();
       state.planPath = null;
     },
   };
