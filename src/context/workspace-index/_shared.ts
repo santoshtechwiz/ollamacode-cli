@@ -16,7 +16,7 @@ export const SCHEMA_VERSION = 1;
 
 const CASE_INSENSITIVE_FS = process.platform === 'win32' || process.platform === 'darwin';
 
-function norm(p: string) {
+export function norm(p: string) {
   return CASE_INSENSITIVE_FS ? p.toLowerCase() : p;
 }
 

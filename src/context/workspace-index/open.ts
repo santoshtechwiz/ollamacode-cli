@@ -21,6 +21,7 @@ import {
   forward,
   statSafe,
   hashFile,
+  norm,
   type FileRow,
   type IndexHandle,
 } from './_shared';
@@ -184,11 +185,8 @@ function resolveEdge(projectRoot: string, fileRel: string, target: string, pkgNa
   return pkgNameToId.get(t) ?? null;
 }
 
-const CASE_INSENSITIVE_WORKSPACE = process.platform === 'win32' || process.platform === 'darwin';
-
 function workspaceDbKey(root: string): string {
-  const abs = path.resolve(root);
-  return CASE_INSENSITIVE_WORKSPACE ? abs.toLowerCase() : abs;
+  return norm(path.resolve(root));
 }
 
 export async function openWorkspaceIndex(
