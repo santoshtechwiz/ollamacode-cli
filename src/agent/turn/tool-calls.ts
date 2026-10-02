@@ -59,16 +59,11 @@ interface PreparedToolCall {
   targetStamp: string | null;
 }
 
-/** What the model is shown for one call: the rendered result, cleaned and held to the shared output budget. */
-function renderedFor(result: ToolResult, toolName: string, limit: number): string {
-  return compressToolOutput(renderToolResult(result, toolName), limit);
-}
-
-/** Adds the assistant/tool pair to history and returns the exact text the model now sees for it. */
+/** Adds the assistant/tool pair to history and returns the exact text the model now sees for it: the rendered result, cleaned and held to the shared output budget. */
 function recordExchange(history: ContextStore, call: ToolCall, result: ToolResult, limit: number): string {
   const settled: ToolCall = { ...call, id: call.id || newId() };
   history.addAssistant('', [settled]);
-  const rendered = renderedFor(result, settled.function.name, limit);
+  const rendered = compressToolOutput(renderToolResult(result, settled.function.name), limit);
   history.addToolResult(settled, rendered);
   return rendered;
 }
@@ -155,12 +150,6 @@ function notRun(error: string, code: string, extra: Partial<ToolResult> = {}): T
   return { ok: false, kind: 'text', error, code, ...extra } as ToolResult;
 }
 
-async function runTool(prepared: PreparedToolCall, batch: ToolCallBatch): Promise<ToolResult> {
-  const { toolRunner, signal, approve } = batch;
-  const outcome = await toolRunner.run(prepared.call.function.name, prepared.call.function.arguments, { signal, approve });
-  return outcome.result;
-}
-
 /** The result a decision stands for, and whether a tool actually ran to produce it. */
 async function resultForDecision(
   decision: Decision,
@@ -205,7 +194,8 @@ async function resultForDecision(
       if (!prepared.prep.ok) return { result: prepared.prep.result, ran: false };
       callbacks.onStatus?.(activityForTool(name));
       callbacks.onToolStart?.(name, prepared.call.function.arguments);
-      return { result: await runTool(prepared, batch), ran: true };
+      const outcome = await batch.toolRunner.run(name, prepared.call.function.arguments, { signal: batch.signal, approve: batch.approve });
+      return { result: outcome.result, ran: true };
     }
   }
 }
