@@ -43,14 +43,13 @@ function insideWorkspace(root: string, projectRoot: unknown): boolean {
 }
 
 export function resolveTaskScope(handle: IndexHandle | null | undefined, root: string, input: string): {
-  projectIds: unknown[];
   roots: string[];
   stackInfos: unknown[];
   activeProject: { id: unknown; root: string; name: string; } | null;
   all: boolean;
   confidence: string;
 } {
-  const empty = { projectIds: [] as unknown[], roots: [] as string[], stackInfos: [] as unknown[], activeProject: null as { id: unknown; root: string; name: string; } | null, all: true, confidence: 'none' };
+  const empty = { roots: [] as string[], stackInfos: [] as unknown[], activeProject: null as { id: unknown; root: string; name: string; } | null, all: true, confidence: 'none' };
   const db = handle?.db;
   if (!db) return empty;
 
@@ -159,7 +158,6 @@ export function resolveTaskScope(handle: IndexHandle | null | undefined, root: s
   // A `task_scopes` row used to be written here, and a `sessions` row on every process launch.
 
   return {
-    projectIds: [...scoped],
     roots,
     stackInfos,
     activeProject: active ? { id: active.id, root: active.root, name: active.name } : null,
