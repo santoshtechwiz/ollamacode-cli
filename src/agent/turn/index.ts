@@ -110,8 +110,7 @@ export async function executeTurn({
   // 3. Replan detection — the only place `input` may be replaced.
   const replan = resumePlan ? null : detectReplan(workspace, continuing, toolsEnabled);
   let turnInput = replan?.input ?? rawInput;
-  let planMode = planModeIn;
-  if (replan) planMode = true;
+  const planMode = planModeIn || replan != null;
 
   // 4. Scope resolution.
   const scope = applyTaskScope(workspace, turnInput, { onStatus });
