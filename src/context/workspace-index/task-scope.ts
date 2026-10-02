@@ -146,20 +146,15 @@ export function resolveTaskScope(handle: IndexHandle | null | undefined, root: s
 
   let activeId: any = null;
   let best = -1;
-  let secondBest = -1;
   for (const [id, score] of scores) {
     if (!scoped.has(id)) continue;
     if (score > best) {
-      secondBest = best;
       best = score;
       activeId = id;
-    } else if (score > secondBest) {
-      secondBest = score;
     }
   }
-  const candidate = activeId != null ? scopedProjects.find((p) => p.id === activeId) ?? null : null;
   // Always expose the best as activeProject, even on a tie, so a root `dotnet test` does not run every project.
-  const active = candidate;
+  const active = activeId != null ? scopedProjects.find((p) => p.id === activeId) ?? null : null;
 
   // A `task_scopes` row used to be written here, and a `sessions` row on every process launch.
 
