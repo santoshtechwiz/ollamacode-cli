@@ -146,12 +146,11 @@ export async function executeTurn({
   if (mentions.length) onMentions?.(mentions);
   if (systemExtra.length) system.push(...systemExtra);
 
-  const reviewOnly = reviewMode;
-  const askOnly = askMode && !reviewOnly;
-  const readOnly = reviewOnly || askOnly;
+  const askOnly = askMode && !reviewMode;
+  const readOnly = reviewMode || askOnly;
 
   if (workspace.state) workspace.state.reviewOnly = readOnly;
-  if (reviewOnly) system.push({ role: 'system' as const, content: REVIEW_MODE });
+  if (reviewMode) system.push({ role: 'system' as const, content: REVIEW_MODE });
   else if (askOnly) system.push({ role: 'system' as const, content: ASK_MODE });
 
   // 9. Continuing a plan that already ended → answer, don't execute.
