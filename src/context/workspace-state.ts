@@ -63,10 +63,7 @@ export interface WorkspaceState {
   grantedRoots: string[];
   stacks: import('../types.ts').StackInfo[];
   scope: string[];
-  scopedGrants: string[];
   activeProject: { id: number; root: string; name: string; } | null;
-  scopeNoMatch?: boolean;
-  scopeAll?: boolean;
   index: import('./workspace-index/_shared.ts').IndexHandle | null;
   tooling?: import('../env/tooling/manager.ts').ToolingManager | null;
   questionsAsked: number;
@@ -132,10 +129,7 @@ const state: WorkspaceState = {
     grantedRoots: [],
     stacks: [],
     scope: [],
-    scopedGrants: [],
     activeProject: null,
-    scopeNoMatch: false,
-    scopeAll: true,
     index: null,
     tooling: null,
     questionsAsked: 0,
@@ -199,10 +193,7 @@ const state: WorkspaceState = {
       state._projectCache = null;
       state._projectCacheKey = null;
       state.scope = [];
-      state.scopedGrants = [];
       state.activeProject = null;
-      (state as any).scopeNoMatch = false;
-      (state as any).scopeAll = true;
       state.subprocesses = new Map();
       state.background.clear();
       state.readFiles = new Set();

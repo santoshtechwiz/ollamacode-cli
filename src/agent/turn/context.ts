@@ -51,10 +51,7 @@ export function applyTaskScope(workspace: any, input: string, { onStatus }: { on
   const scope = resolveTaskScope(workspace.index, workspace.cwd, input);
   if (!scope || !workspace.state) return scope;
   workspace.state.scope = scope.roots;
-  workspace.state.scopedGrants = [];
   workspace.state.activeProject = scope.activeProject;
-  workspace.state.scopeNoMatch = !scope.all && scope.roots.length === 0;
-  workspace.state.scopeAll = scope.all;
   if (scope.activeProject && scope.confidence === 'high') {
     onStatus?.(`Working on ${scope.activeProject.name} (${relTo(workspace.cwd, scope.activeProject.root)}) — matched from your request`);
   }
