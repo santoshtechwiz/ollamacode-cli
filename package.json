@@ -1,6 +1,6 @@
 {
   "name": "@ollamacode/cli",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "description": "Local-first terminal coding agent. Runs against your own Ollama models; also speaks HuggingFace Inference. WebAssembly-powered core. Not affiliated with Ollama.",
   "type": "module",
   "bin": {
@@ -43,6 +43,14 @@
     "terminal-agent"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/santoshtechwiz/ollamacode-cli.git"
+  },
+  "homepage": "https://github.com/santoshtechwiz/ollamacode-cli#readme",
+  "bugs": {
+    "url": "https://github.com/santoshtechwiz/ollamacode-cli/issues"
+  },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
     "@types/cross-spawn": "^6.0.6",
