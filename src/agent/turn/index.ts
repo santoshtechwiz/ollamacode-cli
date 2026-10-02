@@ -273,7 +273,6 @@ export async function executeTurn({
       config,
       cwd: workspace.cwd,
       state: workspace.state,
-      workspace,
       signal,
       approve,
       ask,

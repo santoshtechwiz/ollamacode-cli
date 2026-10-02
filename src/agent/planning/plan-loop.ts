@@ -84,7 +84,6 @@ async function presentedPlan(args: PlanLoopArgs, instruction: string): Promise<{
     config: args.config,
     cwd: workspace.cwd,
     state: workspace.state,
-    workspace,
     signal: args.signal,
     gateway: args.gateway,
     toolRunner: args.toolRunner,

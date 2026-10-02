@@ -67,7 +67,6 @@ export interface RunTurnParams {
   config: any;
   cwd?: string;
   state?: any;
-  workspace?: any;
   signal?: AbortSignal;
   approve?: ApproveFn;
   ask?: any;
