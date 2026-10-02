@@ -416,8 +416,10 @@ export async function runTurn(
       evidence: progressDecision.evidence,
     });
 
-    const isReusedOnlyRound = round.reused > 0 && round.reusedAgain === round.reused && !madeProgress;
-    const foundNothingNewAgain = round.nothingNew > 0 && round.nothingNewAgain === round.nothingNew && !madeProgress;
+    // Every such call in the round came after the notice an earlier round gave, and nothing moved.
+    const allAgain = (count: number, again: number): boolean => count > 0 && again === count && !madeProgress;
+    const isReusedOnlyRound = allAgain(round.reused, round.reusedAgain);
+    const foundNothingNewAgain = allAgain(round.nothingNew, round.nothingNewAgain);
     const shouldStop =
       progressDecision.action === 'STOP' ||
       round.refusedOnly ||

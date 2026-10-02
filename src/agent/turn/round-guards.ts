@@ -30,6 +30,11 @@ function didWork(c: ToolCallRecord): boolean {
   return !c.isRepeat && !c.foundNothingNew;
 }
 
+/** What a nothing-new call found, as the tool keyed it. */
+function findingKey(c: ToolCallRecord): string {
+  return `${c.name}\u0000${c.resultKey}`;
+}
+
 function wasRejectedRepeat(c: ToolCallRecord): boolean {
   return (c.result.data as { notRunRepeat?: boolean } | undefined)?.notRunRepeat === true;
 }
@@ -87,7 +92,7 @@ export function summarizeRound(state: TurnState, iteration: number): RoundSummar
   const nothingNew = round.filter((c) => c.foundNothingNew);
   // The same rule as a reuse: the first nothing-new result carries a notice; finding nothing new again after it is the stall.
   const notifiedBefore = new Set(
-    state.toolCalls.filter((c) => c.at < iteration && c.foundNothingNew).map((c) => `${c.name}\u0000${c.resultKey}`),
+    state.toolCalls.filter((c) => c.at < iteration && c.foundNothingNew).map(findingKey),
   );
 
   return {
@@ -95,7 +100,7 @@ export function summarizeRound(state: TurnState, iteration: number): RoundSummar
     reused: reused.length,
     reusedAgain: reused.filter((c) => reusedBefore.has(signatureOf(c))).length,
     nothingNew: nothingNew.length,
-    nothingNewAgain: nothingNew.filter((c) => notifiedBefore.has(`${c.name}\u0000${c.resultKey}`)).length,
+    nothingNewAgain: nothingNew.filter((c) => notifiedBefore.has(findingKey(c))).length,
     rejected: round.filter(wasRejectedRepeat).length,
     refusedOnly: roundIsRefusalOnly(round),
     repeatsEarlier: roundRepeatsEarlier(state, iteration),
