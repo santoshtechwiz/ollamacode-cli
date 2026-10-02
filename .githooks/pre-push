@@ -34,7 +34,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
           fi
           ;;
       esac
-      pushes_branch=1
+      # A feature branch is work in progress: its pushes skip the typecheck and tests (CI runs them on the pull request).
+      case "$branch" in
+        feature/*) ;;
+        *) pushes_branch=1 ;;
+      esac
       ;;
     refs/tags/*)
       tag=${remote_ref#refs/tags/}

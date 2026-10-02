@@ -13,7 +13,7 @@ export type EvidenceType =
   | 'mutation'
   | 'verification';
 
-export interface ProgressDecision {
+interface ProgressDecision {
   action: 'CONTINUE' | 'ACT' | 'VERIFY' | 'COMPLETE' | 'STOP';
   phase: Phase;
   reason: string;

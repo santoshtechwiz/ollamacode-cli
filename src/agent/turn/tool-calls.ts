@@ -34,7 +34,7 @@ export function renderedAsFailure(rendered: string): boolean {
   return FAILED_RESULT.test(rendered);
 }
 
-export interface ToolCallBatch {
+interface ToolCallBatch {
   turnState: TurnState;
   history: ContextStore;
   callbacks: TurnCallbacks;
@@ -42,7 +42,6 @@ export interface ToolCallBatch {
   progressTracker: ProgressTracker;
   workspaceState: any;
   toolsEnabled: boolean;
-  toolsAllowed: boolean;
   /** Set only when a tool index is on the wire, with the names the model was shown; absent in text mode. */
   discovery?: { resolver: ToolResolver; onWire: ReadonlySet<string> };
   signal?: AbortSignal;
@@ -59,16 +58,11 @@ interface PreparedToolCall {
   targetStamp: string | null;
 }
 
-/** What the model is shown for one call: the rendered result, cleaned and held to the shared output budget. */
-function renderedFor(result: ToolResult, toolName: string, limit: number): string {
-  return compressToolOutput(renderToolResult(result, toolName), limit);
-}
-
-/** Adds the assistant/tool pair to history and returns the exact text the model now sees for it. */
+/** Adds the assistant/tool pair to history and returns the exact text the model now sees for it: the rendered result, cleaned and held to the shared output budget. */
 function recordExchange(history: ContextStore, call: ToolCall, result: ToolResult, limit: number): string {
   const settled: ToolCall = { ...call, id: call.id || newId() };
   history.addAssistant('', [settled]);
-  const rendered = renderedFor(result, settled.function.name, limit);
+  const rendered = compressToolOutput(renderToolResult(result, settled.function.name), limit);
   history.addToolResult(settled, rendered);
   return rendered;
 }
@@ -155,12 +149,6 @@ function notRun(error: string, code: string, extra: Partial<ToolResult> = {}): T
   return { ok: false, kind: 'text', error, code, ...extra } as ToolResult;
 }
 
-async function runTool(prepared: PreparedToolCall, batch: ToolCallBatch): Promise<ToolResult> {
-  const { toolRunner, signal, approve } = batch;
-  const outcome = await toolRunner.run(prepared.call.function.name, prepared.call.function.arguments, { signal, approve });
-  return outcome.result;
-}
-
 /** The result a decision stands for, and whether a tool actually ran to produce it. */
 async function resultForDecision(
   decision: Decision,
@@ -199,13 +187,14 @@ async function resultForDecision(
       return { result: fail(decision.reason, { code: TOOL_ERROR_CODE.ESKIPPED }), ran: false };
 
     case 'EXECUTE': {
-      if (!batch.toolsEnabled || !batch.toolsAllowed) {
+      if (!batch.toolsEnabled) {
         return { result: notRun('Tools disabled for this turn', TOOL_ERROR_CODE.EDENIED), ran: false };
       }
       if (!prepared.prep.ok) return { result: prepared.prep.result, ran: false };
       callbacks.onStatus?.(activityForTool(name));
       callbacks.onToolStart?.(name, prepared.call.function.arguments);
-      return { result: await runTool(prepared, batch), ran: true };
+      const outcome = await batch.toolRunner.run(name, prepared.call.function.arguments, { signal: batch.signal, approve: batch.approve });
+      return { result: outcome.result, ran: true };
     }
   }
 }
@@ -240,13 +229,11 @@ function settleCall(
   batch: ToolCallBatch,
   prepared: PreparedToolCall,
   decision: Decision,
-  result: ToolResult,
-  ran: boolean,
-  resultKey: string | undefined,
-  foundNothingNew: boolean,
+  { result, ran, resultKey, foundNothingNew }: { result: ToolResult; ran: boolean; resultKey?: string; foundNothingNew?: boolean },
   outputLimit: number,
+  world: number,
 ): void {
-  const { turnState, history, callbacks, progressTracker, workspaceState } = batch;
+  const { turnState, history, callbacks, progressTracker } = batch;
   const { call, target, targetStamp } = prepared;
   const name = call.function.name;
   const args = call.function.arguments;
@@ -267,7 +254,7 @@ function settleCall(
     target,
     targetStamp,
     afterStamp: ran && target ? fileStamp(target) : null,
-    world: Number(workspaceState?.mutationCount ?? 0),
+    world,
   };
   turnState.toolCalls.push(entry);
 
@@ -278,7 +265,7 @@ function settleCall(
   entry.rendered = recordExchange(history, call, result, outputLimit);
 
   // Discovery is plumbing: the model sees it, the user does not. A reused result was already shown.
-  if (decision.kind !== 'REUSE' && !entry.schemaPending && decision.kind !== 'DISCOVERED') {
+  if (decision.kind !== 'REUSE' && decision.kind !== 'UNVERIFIED' && decision.kind !== 'DISCOVERED') {
     callbacks.onToolResult?.(name, args, result);
   }
   if (ran) callbacks.onStepComplete?.({ name, args, result });
@@ -303,7 +290,7 @@ export async function processToolCalls(calls: ToolCall[], batch: ToolCallBatch):
 
       const decision: Decision =
         (discovery ? decideDiscovery(raw, discovery.resolver, discovery.onWire) : null) ??
-        decideToolExecution(call, turnState, { ...(workspaceState || {}), targetStamp });
+        decideToolExecution(call, turnState, { mutationCount: world, targetStamp });
 
       logger.debug('tool call decided', {
         iteration: turnState.iteration,
@@ -317,14 +304,10 @@ export async function processToolCalls(calls: ToolCall[], batch: ToolCallBatch):
       });
 
       const outcome = await resultForDecision(decision, prepared, batch);
-      const { result, resultKey, foundNothingNew } = noteSameFindings(
-        turnState,
-        name,
-        outcome.result,
-        outcome.ran,
-        Number(workspaceState?.mutationCount ?? 0),
-      );
-      settleCall(batch, prepared, decision, result, outcome.ran, resultKey, Boolean(foundNothingNew), outputLimit);
+      // Read again: running the call may have moved the workspace.
+      const worldAfter = Number(workspaceState?.mutationCount ?? 0);
+      const noted = noteSameFindings(turnState, name, outcome.result, outcome.ran, worldAfter);
+      settleCall(batch, prepared, decision, { ...noted, ran: outcome.ran }, outputLimit, worldAfter);
     }
   } catch (err) {
     if (!isCancel(err)) throw err;

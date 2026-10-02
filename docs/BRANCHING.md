@@ -101,7 +101,7 @@ everyone to the rules above:
 | Hook | Stops |
 |---|---|
 | `pre-commit` | a commit on `main` or `develop`; a commit on a branch whose name breaks the naming above |
-| `pre-push` | a push to `main` or `develop`; a branch with a bad name; a `release/x.y.z` or `hotfix/x.y.z` whose `package.json` is not at `x.y.z`; any tag but `v<x.y.z>`; a branch that fails `npm run typecheck` or `npm test` |
+| `pre-push` | a push to `main` or `develop`; a branch with a bad name; a `release/x.y.z` or `hotfix/x.y.z` whose `package.json` is not at `x.y.z`; any tag but `v<x.y.z>`; a branch (other than `feature/*`) that fails `npm run typecheck` or `npm test` |
 
 Deleting a remote branch or tag is never stopped. Merges into `main` and `develop` happen on GitHub, where the
 pull request is, so the hooks never need bypassing in normal work. If one ever has to be (an emergency fix with

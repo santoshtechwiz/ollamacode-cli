@@ -19,7 +19,7 @@ and anything still outstanding. If the task did not finish, say plainly what rem
 /** Plain prose still needs a whole paragraph of room, so a closing reply never asks for less. */
 const CLOSING_REPLY_BUDGET = 4096;
 
-export interface ClosingAnswerParams {
+interface ClosingAnswerParams {
   history: ContextStore;
   systemMessages: Message[];
   workspaceState: any;

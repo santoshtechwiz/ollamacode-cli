@@ -69,8 +69,13 @@ export function liveTurnStart(store: Pick<CompactableStore, 'messages' | 'epheme
   return from < 0 ? store.messages.length : from;
 }
 
+/** The existing pins plus every index from `from` to the end: the live turn, kept whole. */
+function pinnedFrom(pins: ReadonlySet<number>, from: number, length: number): Set<number> {
+  return new Set([...pins, ...Array.from({ length: length - from }, (_, k) => from + k)]);
+}
+
 /** The mutable shape of a live conversation a reactive compaction may shrink. */
-export interface CompactableStore {
+interface CompactableStore {
   messages: Message[];
   pinnedIndices: Set<number>;
   ephemeralIds: Set<string>;
@@ -130,7 +135,7 @@ export function compactForRecovery(
   const budget = Math.max(0, Math.floor(capacityTokens));
   const messages = store.messages;
   const step = liveTurnStart(store);
-  const pinned = new Set([...store.pinnedIndices, ...Array.from({ length: messages.length - step }, (_, k) => step + k)]);
+  const pinned = pinnedFrom(store.pinnedIndices, step, messages.length);
   const result = compact(messages, pinned, budget);
   const positions = new Map<Message, number>();
   result.messages.forEach((m, i) => positions.set(m, i));
@@ -147,7 +152,7 @@ export function compactForRecovery(
   return { capacityTokens: budget, dropped: result.dropped };
 }
 
-export interface CompactResult {
+interface CompactResult {
   messages: Message[];
   /** Oldest unpinned messages evicted. */
   dropped: number;
@@ -183,7 +188,7 @@ export function compact(messages: Message[], pinned: Set<number>, maxTokens: num
   };
 }
 
-export interface BuildModelRequestParams {
+interface BuildModelRequestParams {
   systemMessages?: Message[];
   store: ContextStore;
   tools?: ToolSchema[];
@@ -245,7 +250,7 @@ export async function buildModelRequest({
   const target = store.budgetTokens ?? (Number.isFinite(room) ? Math.floor(room * HISTORY_SHARE) : UNKNOWN_WINDOW_HISTORY);
   const historyRoom = Math.min(Math.max(target, activeTokens), room);
   const keepActive = from >= 0 && activeTokens <= room;
-  const pinned = keepActive ? new Set([...store.pinnedIndices, ...Array.from({ length: history.length - from }, (_, k) => from + k)]) : store.pinnedIndices;
+  const pinned = keepActive ? pinnedFrom(store.pinnedIndices, from, history.length) : store.pinnedIndices;
   const pruned = compact(history, pinned, keepActive ? historyRoom - activeTokens : historyRoom);
   const kept = pruned.messages;
 

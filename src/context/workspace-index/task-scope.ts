@@ -43,14 +43,12 @@ function insideWorkspace(root: string, projectRoot: unknown): boolean {
 }
 
 export function resolveTaskScope(handle: IndexHandle | null | undefined, root: string, input: string): {
-  projectIds: unknown[];
   roots: string[];
   stackInfos: unknown[];
   activeProject: { id: unknown; root: string; name: string; } | null;
-  all: boolean;
   confidence: string;
 } {
-  const empty = { projectIds: [] as unknown[], roots: [] as string[], stackInfos: [] as unknown[], activeProject: null as { id: unknown; root: string; name: string; } | null, all: true, confidence: 'none' };
+  const empty = { roots: [] as string[], stackInfos: [] as unknown[], activeProject: null as { id: unknown; root: string; name: string; } | null, confidence: 'none' };
   const db = handle?.db;
   if (!db) return empty;
 
@@ -98,13 +96,7 @@ export function resolveTaskScope(handle: IndexHandle | null | undefined, root: s
     }
   }
 
-  if (scores.size === 0) {
-    // An explicitly scoped request that matched nothing signals no-match instead of running every project.
-    const isGenericAll = /\ball\b/i.test(input) || /\bevery\b/i.test(input);
-    const wantsScoped = /\bfor\b/i.test(input) && tokens.size > 0 && !isGenericAll;
-    if (wantsScoped && projects.length > 1) return { ...empty, all: false };
-    return empty;
-  }
+  if (scores.size === 0) return empty;
 
   const top = Math.max(...scores.values());
   const scoped = new Set();
@@ -146,29 +138,22 @@ export function resolveTaskScope(handle: IndexHandle | null | undefined, root: s
 
   let activeId: any = null;
   let best = -1;
-  let secondBest = -1;
   for (const [id, score] of scores) {
     if (!scoped.has(id)) continue;
     if (score > best) {
-      secondBest = best;
       best = score;
       activeId = id;
-    } else if (score > secondBest) {
-      secondBest = score;
     }
   }
-  const candidate = activeId != null ? scopedProjects.find((p) => p.id === activeId) ?? null : null;
   // Always expose the best as activeProject, even on a tie, so a root `dotnet test` does not run every project.
-  const active = candidate;
+  const active = activeId != null ? scopedProjects.find((p) => p.id === activeId) ?? null : null;
 
   // A `task_scopes` row used to be written here, and a `sessions` row on every process launch.
 
   return {
-    projectIds: [...scoped],
     roots,
     stackInfos,
     activeProject: active ? { id: active.id, root: active.root, name: active.name } : null,
-    all: false,
     confidence: active ? 'high' : 'low',
   };
 }

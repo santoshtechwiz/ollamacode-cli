@@ -5,6 +5,7 @@ import { isContextLengthError, type GatewayCallResult } from '../../model/gatewa
 import type { ContextStore } from '../../context/contracts';
 import type { Message, ToolResult, ToolSchema } from '../../types';
 import { compactForRecovery } from '../../context/builder';
+import { selectAlwaysToolDefs, selectToolDefs, type ToolProfile } from '../../context/tool-surface';
 import { type ToolExecutor } from '../../tool/execution/executor';
 import { defaultRegistry } from '../../tool/execution/registry';
 import { ToolResolver } from '../../tool/execution/tool-resolver';
@@ -49,25 +50,16 @@ export interface TurnCallbacks {
   note?: (text: string, tone?: 'info' | 'warn' | 'error' | 'success' | 'dim') => void;
 }
 
-export interface RunTurnParams {
+interface RunTurnParams {
   provider?: any;
   model: string;
   history: ContextStore;
   systemMessages?: Message[];
   toolsEnabled?: boolean;
-  toolsAllowed?: boolean;
-  toolProfile?: {
-    compact?: boolean;
-    core?: boolean;
-    native?: boolean;
-    readOnly?: boolean;
-    /** Overrides which tools are advertised up front rather than through discovery. */
-    always?: readonly string[];
-  };
+  toolProfile?: ToolProfile;
   config: any;
   cwd?: string;
   state?: any;
-  workspace?: any;
   signal?: AbortSignal;
   approve?: ApproveFn;
   ask?: any;
@@ -140,7 +132,6 @@ export async function runTurn(
     model,
     history,
     toolsEnabled = true,
-    toolsAllowed = true,
     toolProfile = {},
     config = {},
     cwd = process.cwd(),
@@ -168,8 +159,7 @@ export async function runTurn(
 
   const toolsInPrompt =
     toolsEnabled &&
-    toolsAllowed &&
-    native === false;
+    !native;
 
   const gateway =
     providedGateway ??
@@ -199,24 +189,13 @@ export async function runTurn(
         callbacks.onCommandOutput,
     });
 
-  const schema = await import(
-    '../../context/tool-surface.ts'
-  );
-
   // On-demand discovery: the request carries the index, the always-tools and whatever the conversation has loaded.
-  const discoverable = new Set(
-    schema
-      .selectToolDefs({
-        core: toolProfile.core,
-        readOnly,
-      })
-      .map((def) => def.name),
-  );
+  const discoverable = new Set(selectToolDefs({ core: toolProfile.core, readOnly }).map((def) => def.name));
 
   const resolver = new ToolResolver({
     registry: defaultRegistry,
     compact: toolProfile.compact,
-    always: schema.selectAlwaysToolDefs({
+    always: selectAlwaysToolDefs({
       core: toolProfile.core,
       readOnly,
       always: toolProfile.always,
@@ -238,7 +217,6 @@ export async function runTurn(
 
   let tools =
     toolsEnabled &&
-    toolsAllowed &&
     native
       ? toolsOnWire()
       : [];
@@ -373,7 +351,6 @@ export async function runTurn(
       progressTracker,
       workspaceState,
       toolsEnabled,
-      toolsAllowed,
       discovery: tools.length > 0 ? { resolver, onWire: namesOnWire(tools) } : undefined,
       signal,
       approve,
@@ -423,8 +400,10 @@ export async function runTurn(
       evidence: progressDecision.evidence,
     });
 
-    const isReusedOnlyRound = round.reused > 0 && round.reusedAgain === round.reused && !madeProgress;
-    const foundNothingNewAgain = round.nothingNew > 0 && round.nothingNewAgain === round.nothingNew && !madeProgress;
+    // Every such call in the round came after the notice an earlier round gave, and nothing moved.
+    const allAgain = (count: number, again: number): boolean => count > 0 && again === count && !madeProgress;
+    const isReusedOnlyRound = allAgain(round.reused, round.reusedAgain);
+    const foundNothingNewAgain = allAgain(round.nothingNew, round.nothingNewAgain);
     const shouldStop =
       progressDecision.action === 'STOP' ||
       round.refusedOnly ||
@@ -461,11 +440,6 @@ export async function runTurn(
     if (tools.length > 0) {
       tools = toolsOnWire();
     }
-  }
-
-  if (!turnState.stopReason) {
-    turnState.stopReason =
-      STOP_REASONS.MAX_ITERATIONS;
   }
 
   return buildResult(
