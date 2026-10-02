@@ -232,12 +232,7 @@ export async function openWorkspaceIndex(
           if (dup.id === keep.id) continue;
           const pids = (db.prepare('SELECT id FROM projects WHERE workspace_id=?').all(dup.id) as any[]).map((r: any) => r.id);
           if (pids.length) {
-            const inClause = pids.join(',');
-            try { db.prepare(`DELETE FROM commands WHERE project_id IN (${inClause})`).run(); } catch {}
-            try { db.prepare(`DELETE FROM symbols WHERE project_id IN (${inClause})`).run(); } catch {}
-            try { db.prepare(`DELETE FROM symbols WHERE file_id IN (SELECT id FROM files WHERE project_id IN (${inClause}))`).run(); } catch {}
-            try { db.prepare(`DELETE FROM files WHERE project_id IN (${inClause})`).run(); } catch {}
-            try { db.prepare(`DELETE FROM dependencies WHERE project_id IN (${inClause}) OR target_project_id IN (${inClause})`).run(); } catch {}
+            for (const sql of projectRowDeletes(pids)) try { db.prepare(sql).run(); } catch {}
             try { db.prepare(`DELETE FROM projects WHERE workspace_id=?`).run(dup.id); } catch {}
           }
           try { db.prepare('DELETE FROM workspaces WHERE id=?').run(dup.id); } catch {}
@@ -934,12 +929,7 @@ export async function pruneWorkspaceIndex(root: string): Promise<{
         try {
           const pids = (db.prepare('SELECT id FROM projects WHERE workspace_id=?').all(dupId) as any[]).map((r: any) => r.id);
           if (pids.length) {
-            const inClause = pids.join(',');
-            db.prepare(`DELETE FROM commands WHERE project_id IN (${inClause})`).run();
-            db.prepare(`DELETE FROM symbols WHERE project_id IN (${inClause})`).run();
-            db.prepare(`DELETE FROM symbols WHERE file_id IN (SELECT id FROM files WHERE project_id IN (${inClause}))`).run();
-            db.prepare(`DELETE FROM files WHERE project_id IN (${inClause})`).run();
-            db.prepare(`DELETE FROM dependencies WHERE project_id IN (${inClause}) OR target_project_id IN (${inClause})`).run();
+            for (const sql of projectRowDeletes(pids)) db.prepare(sql).run();
             db.prepare(`DELETE FROM projects WHERE workspace_id=?`).run(dupId);
           }
           db.prepare('DELETE FROM workspaces WHERE id=?').run(dupId);
@@ -981,6 +971,18 @@ export async function clearWorkspaceIndex(root: string): Promise<{ removed: bool
 }
 
 /** Run a batch of writes in one transaction so the index is never half-updated; nested calls run inline. */
+/** Every row that belongs to these projects, children first; the callers decide how a failed statement is handled. */
+function projectRowDeletes(projectIds: number[]): string[] {
+  const ids = projectIds.join(',');
+  return [
+    `DELETE FROM commands WHERE project_id IN (${ids})`,
+    `DELETE FROM symbols WHERE project_id IN (${ids})`,
+    `DELETE FROM symbols WHERE file_id IN (SELECT id FROM files WHERE project_id IN (${ids}))`,
+    `DELETE FROM files WHERE project_id IN (${ids})`,
+    `DELETE FROM dependencies WHERE project_id IN (${ids}) OR target_project_id IN (${ids})`,
+  ];
+}
+
 const COMMAND_VERBS = ['test', 'build', 'lint', 'run', 'dev'] as const;
 
 /** One `commands` row per verb a stack defines, in stack then verb order. */
