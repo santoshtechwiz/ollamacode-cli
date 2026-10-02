@@ -5,6 +5,7 @@ import { isContextLengthError, type GatewayCallResult } from '../../model/gatewa
 import type { ContextStore } from '../../context/contracts';
 import type { Message, ToolResult, ToolSchema } from '../../types';
 import { compactForRecovery } from '../../context/builder';
+import type { ToolProfile } from '../../context/tool-surface';
 import { type ToolExecutor } from '../../tool/execution/executor';
 import { defaultRegistry } from '../../tool/execution/registry';
 import { ToolResolver } from '../../tool/execution/tool-resolver';
@@ -56,14 +57,7 @@ export interface RunTurnParams {
   systemMessages?: Message[];
   toolsEnabled?: boolean;
   toolsAllowed?: boolean;
-  toolProfile?: {
-    compact?: boolean;
-    core?: boolean;
-    native?: boolean;
-    readOnly?: boolean;
-    /** Overrides which tools are advertised up front rather than through discovery. */
-    always?: readonly string[];
-  };
+  toolProfile?: ToolProfile;
   config: any;
   cwd?: string;
   state?: any;
