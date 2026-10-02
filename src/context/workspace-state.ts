@@ -97,7 +97,6 @@ export interface WorkspaceState {
   note: (op: string, rel: string, type: 'file' | 'dir') => void;
   record: (entry: Execution) => void;
   grant: (dir: string) => void;
-  invalidateSnapshot: () => void;
   startTurn: () => void;
   reset: () => void;
 }
@@ -157,13 +156,6 @@ const state: WorkspaceState = {
     grant(dir) {
       const abs = path.resolve(dir);
       if (!state.grantedRoots.includes(abs)) state.grantedRoots.push(abs);
-    },
-
-    invalidateSnapshot() {
-      state._projectCache = null;
-      state._projectCacheKey = null;
-      const projectRoot = state.activeProject?.root ?? state.root;
-      if (state.index) state.index.refreshProjectByRoot(projectRoot);
     },
 
     startTurn() {
