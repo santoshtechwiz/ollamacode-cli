@@ -150,22 +150,10 @@ export async function executeTurn({
   const askOnly = askMode && !reviewOnly;
   const readOnly = reviewOnly || askOnly;
 
-  const resumingExecEarly = Boolean(planMode && box.resumable && box.plan && continuing);
-  const activeReadOnlyMode: 'plan' | 'ask' | 'review' | null =
-    resumingExecEarly
-      ? null
-      : reviewOnly
-        ? 'review'
-        : askOnly
-          ? 'ask'
-          : planMode
-            ? 'plan'
-            : null;
   if (workspace.state) {
     workspace.state.reviewOnly = readOnly;
     workspace.state.reviewLocked = reviewMode;
     (workspace.state as any).askLocked = askMode;
-    (workspace.state as any).readOnlyMode = activeReadOnlyMode;
   }
   if (reviewOnly) system.push({ role: 'system' as const, content: REVIEW_MODE });
   else if (askOnly) system.push({ role: 'system' as const, content: ASK_MODE });
@@ -191,7 +179,6 @@ export async function executeTurn({
   }
 
   if (isResume) {
-    if (workspace.state) (workspace.state as any).readOnlyMode = null;
     transition(box, AGENT_STATE.PLANNING);
     transition(box, AGENT_STATE.WAITING_FOR_APPROVAL);
     transition(box, AGENT_STATE.EXECUTING);
@@ -223,7 +210,6 @@ export async function executeTurn({
       return outcome.result;
     }
     // Only an approved plan switches to Agent mode; a change the planner judged too small to plan just proceeds.
-    if (outcome.kind === 'proceed' && workspace.state) (workspace.state as any).readOnlyMode = null;
     if (outcome.kind === 'proceed' && outcome.approved) {
       if (typeof onModeSwitch === 'function') {
         try { onModeSwitch('agent'); } catch {}

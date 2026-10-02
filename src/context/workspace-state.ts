@@ -87,7 +87,6 @@ export interface WorkspaceState {
   reviewLocked?: boolean;
   askLocked?: boolean;
 
-  readOnlyMode?: 'plan' | 'ask' | 'review' | null;
   plan?: import('../agent/planning/plan.ts').Plan | null;
   /** The plan text the model gave present_plan, waiting to be read and put to the user for approval. */
   presentedPlan?: string | null;
