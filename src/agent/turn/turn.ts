@@ -162,7 +162,7 @@ export async function runTurn(
   const toolsInPrompt =
     toolsEnabled &&
     toolsAllowed &&
-    native === false;
+    !native;
 
   const gateway =
     providedGateway ??
