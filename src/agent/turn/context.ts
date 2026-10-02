@@ -33,17 +33,8 @@ export function detectReplan(workspace: any, continuing: boolean, toolsEnabled: 
   const stuckPlan = getActivePlan(workspace.cwd);
   if (stuckPlan?.sessionId && workspace.state?.sessionId && stuckPlan.sessionId !== workspace.state.sessionId) return null;
   if (stuckPlan?.status !== PLAN_STATUS.NEEDS_REPLAN) return null;
-  const replanInput = buildReplanInput(stuckPlan);
-  return replanInput ? { planPath: getPlanPath(workspace.cwd), input: replanInput } : null;
-}
-
-/** Replan input from the stuck plan. Turn owns when to replan; this only shapes the input. */
-function buildReplanInput(record: import('../planning/store.ts').PlanRecord | null | undefined): string | null {
-  if (!record) return null;
-  // No task tracking in store; use the original goal/task for replanning.
-  // The planner will receive reason=VERIFICATION_FAILED and re-plan from scratch.
-  const goal = record.task || record.title || 'the original request';
-  return replanRequest({ task: goal, title: record.title }, []);
+  // No task tracking in store: the planner re-plans from the original goal.
+  return { planPath: getPlanPath(workspace.cwd), input: replanRequest(stuckPlan, []) };
 }
 
 export function applyTaskScope(workspace: any, input: string, { onStatus }: { onStatus?: (s: string) => void }): any {
