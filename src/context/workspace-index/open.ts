@@ -344,14 +344,7 @@ async function fullRebuild(
     }
 
     const insertCommand = db.prepare('INSERT INTO commands (project_id, verb, argv_json) VALUES (?, ?, ?)');
-    for (const p of projects) {
-      for (const stack of p.stacks) {
-        for (const verb of ['test', 'build', 'lint', 'run', 'dev']) {
-          const argv = (stack as any)[verb];
-          if (Array.isArray(argv) && argv.length) insertCommand.run(p.id, verb, JSON.stringify(argv));
-        }
-      }
-    }
+    for (const p of projects) insertStackCommands(insertCommand, p.id, p.stacks);
 
     const insertFile = db.prepare(
       'INSERT INTO files (project_id, rel_path, size, mtime, hash, imports_json, exports_json) VALUES (?, ?, ?, ?, ?, ?, ?)'
@@ -566,14 +559,7 @@ async function differentialRefresh(handle: IndexHandle, workspaceId: number, bas
         projectIds.set(row.abs, id);
       }
       const insertCommand = db.prepare('INSERT INTO commands (project_id, verb, argv_json) VALUES (?, ?, ?)');
-      for (const row of newProjects) {
-        for (const stack of row.stacks) {
-          for (const verb of ['test', 'build', 'lint', 'run', 'dev']) {
-            const argv = (stack as any)[verb];
-            if (Array.isArray(argv) && argv.length) insertCommand.run(idByAbs.get(row.abs) as number, verb, JSON.stringify(argv));
-          }
-        }
-      }
+      for (const row of newProjects) insertStackCommands(insertCommand, idByAbs.get(row.abs) as number, row.stacks);
     });
   }
 
@@ -836,13 +822,7 @@ async function refreshProjectMeta(db: any, projectId: number, projectRoot: strin
     const deps = await scanDependencies(projectRoot, pkgNameToId, projectRoots);
     tx(db, () => {
       db.prepare('DELETE FROM commands WHERE project_id = ?').run(projectId);
-      const ins = db.prepare('INSERT INTO commands (project_id, verb, argv_json) VALUES (?, ?, ?)');
-      for (const stack of stacks) {
-        for (const verb of ['test', 'build', 'lint', 'run', 'dev']) {
-          const argv = (stack as any)[verb];
-          if (Array.isArray(argv) && argv.length) ins.run(projectId, verb, JSON.stringify(argv));
-        }
-      }
+      insertStackCommands(db.prepare('INSERT INTO commands (project_id, verb, argv_json) VALUES (?, ?, ?)'), projectId, stacks);
       db.prepare('UPDATE projects SET stacks_json = ? WHERE id = ?').run(JSON.stringify(stacks), projectId);
       db.prepare('DELETE FROM dependencies WHERE project_id = ?').run(projectId);
       const insDep = db.prepare('INSERT INTO dependencies (project_id, name, kind, version, target_project_id) VALUES (?, ?, ?, ?, ?)');
@@ -1001,6 +981,18 @@ export async function clearWorkspaceIndex(root: string): Promise<{ removed: bool
 }
 
 /** Run a batch of writes in one transaction so the index is never half-updated; nested calls run inline. */
+const COMMAND_VERBS = ['test', 'build', 'lint', 'run', 'dev'] as const;
+
+/** One `commands` row per verb a stack defines, in stack then verb order. */
+function insertStackCommands(insert: { run: (...params: unknown[]) => unknown }, projectId: number, stacks: import('../../types.ts').StackInfo[]): void {
+  for (const stack of stacks) {
+    for (const verb of COMMAND_VERBS) {
+      const argv = stack[verb];
+      if (Array.isArray(argv) && argv.length) insert.run(projectId, verb, JSON.stringify(argv));
+    }
+  }
+}
+
 function tx(db: any, fn: () => void) {
   if (db.inTransaction) {
     fn();
