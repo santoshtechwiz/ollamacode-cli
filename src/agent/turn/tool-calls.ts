@@ -230,10 +230,7 @@ function settleCall(
   batch: ToolCallBatch,
   prepared: PreparedToolCall,
   decision: Decision,
-  result: ToolResult,
-  ran: boolean,
-  resultKey: string | undefined,
-  foundNothingNew: boolean,
+  { result, ran, resultKey, foundNothingNew }: { result: ToolResult; ran: boolean; resultKey?: string; foundNothingNew?: boolean },
   outputLimit: number,
   world: number,
 ): void {
@@ -269,7 +266,7 @@ function settleCall(
   entry.rendered = recordExchange(history, call, result, outputLimit);
 
   // Discovery is plumbing: the model sees it, the user does not. A reused result was already shown.
-  if (decision.kind !== 'REUSE' && !entry.schemaPending && decision.kind !== 'DISCOVERED') {
+  if (decision.kind !== 'REUSE' && decision.kind !== 'UNVERIFIED' && decision.kind !== 'DISCOVERED') {
     callbacks.onToolResult?.(name, args, result);
   }
   if (ran) callbacks.onStepComplete?.({ name, args, result });
@@ -310,8 +307,8 @@ export async function processToolCalls(calls: ToolCall[], batch: ToolCallBatch):
       const outcome = await resultForDecision(decision, prepared, batch);
       // Read again: running the call may have moved the workspace.
       const worldAfter = Number(workspaceState?.mutationCount ?? 0);
-      const { result, resultKey, foundNothingNew } = noteSameFindings(turnState, name, outcome.result, outcome.ran, worldAfter);
-      settleCall(batch, prepared, decision, result, outcome.ran, resultKey, Boolean(foundNothingNew), outputLimit, worldAfter);
+      const noted = noteSameFindings(turnState, name, outcome.result, outcome.ran, worldAfter);
+      settleCall(batch, prepared, decision, { ...noted, ran: outcome.ran }, outputLimit, worldAfter);
     }
   } catch (err) {
     if (!isCancel(err)) throw err;
