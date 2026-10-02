@@ -223,7 +223,8 @@ export async function executeTurn({
   if (resumingTruncatedAnswer) turnInput = RESUME_TRUNCATED_ANSWER;
   if (workspace.state) workspace.state.pendingOutputContinuation = false;
 
-  if (mcpGap) history.addUser(mcpGap, { pinned: true });
+  // What this session cannot do is the harness's to say, not the person's: it rides with the turn's system context.
+  if (mcpGap) system.push({ role: 'system' as const, content: mcpGap });
   if (box.plan?.raw) {
     const pin = executionPin(executionProgress(box.plan, workspace.state?.changes ?? []));
     if (pin) {
