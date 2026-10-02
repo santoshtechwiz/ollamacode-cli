@@ -34,7 +34,7 @@ export function renderedAsFailure(rendered: string): boolean {
   return FAILED_RESULT.test(rendered);
 }
 
-export interface ToolCallBatch {
+interface ToolCallBatch {
   turnState: TurnState;
   history: ContextStore;
   callbacks: TurnCallbacks;

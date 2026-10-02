@@ -3,7 +3,7 @@
 import { isGateRefusal } from '../../protocol';
 import { signatureOf, type ToolCallRecord, type TurnState } from './turn-state';
 
-export interface RoundSummary {
+interface RoundSummary {
   executed: number;
   reused: number;
   reusedAgain: number;
@@ -17,7 +17,7 @@ export interface RoundSummary {
 }
 
 /** The calls settled in one round. */
-export function roundCalls(state: TurnState, iteration: number): ToolCallRecord[] {
+function roundCalls(state: TurnState, iteration: number): ToolCallRecord[] {
   return state.toolCalls.filter((c) => c.at === iteration);
 }
 

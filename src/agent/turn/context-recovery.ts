@@ -84,7 +84,7 @@ function completedActionsNote(tags: string[]): string | null {
   return `Already completed: ${list}. Do not re-request these.`;
 }
 
-export interface ContextRecoveryOptions {
+interface ContextRecoveryOptions {
   history: ContextStore;
   /** The completed-actions note is added to this list in place. */
   systemMessages: Message[];
@@ -101,7 +101,7 @@ export interface ContextRecoveryOptions {
   onStatus?: (status: string) => void;
 }
 
-export interface ContextRecovery {
+interface ContextRecovery {
   /** The token room the last compaction left, for any later request in this turn. */
   readonly capacityTokens: number | undefined;
   /** The next request, compacted until it fits the window. */

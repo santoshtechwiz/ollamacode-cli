@@ -50,7 +50,7 @@ export interface TurnCallbacks {
   note?: (text: string, tone?: 'info' | 'warn' | 'error' | 'success' | 'dim') => void;
 }
 
-export interface RunTurnParams {
+interface RunTurnParams {
   provider?: any;
   model: string;
   history: ContextStore;

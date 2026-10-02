@@ -70,7 +70,7 @@ export function liveTurnStart(store: Pick<CompactableStore, 'messages' | 'epheme
 }
 
 /** The mutable shape of a live conversation a reactive compaction may shrink. */
-export interface CompactableStore {
+interface CompactableStore {
   messages: Message[];
   pinnedIndices: Set<number>;
   ephemeralIds: Set<string>;
@@ -147,7 +147,7 @@ export function compactForRecovery(
   return { capacityTokens: budget, dropped: result.dropped };
 }
 
-export interface CompactResult {
+interface CompactResult {
   messages: Message[];
   /** Oldest unpinned messages evicted. */
   dropped: number;
@@ -183,7 +183,7 @@ export function compact(messages: Message[], pinned: Set<number>, maxTokens: num
   };
 }
 
-export interface BuildModelRequestParams {
+interface BuildModelRequestParams {
   systemMessages?: Message[];
   store: ContextStore;
   tools?: ToolSchema[];

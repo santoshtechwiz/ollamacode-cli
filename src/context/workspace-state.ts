@@ -104,7 +104,7 @@ export interface WorkspaceState {
 
 const SESSION_UNLOCK = new WeakMap<WorkspaceState, (next: string) => void>();
 
-export interface SessionIdentity {
+interface SessionIdentity {
   sessionId: string;
   taskId?: string;
 }
