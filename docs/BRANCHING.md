@@ -47,24 +47,37 @@ Every release is tagged `v<version>` on `main` (`v0.3.0`), as an annotated tag. 
 git switch develop && git pull
 git switch -c release/0.3.0
 npm version 0.3.0 --no-git-tag-version       # bumps package.json and package-lock.json
-# update CHANGELOG.md: what changed for the person using ocode, newest first
+# add a "## 0.3.0 — <date>" section to CHANGELOG.md: what changed for the person using ocode
 npm run typecheck && npm test
 git commit -am "Release 0.3.0"
 git push -u origin release/0.3.0             # open a PR into main
 ```
 
 Only fixes for problems found while testing the release go on `release/*`; new work waits for the next one.
-Once the pull request into `main` is merged:
+Once the pull request into `main` is merged, tag it; the tag publishes:
 
 ```sh
 git switch main && git pull
 git tag -a v0.3.0 -m "ocode 0.3.0"
 git push origin v0.3.0
-npm publish                                  # from the tagged main, never from another branch
 git branch -d release/0.3.0 && git push origin --delete release/0.3.0
 ```
 
-Then bring the release back into `develop` with a pull request from `main` into `develop` (merge commit, not squash).
+Pushing `v0.3.0` starts the **Publish** workflow (`.github/workflows/publish.yml`). It checks that the tag matches
+`package.json` and sits on `main`, runs the typecheck and tests, publishes to npm with provenance, and creates the
+GitHub release with that version's `CHANGELOG.md` section as its notes. Follow it under the repository's
+**Actions** tab. Then bring the release back into `develop` with a pull request from `main` into `develop`
+(merge commit, not squash).
+
+### One-time setup for publishing
+
+1. On npmjs.com: your avatar → **Access Tokens** → **Generate New Token** → **Classic Token** → type
+   **Automation** (it skips the one-time password a workflow cannot type). Copy it.
+2. On GitHub: the repository → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**,
+   name `NPM_TOKEN`, value the token.
+
+**CI** (`.github/workflows/ci.yml`) runs the typecheck and tests on Linux and Windows for every pull request into
+`develop` or `main`. Make it a required check in the branch protection rules, so nothing red can be merged.
 
 ## Hotfix
 
