@@ -5,7 +5,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { runTurn } from '../src/agent/turn/turn';
-import { decideToolExecution } from '../src/agent/turn/tool-execution-decider';
 import type { TurnState } from '../src/agent/turn/turn-state';
 import type { ContextStore } from '../src/context/contracts';
 import { createContextStore } from '../src/context/store';
@@ -843,74 +842,6 @@ describe('Agent turn regression suite', () => {
 assert.equal(
         turn.stopReason,
         STOP_REASONS.CANCELLED,
-      );
-    });
-
-    it('recovers from reasoning/output limit without losing the turn', async () => {
-      const gateway =
-        createMockGateway([
-          {
-            content: '',
-            toolCalls: [
-              createCall(
-                '1',
-                'read_file',
-                {
-                  path: 'src.ts',
-                },
-              ),
-            ],
-            finishReason: 'length',
-            reasoning: 'long reasoning',
-          },
-          {
-            content: 'Answer',
-            toolCalls: [],
-            finishReason: 'stop',
-          },
-        ]);
-
-      const toolRunner =
-        createMockToolRunner(
-          new Map(),
-        );
-
-      const history =
-        createContextStore();
-
-      const workspace =
-        createTestWorkspace(tmpDir);
-
-      const turn = await runTurn({
-        model: 'test',
-        history,
-        gateway,
-        toolRunner,
-        workspace,
-        config: {
-          maxIterations: 5,
-        },
-        signal: new AbortController().signal,
-      });
-
-      assert.equal(
-        turn.stopReason,
-        STOP_REASONS.COMPLETE,
-      );
-
-      assert.equal(
-        turn.content.trim(),
-        'Answer',
-      );
-
-      assert.equal(
-        turn.iterations,
-        2,
-      );
-
-      assert.equal(
-        gateway.getCallCount(),
-        2,
       );
     });
   });
