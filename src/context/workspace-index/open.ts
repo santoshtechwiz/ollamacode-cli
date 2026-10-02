@@ -24,8 +24,8 @@ import {
   type FileRow,
   type IndexHandle,
 } from './_shared';
-import { scanSource, rulesFor } from './search';
-import { isProjectMarker, MANIFEST_FILES, outputDirsAt } from '../../env/languages';
+import { scanSource } from './search';
+import { isProjectMarker, MANIFEST_FILES, outputDirsAt, sourceRulesFor } from '../../env/languages';
 
 async function discoverProjects(root: string, signal?: AbortSignal): Promise<Array<{ abs: string; markers: string[]; }>> {
   const byDir = new Map();
@@ -68,7 +68,7 @@ async function walkProjectFiles(projectRoot: string, { signal, cap = MAX_INDEX_F
     let imports: string[] = [];
     let exports: string[] = [];
     let symbols: { kind: string; name: string; }[] = [];
-    if (scan && st.size <= MAX_SCAN_BYTES && rulesFor(ext)) {
+    if (scan && st.size <= MAX_SCAN_BYTES && sourceRulesFor(ext)) {
       const content = await fsp.readFile(abs, 'utf8').catch(() => '');
       if (content) {
         const scanned = scanSource(content, ext);
@@ -793,7 +793,7 @@ async function upsertFile(db: any, projectId: number, abs: string, rel: string) 
   let imports: any[] = [];
   let exports: any[] = [];
   let symbols: any[] = [];
-  if (st.size <= MAX_SCAN_BYTES && rulesFor(ext)) {
+  if (st.size <= MAX_SCAN_BYTES && sourceRulesFor(ext)) {
     const content = await fsp.readFile(abs, 'utf8').catch(() => '');
     if (content) {
       const scanned = scanSource(content, ext);
