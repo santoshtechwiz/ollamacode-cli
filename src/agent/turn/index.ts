@@ -130,7 +130,6 @@ export async function executeTurn({
 
   // 5. Planning is an explicit mode (--plan, /plan, Shift+Tab); the wording of a request never forces it.
   const needPlan = replan != null || Boolean(planMode && toolsEnabled && onPlan && !noPlan);
-  const toolsAllowed = toolsEnabled;
 
   // 7. Prompt context (system + memory + mentions + auto-context).
   const { system, mentions, profile }: { system: Message[]; mentions: string[]; profile: Profile } =
@@ -259,7 +258,6 @@ export async function executeTurn({
       history,
       systemMessages: system,
       toolsEnabled,
-      toolsAllowed,
       toolProfile: {
         compact: profile.compact,
         core: profile.core,

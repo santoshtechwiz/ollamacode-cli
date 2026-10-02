@@ -56,7 +56,6 @@ interface RunTurnParams {
   history: ContextStore;
   systemMessages?: Message[];
   toolsEnabled?: boolean;
-  toolsAllowed?: boolean;
   toolProfile?: ToolProfile;
   config: any;
   cwd?: string;
@@ -133,7 +132,6 @@ export async function runTurn(
     model,
     history,
     toolsEnabled = true,
-    toolsAllowed = true,
     toolProfile = {},
     config = {},
     cwd = process.cwd(),
@@ -161,7 +159,6 @@ export async function runTurn(
 
   const toolsInPrompt =
     toolsEnabled &&
-    toolsAllowed &&
     !native;
 
   const gateway =
@@ -231,7 +228,6 @@ export async function runTurn(
 
   let tools =
     toolsEnabled &&
-    toolsAllowed &&
     native
       ? toolsOnWire()
       : [];
@@ -366,7 +362,6 @@ export async function runTurn(
       progressTracker,
       workspaceState,
       toolsEnabled,
-      toolsAllowed,
       discovery: tools.length > 0 ? { resolver, onWire: namesOnWire(tools) } : undefined,
       signal,
       approve,

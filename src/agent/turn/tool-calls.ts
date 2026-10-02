@@ -42,7 +42,6 @@ interface ToolCallBatch {
   progressTracker: ProgressTracker;
   workspaceState: any;
   toolsEnabled: boolean;
-  toolsAllowed: boolean;
   /** Set only when a tool index is on the wire, with the names the model was shown; absent in text mode. */
   discovery?: { resolver: ToolResolver; onWire: ReadonlySet<string> };
   signal?: AbortSignal;
@@ -188,7 +187,7 @@ async function resultForDecision(
       return { result: fail(decision.reason, { code: TOOL_ERROR_CODE.ESKIPPED }), ran: false };
 
     case 'EXECUTE': {
-      if (!batch.toolsEnabled || !batch.toolsAllowed) {
+      if (!batch.toolsEnabled) {
         return { result: notRun('Tools disabled for this turn', TOOL_ERROR_CODE.EDENIED), ran: false };
       }
       if (!prepared.prep.ok) return { result: prepared.prep.result, ran: false };
