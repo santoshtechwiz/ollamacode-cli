@@ -235,8 +235,9 @@ function settleCall(
   resultKey: string | undefined,
   foundNothingNew: boolean,
   outputLimit: number,
+  world: number,
 ): void {
-  const { turnState, history, callbacks, progressTracker, workspaceState } = batch;
+  const { turnState, history, callbacks, progressTracker } = batch;
   const { call, target, targetStamp } = prepared;
   const name = call.function.name;
   const args = call.function.arguments;
@@ -257,7 +258,7 @@ function settleCall(
     target,
     targetStamp,
     afterStamp: ran && target ? fileStamp(target) : null,
-    world: Number(workspaceState?.mutationCount ?? 0),
+    world,
   };
   turnState.toolCalls.push(entry);
 
@@ -293,7 +294,7 @@ export async function processToolCalls(calls: ToolCall[], batch: ToolCallBatch):
 
       const decision: Decision =
         (discovery ? decideDiscovery(raw, discovery.resolver, discovery.onWire) : null) ??
-        decideToolExecution(call, turnState, { ...(workspaceState || {}), targetStamp });
+        decideToolExecution(call, turnState, { mutationCount: world, targetStamp });
 
       logger.debug('tool call decided', {
         iteration: turnState.iteration,
@@ -307,14 +308,10 @@ export async function processToolCalls(calls: ToolCall[], batch: ToolCallBatch):
       });
 
       const outcome = await resultForDecision(decision, prepared, batch);
-      const { result, resultKey, foundNothingNew } = noteSameFindings(
-        turnState,
-        name,
-        outcome.result,
-        outcome.ran,
-        Number(workspaceState?.mutationCount ?? 0),
-      );
-      settleCall(batch, prepared, decision, result, outcome.ran, resultKey, Boolean(foundNothingNew), outputLimit);
+      // Read again: running the call may have moved the workspace.
+      const worldAfter = Number(workspaceState?.mutationCount ?? 0);
+      const { result, resultKey, foundNothingNew } = noteSameFindings(turnState, name, outcome.result, outcome.ran, worldAfter);
+      settleCall(batch, prepared, decision, result, outcome.ran, resultKey, Boolean(foundNothingNew), outputLimit, worldAfter);
     }
   } catch (err) {
     if (!isCancel(err)) throw err;

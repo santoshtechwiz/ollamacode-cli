@@ -37,7 +37,7 @@ function reusedResult(prior: ToolResult, reason: string, hint?: string): ToolRes
 export function decideToolExecution(
   call: ToolCall,
   turnState: TurnState,
-  workspaceState: { mutationCount?: number; targetStamp?: string } = {}
+  workspaceState: { mutationCount?: number; targetStamp?: string | null } = {}
 ): ToolDecision {
   const callId = String(call.id ?? '');
   const name = String(call.function?.name ?? '');
