@@ -46,10 +46,9 @@ export function resolveTaskScope(handle: IndexHandle | null | undefined, root: s
   roots: string[];
   stackInfos: unknown[];
   activeProject: { id: unknown; root: string; name: string; } | null;
-  all: boolean;
   confidence: string;
 } {
-  const empty = { roots: [] as string[], stackInfos: [] as unknown[], activeProject: null as { id: unknown; root: string; name: string; } | null, all: true, confidence: 'none' };
+  const empty = { roots: [] as string[], stackInfos: [] as unknown[], activeProject: null as { id: unknown; root: string; name: string; } | null, confidence: 'none' };
   const db = handle?.db;
   if (!db) return empty;
 
@@ -97,13 +96,7 @@ export function resolveTaskScope(handle: IndexHandle | null | undefined, root: s
     }
   }
 
-  if (scores.size === 0) {
-    // An explicitly scoped request that matched nothing signals no-match instead of running every project.
-    const isGenericAll = /\ball\b/i.test(input) || /\bevery\b/i.test(input);
-    const wantsScoped = /\bfor\b/i.test(input) && tokens.size > 0 && !isGenericAll;
-    if (wantsScoped && projects.length > 1) return { ...empty, all: false };
-    return empty;
-  }
+  if (scores.size === 0) return empty;
 
   const top = Math.max(...scores.values());
   const scoped = new Set();
@@ -161,7 +154,6 @@ export function resolveTaskScope(handle: IndexHandle | null | undefined, root: s
     roots,
     stackInfos,
     activeProject: active ? { id: active.id, root: active.root, name: active.name } : null,
-    all: false,
     confidence: active ? 'high' : 'low',
   };
 }
