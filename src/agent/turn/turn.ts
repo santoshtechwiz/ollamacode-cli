@@ -463,11 +463,6 @@ export async function runTurn(
     }
   }
 
-  if (!turnState.stopReason) {
-    turnState.stopReason =
-      STOP_REASONS.MAX_ITERATIONS;
-  }
-
   return buildResult(
     turnState,
     telemetry,
