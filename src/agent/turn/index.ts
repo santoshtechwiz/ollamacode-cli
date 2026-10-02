@@ -193,7 +193,7 @@ export async function executeTurn({
       config,
       profile,
       signal,
-      onPlan: onPlan as NonNullable<any>,
+      onPlan,
       replanFrom: replan,
       history,
       gateway,
