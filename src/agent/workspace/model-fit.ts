@@ -37,7 +37,7 @@ export function parameterBillions(size: string | undefined): number | undefined 
   return value * scale;
 }
 
-function windowLabel(tokens: number): string {
+export function windowLabel(tokens: number): string {
   return tokens >= 1024 ? `${Math.round(tokens / 1024)}k` : String(tokens);
 }
 

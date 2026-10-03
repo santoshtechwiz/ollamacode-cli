@@ -12,7 +12,8 @@ import { loadConfig } from '../../core/config';
 import { resolveSession, rememberSession } from '../../model/session';
 import { resolveScope as resolveWorkspaceRoot } from '../../agent/workspace/scope';
 import { inspectWorkspace } from '../../agent/workspace/session';
-import { refreshModelCapabilities } from '../../agent/workspace/profile';
+import { refreshModelCapabilities, textToolsFit } from '../../agent/workspace/profile';
+import { windowLabel } from '../../agent/workspace/model-fit';
 import { createAgentState, resetSessionState } from '../../agent/state';
 import { createAgentRuntime } from '../../agent/runtime';
 import { autoSelectModel } from '../../model/catalog';
@@ -132,7 +133,7 @@ export async function openSession(flags: TypedFlags) {
   // The per-tool lines are written below, once the mutating grants have been separated out —
   // saying "resumed with always-allow for write_file" and then "not carried over" is a lie twice over.
 
-  const toolsEnabled =
+  let toolsEnabled =
     flags.tools !== undefined ? flags.tools !== false : resumable ? (saved?.toolsEnabled ?? cfg.toolsEnabled ?? true) : (cfg.toolsEnabled ?? true);
 
   const restored = resumable ? sanitizeMessages(saved?.messages ?? [], isKnownTool) : { messages: [], removed: 0 };
@@ -168,6 +169,14 @@ export async function openSession(flags: TypedFlags) {
       rememberSession({ provider: session.provider, model: session.model });
       bannerNotes.push(describeChoice(choice));
     }
+  }
+  // A model without native tool calling is sent its tools as text. When the window cannot hold that text, every turn
+  // would overflow before the conversation even starts, so it answers without tools unless the person asked for them.
+  if (toolsEnabled && flags.tools === undefined && workspace.nativeTools === false && !textToolsFit(workspace)) {
+    toolsEnabled = false;
+    bannerNotes.push(
+      `${session.model}'s ${windowLabel(Number(workspace.contextWindow))} window can't hold the tool instructions, so it answers without tools — /tools turns them back on`,
+    );
   }
   // Reasoning stays on here; say only what is known about why it may be slow — nothing until CPU placement or a slow rate is actually seen.
   if (workspace.thinkingEnabled && workspace.thinkingSuppressed === 'unaffordable' && (workspace.cpuOnly === true || workspace.tokensPerSec !== undefined)) {
