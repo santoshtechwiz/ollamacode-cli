@@ -3,7 +3,7 @@
 // step budget, and a time limit. What it answers is what the parent's delegate_task call returns.
 
 import { ROLE, STOP_REASONS, TOOL_ERROR_CODE } from '../../protocol';
-import { CancelError } from '../../core/errors';
+import { CancelError, isCancel } from '../../core/errors';
 import { ContextStore } from '../../context/store';
 import { selectToolDefs, type ToolProfile } from '../../context/tool-surface';
 import { fail } from '../../tool/core/tool-result';
@@ -135,6 +135,10 @@ export function createSubagentRunner(
         },
         subagentDepth: 1,
       });
+    } catch (err) {
+      // The time limit can land mid model call, which throws a cancel; that is the child running out of time, not the
+      // person stopping the turn, so it settles as a timed-out result below.
+      if (!(timedOut && isCancel(err) && !signal?.aborted)) throw err;
     } finally {
       clearTimeout(timer);
       signal?.removeEventListener('abort', onParentAbort);

@@ -15,7 +15,7 @@ import { applyApprovalPolicy } from '../src/tool/policy/permission-policy';
 import { createSubagentRunner, type ParentTurn } from '../src/agent/subagent/runner';
 import { CHILD_EXCLUDED_TOOLS, MAX_DELEGATIONS_PER_TURN, SUBAGENT_ROLES } from '../src/agent/subagent/roles';
 import delegateTool from '../src/agent/subagent/delegate.tool';
-import { isCancel } from '../src/core/errors';
+import { CancelError, isCancel } from '../src/core/errors';
 import { ROLE, STOP_REASONS, TOOL_ERROR_CODE } from '../src/protocol';
 
 type Reply = { content?: string; toolCalls?: any[] };
@@ -262,6 +262,23 @@ describe('the subagent runner', () => {
     assert.equal(r.ok, false);
     assert.equal(r.stopReason, 'timed_out');
     assert.match(r.error!, /ran out of time after 0s/);
+  });
+
+  it('a child whose time runs out mid model call still comes back timed out, with the files it changed', async () => {
+    const roles = { slow: { ...SUBAGENT_ROLES.coding, id: 'slow', timeoutMs: 50 } };
+    const { delegate, parent } = runner(
+      // The real gateway throws a cancel when its signal aborts mid call; it does not return.
+      (params) => {
+        parent.state.changes.push({ path: 'app.js' });
+        return new Promise((_, reject) => params.signal.addEventListener('abort', () => reject(new CancelError())));
+      },
+      roles,
+    );
+    const r = await delegate({ role: 'slow', task: 'Never ends' });
+    assert.equal(r.ok, false);
+    assert.equal(r.stopReason, 'timed_out');
+    assert.match(r.error!, /ran out of time/);
+    assert.deepEqual(r.filesChanged, ['app.js']);
   });
 
   it('the parent stopping stops the child, as a cancel and not a failure', async () => {
