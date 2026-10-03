@@ -201,8 +201,11 @@ class PlanGateRule implements PermissionRule {
         if (!inPlan) {
           // --yes means the session pre-approves; a plan that has been approved must not
           // deadlock the work it was approved for.
-          if (ctx.yes || ctx.policy === 'always') {
+          if (ctx.yes) {
             return 'allow';
+          }
+          if (ctx.policy === 'always') {
+            return ctx.interactive && askedEveryTime(ctx) ? 'ask' : 'allow';
           }
           if (!ctx.interactive) {
             return 'deny';
@@ -233,20 +236,20 @@ class DangerousToolRule implements PermissionRule {
   }
 }
 
+/** Deletes, git writes and dangerous commands are asked about every time: no standing approval covers them. */
+function askedEveryTime(ctx: PermissionContext): boolean {
+  const where = { cwd: ctx.cwd, root: ctx.root };
+  if (dangerOf(ctx.toolDef, ctx.args, where) || confirmOf(ctx.toolDef, ctx.args, where)) return true;
+  const command = shellCommandOf(ctx);
+  return command !== null && Boolean(dangerousReason(command, ctx.cwd));
+}
+
 class StandingGrantRule implements PermissionRule {
   name = 'standing-grant';
   evaluate(ctx: PermissionContext): PermissionDecision | null {
     if (isAlwaysAllowed(ctx.permissions, ctx.toolName)) {
-      const danger = dangerOf(ctx.toolDef, ctx.args, { cwd: ctx.cwd, root: ctx.root });
-      if (danger) {
-        return null;
-      }
-      // Deletes and git writes are asked about every time; a standing grant covers only the routine calls.
-      if (confirmOf(ctx.toolDef, ctx.args, { cwd: ctx.cwd, root: ctx.root })) {
-        return null;
-      }
-      const command = shellCommandOf(ctx);
-      if (command !== null && dangerousReason(command, ctx.cwd)) {
+      // A standing grant covers only the routine calls.
+      if (askedEveryTime(ctx)) {
         return null;
       }
       return ctx.permissions.alwaysAllowTools.has(ctx.toolName) ? 'always' : 'allow';
@@ -268,8 +271,10 @@ class PolicyDefaultRule implements PermissionRule {
       return 'deny';
     }
 
+    // The "always" policy is a standing approval for the whole session: like a grant, it covers routine calls only,
+    // and someone who is there is still asked before a delete or a git write.
     if (ctx.policy === 'always') {
-      return 'allow';
+      return ctx.interactive && askedEveryTime(ctx) ? 'ask' : 'allow';
     }
 
     if (ctx.yes) {

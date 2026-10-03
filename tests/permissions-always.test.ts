@@ -69,3 +69,26 @@ describe('"always allow" on starting a process', () => {
     assert.equal(decision, 'deny');
   });
 });
+
+describe('the "always" policy (/permissions)', () => {
+  const decide = (name: string, args: Record<string, unknown>, interactive: boolean) =>
+    new PermissionPolicy().decide({
+      toolName: name, args, toolDef: defaultRegistry.find(name) as any,
+      cwd: os.tmpdir(), root: os.tmpdir(), permissions: createAgentState().permissions,
+      yes: false, policy: 'always', interactive, grantedRoots: [],
+    });
+
+  it('approves routine calls without asking', async () => {
+    assert.equal(await decide('exec_shell', { command: 'node -v' }, true), 'allow');
+    assert.equal(await decide('write_file', { path: 'a.txt', content: 'a' }, true), 'allow');
+  });
+
+  it('still asks before a delete when someone is there to answer', async () => {
+    assert.equal(await decide('exec_shell', { command: 'rm a.txt' }, true), 'ask');
+    assert.equal(await decide('delete_file', { path: 'a.txt' }, true), 'ask');
+  });
+
+  it('does not stall a run nobody can answer', async () => {
+    assert.equal(await decide('exec_shell', { command: 'rm a.txt' }, false), 'allow');
+  });
+});
