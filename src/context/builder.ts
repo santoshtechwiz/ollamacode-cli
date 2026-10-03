@@ -162,6 +162,16 @@ interface CompactResult {
   note: string | null;
 }
 
+/** The one line that stands in for evicted messages. */
+export function trimmedNote(count: number): string {
+  return `[Earlier conversation trimmed: ${count} message(s) omitted]`;
+}
+
+/** How many messages a trimmed note says were omitted; 0 for anything else. */
+export function trimmedCount(note: string | null | undefined): number {
+  return Number(/^\[Earlier conversation trimmed: (\d+) message\(s\) omitted\]$/.exec(String(note ?? ''))?.[1] ?? 0);
+}
+
 /** Library compaction (clear old tool output, then evict the oldest); pinned messages survive in place. */
 export function compact(messages: Message[], pinned: Set<number>, maxTokens: number): CompactResult {
   const ctx = { maxTokens, estimate: messageTokens as unknown as (m: ModelMessage) => number };
@@ -184,7 +194,7 @@ export function compact(messages: Message[], pinned: Set<number>, maxTokens: num
     messages: start < 0 ? [] : kept.slice(start),
     dropped,
     levels,
-    note: dropped ? `[Earlier conversation trimmed: ${dropped} message(s) omitted]` : null,
+    note: dropped ? trimmedNote(dropped) : null,
   };
 }
 
