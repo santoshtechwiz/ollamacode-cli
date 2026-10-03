@@ -70,13 +70,12 @@ export function bridgeTool(client: McpClient, tool: import('./client.ts').McpToo
     tool.inputSchema && typeof tool.inputSchema === 'object'
       ? { type: 'object', properties: {}, ...tool.inputSchema }
       : { type: 'object', properties: {} };
-  const parameters = prepareMcpSchema(client.name, tool.name, schema);
 
   return defineTool({
     name,
     label: `${client.name}: ${tool.name}`,
     description: `[MCP:${client.name}] ${tool.description ?? tool.name}`,
-    parameters,
+    parameters: schema,
     // A tool the server declares read-only changes nothing, so it is not asked about; one it declares destructive
     // is asked about every time, like a delete. Without a declaration it stays risky: asked once, coverable by
     // "always". (The MCP default for destructiveHint is true, which would make every such tool ask every time.)
@@ -107,33 +106,6 @@ export function bridgeTool(client: McpClient, tool: import('./client.ts').McpToo
 }
 
 const LOADER_NAME = 'load_mcp_tools';
-
-const DEEPWIKI_REPO_PATTERN = '^[^/\\s]+/[^/\\s]+(?:/[^/\\s]+)?$';
-
-function prepareMcpSchema(serverName: string, toolName: string, schema: any): any {
-  if (
-    String(serverName).toLowerCase() !== 'deepwiki' ||
-    String(toolName).toLowerCase() !== 'ask_wiki_question' ||
-    !schema.properties?.repoName ||
-    schema.properties.repoName.pattern
-  ) {
-    return schema;
-  }
-
-  return {
-    ...schema,
-    properties: {
-      ...schema.properties,
-      repoName: {
-        ...schema.properties.repoName,
-        pattern: DEEPWIKI_REPO_PATTERN,
-        description:
-          `${schema.properties.repoName.description ?? 'Repository name'} ` +
-          '(use owner/repo, or host/owner/repo for a custom Git host)',
-      },
-    },
-  };
-}
 
 function serverOf(def: import('../types.ts').ToolDef): [string, string] {
   const label = String(def.label ?? def.name);
