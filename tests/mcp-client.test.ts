@@ -70,3 +70,16 @@ describe('requests the server makes', () => {
     }
   });
 });
+
+describe('what a tool returns', () => {
+  it('an image is named with its size, not handed to the model as base64', async () => {
+    const client = fake('camera', 'image');
+    try {
+      await client.connect(5000);
+      const { text } = await client.callTool('echo', {}, 5000);
+      assert.equal(text, '[image image/png, 146 KB — not shown as text]');
+    } finally {
+      await client.close();
+    }
+  });
+});

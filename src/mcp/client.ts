@@ -23,6 +23,42 @@ function isPackageRunner(command: string): boolean {
   return PACKAGE_RUNNERS.has(baseCommand(command));
 }
 
+/** Longest unknown content block passed through as JSON; past it, only its type is named. */
+const UNKNOWN_CONTENT_CHARS = 500;
+
+/** Bytes a base64 string decodes to, in words. */
+function sizeOf(base64: unknown): string {
+  const bytes = Math.round((String(base64 ?? '').length * 3) / 4);
+  return bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} bytes`;
+}
+
+/**
+ * One content block as text the model can use. Images, audio and binary resources are named, not inlined: their
+ * base64 is noise to a text model and used to fill its context (one screenshot was 200,000 characters).
+ */
+function describeContent(block: any): string {
+  if (!block || typeof block !== 'object') return '';
+  switch (block.type) {
+    case 'text':
+      return String(block.text ?? '');
+    case 'image':
+    case 'audio':
+      return `[${block.type}${block.mimeType ? ` ${block.mimeType}` : ''}, ${sizeOf(block.data)} — not shown as text]`;
+    case 'resource': {
+      const resource = block.resource ?? {};
+      if (typeof resource.text === 'string') return resource.text;
+      const parts = [resource.uri, resource.mimeType, resource.blob !== undefined ? sizeOf(resource.blob) : null].filter(Boolean);
+      return `[resource ${parts.join(', ')}]`;
+    }
+    case 'resource_link':
+      return `[link ${[block.name, block.uri].filter(Boolean).join(' ')}]`;
+    default: {
+      const json = JSON.stringify(block);
+      return json.length <= UNKNOWN_CONTENT_CHARS ? json : `[${String(block.type ?? 'unknown')} content, ${json.length} characters — not shown]`;
+    }
+  }
+}
+
 export interface McpTool {
   name: string;
   description?: string;
@@ -124,10 +160,9 @@ export class McpClient {
   async callTool(toolName: string, args: Record<string, unknown>, timeoutMs = 60_000): Promise<{ text: string; isError: boolean; }> {
     const res = await this._request('tools/call', { name: toolName, arguments: args ?? {} }, timeoutMs);
     const content = Array.isArray(res?.content) ? res.content : [];
-    const text = content
-      .map((c: { type?: string; text?: string; } | null) => (c && c.type === 'text' ? String(c.text ?? '') : c ? JSON.stringify(c) : ''))
-      .filter(Boolean)
-      .join('\n');
+    let text = content.map(describeContent).filter(Boolean).join('\n');
+    // Newer servers may answer with structured data alone.
+    if (!text && res?.structuredContent !== undefined) text = JSON.stringify(res.structuredContent);
     return { text, isError: Boolean(res?.isError) };
   }
 
