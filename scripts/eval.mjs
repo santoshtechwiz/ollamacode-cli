@@ -205,6 +205,160 @@ const SERVER_APP = {
   ].join('\n'),
 };
 
+// A long file: three changes far apart in it, asked for at once. Twenty plain functions pad it out so a search quoted
+// from memory has lots of near-identical text to drift into.
+const BIG_INVENTORY = (() => {
+  const helpers = Array.from({ length: 20 }, (_, i) => [
+    `function metric${i}(items) {`,
+    `  let total = 0;`,
+    `  for (const item of items) {`,
+    `    total += item.qty * ${i + 1};`,
+    `  }`,
+    `  return total;`,
+    `}`,
+    '',
+  ].join('\n')).join('\n');
+  return {
+    'src/inventory.js': [
+      "'use strict';",
+      '',
+      'const LOW_STOCK = 5;',
+      'const MAX_QTY = 1000;',
+      '',
+      'function restock(stock, sku, qty) {',
+      '  stock[sku] = (stock[sku] || 0) + qty;',
+      '  return stock[sku];',
+      '}',
+      '',
+      helpers,
+      'function reserve(stock, sku, qty) {',
+      '  if ((stock[sku] || 0) < qty) return false;',
+      '  stock[sku] -= qty;',
+      '  return true;',
+      '}',
+      '',
+      'function lowStock(stock) {',
+      '  return Object.keys(stock).filter((sku) => stock[sku] <= LOW_STOCK);',
+      '}',
+      '',
+      'module.exports = { LOW_STOCK, MAX_QTY, restock, reserve, lowStock, metric0, metric19 };',
+      '',
+    ].join('\n'),
+    'test.js': [
+      "const assert = require('node:assert/strict');",
+      "const inv = require('./src/inventory');",
+      'const stock = {};',
+      "assert.equal(inv.addStock(stock, 'a', 4), 4);",
+      "assert.throws(() => inv.addStock(stock, 'a', 0));",
+      "assert.throws(() => inv.addStock(stock, 'a', 1001));",
+      "assert.equal(inv.reserve(stock, 'a', 3), true);",
+      "assert.deepEqual(inv.lowStock(stock), ['a']);",
+      "inv.addStock(stock, 'b', 9);",
+      "assert.deepEqual(inv.lowStock(stock), ['a', 'b']);",
+      "assert.equal(inv.metric19([{ qty: 2 }]), 40);",
+      "console.log('ok');",
+      '',
+    ].join('\n'),
+  };
+})();
+
+// The Result.cs session as JavaScript: a second request changes lines right next to the first one's.
+const RESULT_JS = {
+  'src/result.js': [
+    'class Result {',
+    '  constructor(ok, error) {',
+    '    this.ok = ok;',
+    '    this.error = error;',
+    '  }',
+    '',
+    '  static success() {',
+    '    return new Result(true, null);',
+    '  }',
+    '',
+    '  static failure(error) {',
+    '    return new Result(false, error);',
+    '  }',
+    '}',
+    '',
+    'class ValueResult extends Result {',
+    '  constructor(value, ok, error) {',
+    '    super(ok, error);',
+    '    this.value = value;',
+    '  }',
+    '',
+    '  static success(value) {',
+    '    return new ValueResult(value, true, null);',
+    '  }',
+    '',
+    '  static failure(error) {',
+    '    return new ValueResult(undefined, false, error);',
+    '  }',
+    '}',
+    '',
+    'module.exports = { Result, ValueResult };',
+    '',
+  ].join('\n'),
+  'test.js': [
+    "const assert = require('node:assert/strict');",
+    "const { Result, ValueResult } = require('./src/result');",
+    "assert.equal(Result.success().error, '');",
+    "assert.equal(ValueResult.success(3).error, '');",
+    'assert.equal(ValueResult.success(3).value, 3);',
+    "const v = new ValueResult(7);",
+    "assert.equal(v.ok, true);",
+    "assert.equal(v.error, '');",
+    "assert.equal(Result.failure('x').error, 'x');",
+    "console.log('ok');",
+    '',
+  ].join('\n'),
+};
+
+// One signature, three files that must agree on it.
+const FORMAT_APP = {
+  'src/format.js': [
+    'function formatPrice(amount) {',
+    "  return '$' + amount.toFixed(2);",
+    '}',
+    '',
+    'module.exports = { formatPrice };',
+    '',
+  ].join('\n'),
+  'src/cart.js': [
+    "const { formatPrice } = require('./format');",
+    '',
+    'function cartLine(name, amount) {',
+    "  return name + ': ' + formatPrice(amount);",
+    '}',
+    '',
+    'module.exports = { cartLine };',
+    '',
+  ].join('\n'),
+  'src/invoice.js': [
+    "const { formatPrice } = require('./format');",
+    '',
+    'function invoiceTotal(lines) {',
+    '  const total = lines.reduce((sum, l) => sum + l.amount, 0);',
+    "  return 'Total ' + formatPrice(total);",
+    '}',
+    '',
+    'module.exports = { invoiceTotal };',
+    '',
+  ].join('\n'),
+  'test.js': [
+    "const assert = require('node:assert/strict');",
+    "const { formatPrice } = require('./src/format');",
+    "const { cartLine } = require('./src/cart');",
+    "const { invoiceTotal } = require('./src/invoice');",
+    "assert.equal(formatPrice(3), '$3.00');",
+    "assert.equal(formatPrice(3, '€'), '€3.00');",
+    "assert.equal(cartLine('tea', 2, '£'), 'tea: £2.00');",
+    "assert.equal(invoiceTotal([{ amount: 1 }, { amount: 2 }], '€'), 'Total €3.00');",
+    "assert.equal(invoiceTotal([{ amount: 1 }]), 'Total $1.00');",
+    "console.log('ok');",
+    '',
+  ].join('\n'),
+};
+
 const SCENARIOS = [
   {
     id: 'node-rename',
@@ -370,6 +524,35 @@ const SCENARIOS = [
       const text = read(join(cwd, 'app.js'));
       return /Number\(process\.env\.PORT\) \|\| 8080;/.test(text) && text.startsWith('// SPDX') && /HOST \|\| "127\.0\.0\.1"/.test(text) && (text.match(/SPDX/g) ?? []).length === 1;
     },
+  },
+  {
+    id: 'edit-big-file',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, BIG_INVENTORY),
+    prompt: 'Make three changes in src/inventory.js: rename restock to addStock (and export it under the new name), make addStock throw an Error when qty is not an integer from 1 to MAX_QTY, and change LOW_STOCK to 10. Then run node test.js.',
+    check: (cwd) => {
+      const text = read(join(cwd, 'src/inventory.js'));
+      // The twenty helpers must come through untouched: a wide edit that rewrote them is not the change asked for.
+      const helpers = Array.from({ length: 20 }, (_, i) => text.includes(`    total += item.qty * ${i + 1};`)).every(Boolean);
+      return sh('node test.js', cwd).status === 0 && helpers && !/\brestock\b/.test(text);
+    },
+  },
+  {
+    id: 'edit-second-change',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, RESULT_JS),
+    inputs: [
+      "In src/result.js, make Result.success() and ValueResult.success() use an empty string '' for error instead of null.",
+      'Now give the ValueResult constructor defaults: ok defaults to true and error to an empty string. Then run node test.js.',
+    ],
+    check: (cwd) => sh('node test.js', cwd).status === 0 && !/null/.test(read(join(cwd, 'src/result.js'))),
+  },
+  {
+    id: 'edit-three-files',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, FORMAT_APP),
+    prompt: "Give formatPrice in src/format.js a second parameter, currency, defaulting to '$', and pass it through: cartLine and invoiceTotal each take an optional currency as their last parameter and hand it to formatPrice. Then run node test.js.",
+    check: (cwd) => sh('node test.js', cwd).status === 0,
   },
 ];
 
