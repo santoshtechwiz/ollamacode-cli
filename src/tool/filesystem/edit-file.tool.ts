@@ -129,9 +129,11 @@ function contentUnchanged(original: string, updated: string): boolean {
 function hasTruncationMarker(search: string): boolean {
   const s = String(search ?? '');
   // Only treat an ellipsis as truncation when it is clearly a standalone diagnostic marker.
-  return /(?:^|[\\s])(?:…|\\.\\.\\.)(?:$|[\\s])/.test(s) ||
-    /…\\s*$/.test(s) ||
-    /\\.{3}\\s*$/.test(s);
+  // Written as regex literals: the escapes were once doubled as if in a string, so `[\\s]` matched a backslash or an
+  // "s" and none of these ever fired.
+  return /(?:^|\s)(?:…|\.\.\.)(?:$|\s)/.test(s) ||
+    /…\s*$/.test(s) ||
+    /\.{3}\s*$/.test(s);
 }
 
 function notFoundFailure(
