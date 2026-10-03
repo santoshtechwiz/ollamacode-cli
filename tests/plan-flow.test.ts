@@ -210,13 +210,23 @@ describe('the live checklist', () => {
     assert.ok(titles.every((t: string) => t.length <= 60), titles.join(' | '));
   });
 
-  it("follows the model's own task list when it keeps one", () => {
+  it("shows the plan's steps, not a second copy, when the model also keeps a task list", () => {
     const todos = [
       { content: 'Create the venv', status: 'completed' },
       { content: 'Install packages', status: 'in_progress' },
       { content: 'Write rag.py', status: 'pending' },
     ];
-    const items = liveChecklist(ragPlan(), { todos, changes: [] }, 0);
+    const withList = liveChecklist(ragPlan(), { todos, changes: [] }, 0).map((i: any) => i.title);
+    assert.deepEqual(withList, liveChecklist(ragPlan(), { changes: [] }, 0).map((i: any) => i.title));
+  });
+
+  it("follows the model's own task list when there is no plan", () => {
+    const todos = [
+      { content: 'Create the venv', status: 'completed' },
+      { content: 'Install packages', status: 'in_progress' },
+      { content: 'Write rag.py', status: 'pending' },
+    ];
+    const items = liveChecklist(null, { todos, changes: [] }, 0);
     assert.deepEqual(items.map((i: any) => `${i.status} ${i.title}`), ['done Create the venv', 'active Install packages', 'open Write rag.py']);
   });
 });
