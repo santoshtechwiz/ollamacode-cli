@@ -53,3 +53,20 @@ describe('an MCP server that cannot be started, or stops', () => {
     }
   });
 });
+
+describe('requests the server makes', () => {
+  it('a server request is answered, and never mistaken for the reply to ours that shares its id', async () => {
+    const reply = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-mcp-')), 'reply.json');
+    const client = fake('asker', 'asks', reply);
+    try {
+      await client.connect(5000);
+      const tools = await client.listTools();
+      assert.deepEqual(tools.map((t) => t.name), ['echo'], 'the real reply, not the ping that came first with the same id');
+      for (let i = 0; i < 50 && !fs.existsSync(reply); i++) await new Promise((r) => setTimeout(r, 20));
+      assert.deepEqual(JSON.parse(fs.readFileSync(reply, 'utf8')).result, {}, 'the ping was answered');
+    } finally {
+      await client.close();
+      fs.rmSync(path.dirname(reply), { recursive: true, force: true });
+    }
+  });
+});

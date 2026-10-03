@@ -195,6 +195,17 @@ export class McpClient {
     }
   }
 
+  /** Answer what the server asks: a ping is answered, anything else is declined, so the server never waits on us. */
+  _onServerMessage(msg: { id?: unknown; method: string }) {
+    if (msg.id === undefined || msg.id === null) return;
+    if (msg.method === 'ping') {
+      this._write({ jsonrpc: '2.0', id: msg.id, result: {} });
+      return;
+    }
+    logger.debug(`mcp[${this.name}] declined server request ${msg.method}`);
+    this._write({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: `ocode does not support ${msg.method}` } });
+  }
+
   _onMessage(line: string) {
     let msg;
     try {
@@ -203,7 +214,13 @@ export class McpClient {
       logger.debug(`mcp[${this.name}] non-JSON line: ${line}`);
       return;
     }
-    if (msg.id === undefined || msg.id === null) return; // notification from server; ignored
+    // Anything with a method comes from the server: a request when it has an id, a notification when not. Never a
+    // reply to ours, even when its id happens to match one of ours, since each side numbers its own requests.
+    if (typeof msg.method === 'string') {
+      this._onServerMessage(msg);
+      return;
+    }
+    if (msg.id === undefined || msg.id === null) return;
     const pending = this.pending.get(msg.id);
     if (!pending) return;
     this.pending.delete(msg.id);
