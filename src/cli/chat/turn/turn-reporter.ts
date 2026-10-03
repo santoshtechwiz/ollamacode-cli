@@ -1,4 +1,5 @@
 import { liveChecklist } from '../../../agent/planning/plan';
+import { taskTodos } from '../../../agent/planning/todo-write.tool';
 import { STOP_REASONS } from '../../../protocol';
 import { toolTally } from '../../../ui/tool-preview';
 import { toolLabel } from '../../../ui/render/labels';
@@ -144,10 +145,12 @@ function reportPlan(host: ChatTurnContext, result: TurnResult): void {
     return;
   }
   if (!result.planChecklist?.length) {
-    // No plan, but the model kept a task list this turn: its final state goes in the transcript once.
-    const lists = (result.toolResults ?? []).map((t: any) => t.result?.data?.todos).filter(Array.isArray);
-    const last = lists[lists.length - 1] as Array<{ content?: unknown; status?: unknown }> | undefined;
-    if (last?.length) render.commitTasks(liveChecklist(null, { todos: last }));
+    // No plan, but the task keeps a list: its state as the turn ended goes in the transcript once. The task's list,
+    // so a /continue turn that never rewrote it still ends with it shown; else the last one this turn wrote.
+    const written = (result.toolResults ?? []).map((t: any) => t.result?.data?.todos).filter(Array.isArray);
+    const owned = taskTodos(host.workspace?.state);
+    const todos = owned.length ? owned : (written[written.length - 1] as Array<{ content?: unknown; status?: unknown }> | undefined);
+    if (todos?.length) render.commitTasks(liveChecklist(null, { todos }));
     return;
   }
   render.commitTasks(result.planChecklist);

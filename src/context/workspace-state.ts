@@ -7,6 +7,7 @@ import { failureImplication } from '../prompts/recovery';
 import { logger } from '../core/logger';
 import { normalizeRelPath } from '../core/paths';
 import { BackgroundInbox, describeExitsForModel } from '../tool/process/background-inbox';
+import { taskTodos } from '../agent/planning/todo-write.tool';
 
 const MAX_CHANGES = 50;
 
@@ -239,9 +240,17 @@ export function describeSession(state: WorkspaceState, { exits = true }: { exits
 
   const running = [...state.subprocesses.values()].filter((s) => !s.exited && !s.error);
   const ended = exits ? describeExitsForModel(state.background?.pending() ?? []) : [];
-  if (!hasChanges && recent.length === 0 && running.length === 0 && ended.length === 0) return '';
+  // The task list as the model last wrote it for this task: the tool result that set it scrolls away, the list does not.
+  const todos = taskTodos(state);
+  if (!hasChanges && recent.length === 0 && running.length === 0 && ended.length === 0 && todos.length === 0) return '';
 
   const lines = ['SESSION RECORD (kept by the system, not by you)', ...ended];
+
+  if (todos.length > 0) {
+    const mark = { pending: '[ ]', in_progress: '[~]', completed: '[x]' } as const;
+    lines.push('Your task list, as you last wrote it (todo_write with the full list replaces it):');
+    for (const t of todos) lines.push(`${mark[t.status] ?? '[ ]'} ${t.content}`);
+  }
 
   if (running.length > 0) {
     lines.push('Background subprocesses still running (check one with subprocess_status, end it with stop_subprocess — do not start another for the same job):');

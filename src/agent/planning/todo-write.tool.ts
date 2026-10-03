@@ -12,7 +12,9 @@ export interface TodoItem {
 /** The steps on a task list that still have work left: named and not completed. */
 /** The task list, when the task running now wrote it; a list another task left behind is not this task's. */
 export function taskTodos(state: { todos?: unknown; todosTask?: unknown; taskId?: unknown } | null | undefined): TodoItem[] {
-  return Array.isArray(state?.todos) && state.todosTask === state.taskId ? (state.todos as TodoItem[]) : [];
+  // A list no task wrote is no task's, even while no task is running: "none" must not match "none".
+  const owned = state?.todosTask !== undefined && state?.todosTask !== null && state.todosTask === state.taskId;
+  return owned && Array.isArray(state?.todos) ? (state.todos as TodoItem[]) : [];
 }
 
 export function unfinishedTodos(todos: unknown): TodoItem[] {
