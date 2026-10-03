@@ -35,7 +35,8 @@ function qualify(serverName: string, toolName: string): string {
   return `mcp__${clean(serverName)}__${clean(toolName)}`;
 }
 
-function bridgeTool(client: McpClient, tool: import('./client.ts').McpTool): import('../types.ts').ToolDef {
+/** One server tool as an ocode tool: it calls the server, and its risk is what the server declares about it. */
+export function bridgeTool(client: McpClient, tool: import('./client.ts').McpTool): import('../types.ts').ToolDef {
   const name = qualify(client.name, tool.name);
   const schema =
     tool.inputSchema && typeof tool.inputSchema === 'object'
@@ -48,7 +49,13 @@ function bridgeTool(client: McpClient, tool: import('./client.ts').McpTool): imp
     label: `${client.name}: ${tool.name}`,
     description: `[MCP:${client.name}] ${tool.description ?? tool.name}`,
     parameters,
-    risky: true,
+    // A tool the server declares read-only changes nothing, so it is not asked about; one it declares destructive
+    // is asked about every time, like a delete. Without a declaration it stays risky: asked once, coverable by
+    // "always". (The MCP default for destructiveHint is true, which would make every such tool ask every time.)
+    risky: tool.annotations?.readOnlyHint !== true,
+    ...(tool.annotations?.destructiveHint === true && tool.annotations?.readOnlyHint !== true
+      ? { confirmReason: () => 'the server marks this tool as destructive' }
+      : {}),
     async execute(args, ctx) {
       try {
         // A server that stopped is started again, a bounded number of times, before its tool is called.

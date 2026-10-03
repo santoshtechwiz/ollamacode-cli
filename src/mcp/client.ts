@@ -64,6 +64,8 @@ export interface McpTool {
   name: string;
   description?: string;
   inputSchema?: any;
+  /** What the server says about the tool's effects; absent hints mean nothing is claimed. */
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; title?: string };
 }
 
 export class McpClient {
