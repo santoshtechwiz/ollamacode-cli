@@ -142,12 +142,14 @@ function notFoundFailure(
   isJson: boolean,
   why: string,
   definitions: string[] = [],
+  where: { focus?: { line: number; lineEnd: number }; divergedAt?: number } = {},
 ): ToolResult {
   const totalLines = countLines(content);
-  const best = bestMatchLine(content, search);
+  // The listing shows the line the verdict names; a listing chosen another way showed lines the model had not got wrong.
+  const best = where.focus?.line ?? bestMatchLine(content, search);
   const preview =
     best !== null
-      ? numberedWindow(content, best, best, { pad: 6 })
+      ? numberedWindow(content, best, best, { pad: 6, mark: where.divergedAt !== undefined })
       : content
           .split('\n')
           .slice(0, HEADLESS_PREVIEW_LINES)
@@ -197,7 +199,8 @@ function notFoundFailure(
 
   // Last fallback after exact and whitespace matching failed, and only as a
   // suggestion — never applied. Skipped when it collapses onto the preview.
-  const fuzzy = fuzzyLines(content, search, best);
+  // A search that parted ways at a named line needs no guess at where it was meant to go.
+  const fuzzy = where.divergedAt === undefined ? fuzzyLines(content, search, best) : null;
   if (fuzzy !== null && !(best !== null && fuzzy.line === best && fuzzy.lineEnd === best)) {
     hint += ` Did you mean ${lineSpanLabel(fuzzy.line, fuzzy.lineEnd)}? If so, quote that region verbatim from the listing below.`;
   }
@@ -214,7 +217,8 @@ function notFoundFailure(
     hint,
     code: TOOL_ERROR_CODE.ENOMATCH,
     display: `${rel} currently contains:\n${preview}${previewTail}`,
-    data: { path: rel, lines: totalLines },
+    // Where the listing points, so a caller that rebuilds this failure (with definitions) points at the same place.
+    data: { path: rel, lines: totalLines, where },
   };
 }
 
@@ -278,7 +282,7 @@ function planOneEdit(
 
   if (!plan.ok) {
     if (plan.code === TOOL_ERROR_CODE.ENOMATCH) {
-      return { status: 'fail', result: notFoundFailure(content, String(edit.search), rel, ctx, isJson, plan.why) };
+      return { status: 'fail', result: notFoundFailure(content, String(edit.search), rel, ctx, isJson, plan.why, [], plan) };
     }
     if (plan.code === TOOL_ERROR_CODE.EAMBIGUOUS) {
       return { status: 'fail', result: ambiguousFailure(content, String(edit.search), plan.ranges, rel, isJson, plan.why) };
@@ -628,10 +632,11 @@ async function openEdit(
     // search isn't recoverable from the wrapped error. The sync match path
     // can't parse (WASM load is async), so the hint is enriched here, on the
     // async path both cannotRun and execute share.
+    const where = ((outcome.result.data as { where?: { focus?: { line: number; lineEnd: number }; divergedAt?: number } } | undefined)?.where) ?? {};
     const defs = await nearbyDefinitions(
       rel,
       opened.content,
-      bestMatchLine(opened.content, String(effective.search ?? '')),
+      where.focus?.line ?? bestMatchLine(opened.content, String(effective.search ?? '')),
     );
     if (defs.length > 0) {
       outcome = failOutcome(
@@ -643,6 +648,7 @@ async function openEdit(
           opened.isJson,
           String(outcome.result.error),
           defs,
+          where,
         ),
       );
     }

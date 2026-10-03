@@ -292,8 +292,7 @@ function firstDivergence(content: string, search: string): { start: number; line
 const shown = (line: string) => (line === '' ? 'a blank line' : `“${line.length > 60 ? `${line.slice(0, 59)}…` : line}”`);
 
 /** Why a search did not match, naming the first differing line when the search starts matching and then parts ways. */
-function notFoundWhy(content: string, search: string, rel: string): string {
-  const d = firstDivergence(content, search);
+function notFoundWhy(content: string, search: string, rel: string, d = firstDivergence(content, search)): string {
   if (!d) return `“${quoteSearchText(search)}” is not in ${rel}`;
   return `the search matches ${rel} from line ${d.start} but differs at line ${d.line}: the file has ${shown(d.file)} where the search has ${shown(d.search)}`;
 }
@@ -317,6 +316,8 @@ export interface EditPlan {
   via: 'exact' | 'whitespace' | 'json';
   /** Set when a line range chose between several matches. */
   disambiguatedBy?: { line: number; lineEnd: number };
+  /** A search that matched for some lines and then parted ways: the file line where it did. `focus` points there. */
+  divergedAt?: number;
 }
 
 export interface EditArgError {
@@ -512,12 +513,16 @@ export function planEdit(
   }
 
   if (ranges.length === 0) {
-    const near = bestMatchLine(content, search);
+    // One answer to "where did it go wrong", for the sentence and the listing alike: the line where a search that
+    // started matching parts ways, else the line sharing most of its words.
+    const diverged = firstDivergence(content, search);
+    const near = diverged?.line ?? bestMatchLine(content, search);
     return {
       ok: false,
       code: 'ENOMATCH',
       ranges: [],
-      why: notFoundWhy(content, search, rel),
+      why: notFoundWhy(content, search, rel, diverged),
+      ...(diverged ? { divergedAt: diverged.line } : {}),
       targets: [],
       replacement: '',
       replacements: 0,
