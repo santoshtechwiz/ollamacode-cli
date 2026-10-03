@@ -92,3 +92,35 @@ describe('the "always" policy (/permissions)', () => {
     assert.equal(await decide('exec_shell', { command: 'rm a.txt' }, false), 'allow');
   });
 });
+
+describe('answering "always" once', () => {
+  it('covers routine changes of every tool for the session; deletes still ask', async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-always-all-'));
+    try {
+      const state: any = createWorkspaceState(cwd);
+      const agentState = createAgentState();
+      state.permissions = agentState.permissions;
+      const host = { workspace: { cwd, root: cwd, state }, agentState, interactive: true, cfg: { permissions: { risky: 'ask' } }, flags: {} } as any;
+      const asked: string[] = [];
+      const approve = createApproveFn(host, async (_question, call) => {
+        asked.push(call.name);
+        return asked.length === 1 ? 'always' : 'yes';
+      });
+      const executor = createExecutor({ root: cwd, state, approve, timeoutMs: 20_000 });
+      const run = async (name: string, args: Record<string, unknown>) => (await executor.run(name, args, {})).result;
+
+      await run('exec_shell', { command: 'node -v' });
+      await run('write_file', { path: 'a.txt', content: 'a' });
+      await run('edit_file', { path: 'a.txt', old_string: 'a', new_string: 'b' });
+      await run('start_subprocess', { command: 'node -v', id: 'p' });
+      assert.deepEqual(asked, ['exec_shell'], 'one "always" covered the routine calls of the other tools');
+
+      await run('exec_shell', { command: 'rm a.txt' });
+      await run('write_file', { path: 'c.txt', content: 'c' });
+      await run('delete_file', { path: 'c.txt' });
+      assert.deepEqual(asked, ['exec_shell', 'exec_shell', 'delete_file'], 'deletes are still asked about');
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});

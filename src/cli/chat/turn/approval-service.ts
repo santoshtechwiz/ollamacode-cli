@@ -2,7 +2,6 @@ import { APPROVAL, type ApprovalVerdict } from '../../../protocol';
 import { PermissionPolicy, confirmOf, type ApproveFn } from '../../../tool/policy/permission-policy';
 import { confirmRisky } from '../../../ui/prompts';
 import { describeCall } from '../../../tool/core/tool-call';
-import { activityForTool } from '../../../agent/status';
 import { resolveYes } from '../../flags';
 import { previewCall } from '../render';
 import { holdingTerminal } from './holding-terminal';
@@ -21,11 +20,10 @@ export function createPromptFn(host: ChatTurnContext, signal: AbortSignal): Prom
     // The preview names the action better, but the question's other lines say why it is being asked.
     const [, ...why] = question.split('\n');
     const shown = preview?.question ? [preview.question, ...why].join('\n') : question;
-    const scope = activityForTool(call.name).toLowerCase();
     const ans = await holdingTerminal(host, () =>
-      confirmRisky(shown, { danger: call.dangerous, confirm: call.confirm, alwaysScope: scope, signal })
+      confirmRisky(shown, { danger: call.dangerous, confirm: call.confirm, alwaysScope: 'routine changes this session', signal })
     );
-    if (ans === 'always') render.note(`→ won't ask again this session for ${scope}; deletes and git changes still ask`, 'dim');
+    if (ans === 'always') render.note('→ won\'t ask again this session for routine changes; deletes, git changes and risky commands still ask', 'dim');
     if (ans === 'no') render.note('→ declined; the model is told the call did not run', 'dim');
     return ans;
   };
@@ -83,6 +81,7 @@ export function createApproveFn(host: ChatTurnContext, promptFn: PromptFn): Appr
     const ans = await promptFn(question, { name, args, dangerous: reason?.dangerous ?? undefined, confirm });
     if (ans === 'always') {
       agentState.permissions.alwaysAllowTools.add(name);
+      agentState.permissions.alwaysAllowAll = true;
       return true;
     }
     return verdictFromAnswer(ans);

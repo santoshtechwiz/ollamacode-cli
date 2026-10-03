@@ -23,6 +23,8 @@ export type AnswerFn = (
 
 export interface PermissionState {
   alwaysAllowTools: Set<string>;
+  /** The person answered "always": routine calls of every tool are approved for the session, not only that tool's. */
+  alwaysAllowAll?: boolean;
   deniedTools: Set<string>;
 }
 
@@ -37,11 +39,12 @@ function isAlwaysAllowed(
   permissions: PermissionState | undefined | null,
   toolName: string,
 ): boolean {
-  return Boolean(permissions?.alwaysAllowTools?.has(toolName));
+  return Boolean(permissions?.alwaysAllowAll || permissions?.alwaysAllowTools?.has(toolName));
 }
 
 export function clearAlwaysAllow(permissions: PermissionState): void {
   permissions.alwaysAllowTools.clear();
+  permissions.alwaysAllowAll = false;
 }
 
 export function persistentPermissions(
