@@ -554,11 +554,10 @@ const SCENARIOS = [
     prompt: "Give formatPrice in src/format.js a second parameter, currency, defaulting to '$', and pass it through: cartLine and invoiceTotal each take an optional currency as their last parameter and hand it to formatPrice. Then run node test.js.",
     check: (cwd) => sh('node test.js', cwd).status === 0,
   },
-  // Subagent tasks: switched on through a private config, they pass only when the parent delegated and the work is right.
+  // Subagent tasks (on by default): they pass only when the parent delegated and the work is right.
   {
     id: 'subagent-research',
     repo: null,
-    config: { agent: { subagents: true } },
     setup: (cwd) => writeAll(cwd, SERVER_APP),
     prompt: 'Use a research subagent (delegate_task) to find which line of app.js sets the default port, then tell me the line number and the default value. Do not change any files.',
     check: (cwd, run) => run.tools.includes('delegate_task') && /\b4\b/.test(run.answer) && /3000/.test(run.answer) && !/8080/.test(read(join(cwd, 'app.js'))),
@@ -566,7 +565,6 @@ const SCENARIOS = [
   {
     id: 'subagent-coding',
     repo: null,
-    config: { agent: { subagents: true } },
     setup: (cwd) => writeAll(cwd, PRICING),
     prompt: 'Delegate this to a coding subagent with delegate_task: in src/pricing.js rename the parameter rate to taxRate everywhere, without changing behaviour, and run node test.js. Then tell me what it changed.',
     check: (cwd, run) => run.tools.includes('delegate_task') && sh('node test.js', cwd).status === 0 && !/\brate\b/.test(read(join(cwd, 'src/pricing.js'))),

@@ -24,7 +24,7 @@ const isChild = (request: any) => (request.messages ?? []).some((m: any) => m.ro
 const toolNames = (request: any) => (request.tools ?? []).map((t: any) => t.function?.name);
 
 async function session(
-  { parent, child, subagents = true, files = { 'app.js': 'const PORT = 3000;\n' }, signal, before, native = true }:
+  { parent, child, subagents, files = { 'app.js': 'const PORT = 3000;\n' }, signal, before, native = true }:
   { parent: Reply[]; child: Reply[]; subagents?: boolean; files?: Record<string, string>; signal?: AbortSignal; before?: (state: any) => void; native?: boolean },
 ) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-subagent-'));
@@ -40,7 +40,8 @@ async function session(
       model: 'test',
       history,
       systemMessages: [{ role: ROLE.SYSTEM, content: 'You are ocode.' }],
-      config: { maxIterations: 8, subagents },
+      // No subagents key unless a test sets one: on is the default.
+      config: { maxIterations: 8, ...(subagents === undefined ? {} : { subagents }) },
       toolsEnabled: true,
       cwd,
       state,
@@ -117,7 +118,7 @@ describe('what a child may do', () => {
     const offered = toolNames(s.asked.child[0]);
     for (const name of [...CHILD_EXCLUDED_TOOLS, 'edit_file', 'write_file']) assert.ok(!offered.includes(name), `${name} offered to a research child`);
     assert.ok(offered.includes('read_file'));
-    assert.ok(toolNames(s.asked.parent[0]).includes('delegate_task'), 'the parent is offered it');
+    assert.ok(toolNames(s.asked.parent[0]).includes('delegate_task'), 'the parent is offered it, with no setting at all');
   });
 
   for (const native of [true, false]) it(`a call to a tool outside its role is refused at the child's runner, and nothing changes (${native ? 'tool channel' : 'text mode, where no tool list is sent'})`, async () => {
@@ -159,7 +160,7 @@ describe('what a child may do', () => {
     assert.match(s.toolMessage('p2'), /^OK delegate_task — Reused/);
   });
 
-  it('is off unless switched on: not offered, and a call to it starts nothing', async () => {
+  it('switched off (subagents: false): not offered, and a call to it starts nothing', async () => {
     const s = await session({
       subagents: false,
       parent: [{ toolCalls: [call('p1', 'delegate_task', { role: 'research', task: 'Which port?' })] }, { content: 'I will look myself.' }],

@@ -192,10 +192,10 @@ export async function runTurn(
         callbacks.onCommandOutput,
     });
 
-  // A turn that may change things, with subagents switched on, may hand tasks to them; a subagent's turn never can,
+  // A turn that may change things may hand tasks to subagents unless they are switched off; a subagent's turn never can,
   // so they go one level deep. The delegate tool is offered only where this function exists.
   const delegate =
-    toolsEnabled && !readOnly && config.subagents === true && !params.subagentDepth
+    toolsEnabled && !readOnly && config.subagents !== false && !params.subagentDepth
       ? createSubagentRunner(
           { provider, model, systemMessages, budgetTokens: history.budgetTokens, toolProfile, config, cwd, state: workspaceState, approve, gateway, toolRunner, callbacks },
           runTurn,
