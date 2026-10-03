@@ -20,6 +20,8 @@ export interface ToolContext {
   agentState?: AgentStateBox;
   onCommandOutput?: (text: string) => void;
   memo?: InvalidCallMemo;
+  /** This call's approval, its clocks stopped while the person answers; a subagent's calls ask through it. */
+  approve?: import('../policy/permission-policy.ts').ApproveFn;
   /** Starts a subagent; set only in a turn that may (see agent/subagent). */
   delegate?: import('../../agent/subagent/runner.ts').DelegateFn;
 }

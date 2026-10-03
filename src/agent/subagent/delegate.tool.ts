@@ -50,7 +50,7 @@ export default defineTool({
     }
     let r: SubagentResult;
     try {
-      r = await ctx.delegate({ role: String(args.role ?? ''), task: String(args.task ?? ''), context: args.context ? String(args.context) : undefined }, ctx.signal);
+      r = await ctx.delegate({ role: String(args.role ?? ''), task: String(args.task ?? ''), context: args.context ? String(args.context) : undefined }, ctx.signal, ctx.approve);
     } catch (err) {
       // The person stopping the turn is not the subagent failing: the runtime records it as a cancel.
       if (isCancel(err)) throw err;

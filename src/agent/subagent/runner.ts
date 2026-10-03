@@ -12,6 +12,7 @@ import { CHILD_EXCLUDED_TOOLS, MAX_DELEGATIONS_PER_TURN, SUBAGENT_ROLES, type Su
 type TurnResult = import('../../protocol.ts').TurnResult;
 type Message = import('../../types.ts').Message;
 type ToolExecutor = import('../../tool/execution/executor.ts').ToolExecutor;
+type ApproveFn = import('../../tool/policy/permission-policy.ts').ApproveFn;
 
 export interface DelegateRequest {
   role: string;
@@ -35,7 +36,8 @@ export interface SubagentResult {
   error?: string;
 }
 
-export type DelegateFn = (request: DelegateRequest, signal?: AbortSignal) => Promise<SubagentResult>;
+/** `approve` is the delegate call's own, which stops that call's clocks while the person answers; the parent's otherwise. */
+export type DelegateFn = (request: DelegateRequest, signal?: AbortSignal, approve?: ApproveFn) => Promise<SubagentResult>;
 
 /** What a child turn shares with its parent, taken from the parent's own runTurn parameters. */
 export interface ParentTurn {
@@ -71,7 +73,7 @@ export function createSubagentRunner(
 ): DelegateFn {
   let started = 0;
 
-  return async (request, signal) => {
+  return async (request, signal, approveCall) => {
     const role = roles[String(request.role ?? '')];
     const refused = (error: string): SubagentResult => ({
       ok: false, role: String(request.role ?? ''), answer: '', stopReason: 'refused', filesChanged: [], toolsUsed: [], steps: 0, error,
@@ -95,11 +97,33 @@ export function createSubagentRunner(
     const controller = new AbortController();
     const onParentAbort = () => controller.abort();
     signal?.addEventListener('abort', onParentAbort, { once: true });
+    // The time limit counts the child's work, not the person reading an approval: its clock stands still while one is open.
     let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, role.timeoutMs);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let leftMs = role.timeoutMs;
+    let runningSince = Date.now();
+    const startClock = () => {
+      runningSince = Date.now();
+      timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, leftMs);
+    };
+    const stopClock = () => {
+      leftMs = Math.max(0, leftMs - (Date.now() - runningSince));
+      clearTimeout(timer);
+    };
+    const ask = approveCall ?? parent.approve;
+    let asking = 0;
+    const approve: ApproveFn | undefined = ask && (async (...a: Parameters<ApproveFn>) => {
+      if (asking++ === 0) stopClock();
+      try {
+        return await ask(...a);
+      } finally {
+        if (--asking === 0 && !controller.signal.aborted) startClock();
+      }
+    });
+    startClock();
 
     const history = new ContextStore({ budgetTokens: parent.budgetTokens });
     history.addUser(request.context ? `${request.task}\n\nContext from the agent that delegated this:\n${request.context}` : request.task);
@@ -122,7 +146,7 @@ export function createSubagentRunner(
         cwd: parent.cwd,
         state: parent.state,
         signal: controller.signal,
-        approve: parent.approve,
+        approve,
         gateway: parent.gateway,
         toolRunner,
         // The person sees what the child does; its answer is the parent's to read, so it is not streamed as one.

@@ -142,11 +142,12 @@ export class ToolExecutor {
       log: logger,
       ask: whileAsking(this.ask),
       onCommandOutput: this.onCommandOutput,
+      approve: whileAsking(overrides.approve ?? this.approve),
       delegate: overrides.delegate,
     };
 
     try {
-      const approve = whileAsking(overrides.approve ?? this.approve);
+      const approve = ctx.approve;
       const result = await this.runtime.run(name, args, ctx as any, approve);
       if (stoppedAfterMs) return { result: stoppedResult(name, stoppedAfterMs), timedOut: false, durationMs: Date.now() - startedAt };
       if (timedOut) return { result: timeoutResult(name, timeoutMs), timedOut: true, durationMs: Date.now() - startedAt };

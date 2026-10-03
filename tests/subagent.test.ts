@@ -281,6 +281,23 @@ describe('the subagent runner', () => {
     assert.deepEqual(r.filesChanged, ['app.js']);
   });
 
+  it('a child\'s time limit stands still while the person answers its approval, asked through the delegate call', async () => {
+    const roles = { slow: { ...SUBAGENT_ROLES.coding, id: 'slow', timeoutMs: 50 } };
+    const { delegate } = runner(async (params) => {
+      await params.approve('exec_shell', { command: 'npm test' }, {});
+      return finished('ran the tests');
+    }, roles);
+    const asked: string[] = [];
+    const slowAnswer = async (name: string) => {
+      asked.push(name);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      return { allowed: true };
+    };
+    const r = await delegate({ role: 'slow', task: 'Run the tests' }, undefined, slowAnswer as any);
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(asked, ['exec_shell']);
+  });
+
   it('the parent stopping stops the child, as a cancel and not a failure', async () => {
     const controller = new AbortController();
     const { delegate } = runner((params) => new Promise((resolve) => {
