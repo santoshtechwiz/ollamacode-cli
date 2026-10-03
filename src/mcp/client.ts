@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { logger } from '../core/logger';
+import { CancelError } from '../core/errors';
 import { killProcessTreeAndWait } from '../env/process/index';
 
 const PROTOCOL_VERSION = '2024-11-05';
@@ -157,8 +158,8 @@ export class McpClient {
     return Array.isArray(res?.tools) ? res.tools : [];
   }
 
-  async callTool(toolName: string, args: Record<string, unknown>, timeoutMs = 60_000): Promise<{ text: string; isError: boolean; }> {
-    const res = await this._request('tools/call', { name: toolName, arguments: args ?? {} }, timeoutMs);
+  async callTool(toolName: string, args: Record<string, unknown>, timeoutMs = 60_000, signal?: AbortSignal): Promise<{ text: string; isError: boolean; }> {
+    const res = await this._request('tools/call', { name: toolName, arguments: args ?? {} }, timeoutMs, signal);
     const content = Array.isArray(res?.content) ? res.content : [];
     let text = content.map(describeContent).filter(Boolean).join('\n');
     // Newer servers may answer with structured data alone.
@@ -188,23 +189,37 @@ export class McpClient {
     return true;
   }
 
-  _request(method: string, params: any, timeoutMs: number = 15_000): Promise<any> {
+  _request(method: string, params: any, timeoutMs: number = 15_000, signal?: AbortSignal): Promise<any> {
     // A server that has stopped cannot answer: say so now rather than wait out the timeout.
     if (this.dead) return Promise.reject(this.dead);
+    if (signal?.aborted) return Promise.reject(new CancelError());
     const id = this.nextId++;
     const payload = { jsonrpc: '2.0', id, method, params };
     return new Promise((resolve, reject) => {
+      // The person stopped the turn: stop waiting, and tell the server so it can stop working.
+      const onAbort = () => {
+        this.pending.delete(id);
+        clearTimeout(timer);
+        this._notify('notifications/cancelled', { requestId: id, reason: 'cancelled by the person' });
+        reject(new CancelError());
+      };
+      const done = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+      };
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        signal?.removeEventListener('abort', onAbort);
         reject(new Error(`mcp "${this.name}" ${method} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
+      signal?.addEventListener('abort', onAbort, { once: true });
       this.pending.set(id, {
         resolve: (v: unknown) => {
-          clearTimeout(timer);
+          done();
           resolve(v);
         },
         reject: (e: unknown) => {
-          clearTimeout(timer);
+          done();
           reject(e);
         },
       });

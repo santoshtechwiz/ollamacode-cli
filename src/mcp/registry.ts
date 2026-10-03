@@ -3,6 +3,7 @@ import { killProcessTree } from '../env/process/index';
 import { ok, fail } from '../tool/core/tool-result';
 import { mcpServersConfig } from '../core/config';
 import { logger } from '../core/logger';
+import { isCancel } from '../core/errors';
 import { defaultRegistry } from '../tool/execution/registry';
 import { McpClient } from './client';
 
@@ -48,7 +49,7 @@ function bridgeTool(client: McpClient, tool: import('./client.ts').McpTool): imp
     description: `[MCP:${client.name}] ${tool.description ?? tool.name}`,
     parameters,
     risky: true,
-    async execute(args) {
+    async execute(args, ctx) {
       try {
         // A server that stopped is started again, a bounded number of times, before its tool is called.
         if (client.dead) {
@@ -58,10 +59,12 @@ function bridgeTool(client: McpClient, tool: import('./client.ts').McpTool): imp
           });
           if (!restarted) return fail(`${reason}; it was restarted ${McpClient.MAX_RESTARTS} times already, so its tools are unavailable this session`, { code: 'EUNKNOWN' });
         }
-        const res = await client.callTool(tool.name, args);
+        const res = await client.callTool(tool.name, args, undefined, ctx?.signal);
         if (res.isError) return fail(res.text || `${name} reported an error`, { code: 'EUNKNOWN' });
         return ok({ kind: 'text', display: res.text, data: { raw: res.text } });
       } catch (err) {
+        // A cancel is the person stopping the turn, not the tool failing: the runtime records it as such.
+        if (isCancel(err)) throw err;
         return fail(err instanceof Error ? err.message : String(err), { code: 'EUNKNOWN' });
       }
     },

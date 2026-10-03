@@ -83,3 +83,23 @@ describe('what a tool returns', () => {
     }
   });
 });
+
+describe('stopping a call', () => {
+  it('a cancelled call stops at once, and the server is told which request to drop', async () => {
+    const note = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-mcp-')), 'cancel.json');
+    const client = fake('slowpoke', 'slow', note);
+    try {
+      await client.connect(5000);
+      const controller = new AbortController();
+      const call = client.callTool('echo', {}, 30_000, controller.signal);
+      setTimeout(() => controller.abort(), 50);
+      const took = await elapsed(() => assert.rejects(call, (err: any) => err.code === 'ECANCELLED'));
+      assert.ok(took < 2000, `stopped after ${took}ms`);
+      for (let i = 0; i < 50 && !fs.existsSync(note); i++) await new Promise((r) => setTimeout(r, 20));
+      assert.equal(JSON.parse(fs.readFileSync(note, 'utf8')).requestId, 2, 'the tools/call request, the one after initialize');
+    } finally {
+      await client.close();
+      fs.rmSync(path.dirname(note), { recursive: true, force: true });
+    }
+  });
+});
