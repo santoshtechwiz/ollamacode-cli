@@ -5,6 +5,7 @@ import { logger } from '../core/logger';
 import type { Message, ToolSchema } from '../types';
 import { messageTokens, estimateTokens, tokenCalibration, charsPerToken } from './tokens';
 import { describeSession, describeProject, type WorkspaceState } from './workspace-state';
+import { describeExitsForModel } from '../tool/process/background-inbox';
 import { textModeInstructions } from '../prompts/tools';
 import { EXECUTION_PIN_LEAD } from '../prompts/planning';
 import type { ContextBudget, ContextStore, PreparedContext } from './contracts';
@@ -215,15 +216,20 @@ interface BuildModelRequestParams {
   meta?: { model?: string; provider?: string };
 }
 
-async function workspaceSnapshot(state: WorkspaceState): Promise<string> {
+/**
+ * The workspace as reference material, and what happened in it since the model last looked. Background processes that
+ * ended are news, not reference: under the "for reference only" wrapper a model passed over its own build finishing.
+ */
+async function workspaceSnapshot(state: WorkspaceState): Promise<{ reference: string; news: string }> {
   try {
-    const snapshot = [await describeProject(state), describeSession(state)].filter(Boolean).join('\n\n');
-    // The ended background processes in this record are now in front of the model; the turn's end settles them.
+    const reference = [await describeProject(state), describeSession(state, { exits: false })].filter(Boolean).join('\n\n');
+    const news = describeExitsForModel(state.background?.pending() ?? []).join('\n');
+    // The ended background processes are now in front of the model; the turn's end settles them.
     state.background?.markShown();
-    return snapshot;
+    return { reference, news };
   } catch (err) {
     logger.debug(`[context] workspace snapshot omitted: ${(err as Error)?.message ?? err}`);
-    return '';
+    return { reference: '', news: '' };
   }
 }
 
@@ -243,13 +249,15 @@ export async function buildModelRequest({
   const system = textMode
     ? [...systemMessages, { role: ROLE.SYSTEM, content: textModeInstructions({ core, readOnly }) }]
     : systemMessages;
-  const trailing = includeWorkspaceSnapshot && state ? await workspaceSnapshot(state) : '';
+  const snapshot = includeWorkspaceSnapshot && state ? await workspaceSnapshot(state) : { reference: '', news: '' };
+  const trailing = snapshot.reference;
+  const news = snapshot.news;
   const reserve = Math.max(0, Math.floor(Number(modelLimits.maxOutputTokens) || 0));
   const promptWindow = Math.max(0, (Number(modelLimits.contextWindow) || 0) - reserve);
 
   const systemTokens = sumTokens(system);
   const toolTokens = tools.length ? estimateTokens(JSON.stringify(tools)) : 0;
-  const trailingTokens = estimateTokens(trailing);
+  const trailingTokens = estimateTokens(trailing) + estimateTokens(news);
   const fixed = systemTokens + toolTokens + trailingTokens + estimateTokens(store.preservedSummary ?? '');
   // The current turn stays whole (compacting it evicts reads the model then re-runs in a loop); older turns share what the session budget leaves. Only the window or a retry cap trims the current turn.
   const from = store.messages.findLastIndex((m) => isTurnRequest(m, store.ephemeralIds));
@@ -267,9 +275,11 @@ export async function buildModelRequest({
   // Summary and workspace snapshot ride inside the request, ahead of the person's words: as separate user messages small models answered them instead.
   const at = kept.findLastIndex((m) => isTurnRequest(m, store.ephemeralIds));
   const context = [store.preservedSummary, pruned.note, trailing].filter(Boolean).join('\n\n');
-  const request = at >= 0 && context ? { ...kept[at], content: `${CONTEXT_OPEN}\n${context}\n${CONTEXT_CLOSE}\n\n${kept[at].content}` } : kept[at];
+  // What just happened goes after the reference block, right before the person's words.
+  const head = [context ? `${CONTEXT_OPEN}\n${context}\n${CONTEXT_CLOSE}` : '', news].filter(Boolean).join('\n\n');
+  const request = at >= 0 && head ? { ...kept[at], content: `${head}\n\n${kept[at].content}` } : kept[at];
   // The request keeps its place: moved after this turn's tool results, it read as asked again and the model redid the work.
-  const conversation = at >= 0 ? kept.map((m, i) => (i === at ? request : m)) : [...kept, ...(context ? [{ role: ROLE.USER, content: context }] : [])];
+  const conversation = at >= 0 ? kept.map((m, i) => (i === at ? request : m)) : [...kept, ...(context || news ? [{ role: ROLE.USER, content: [context, news].filter(Boolean).join('\n\n') }] : [])];
   const messages = [...system, ...conversation].map((m) => Object.freeze({ ...m }));
 
   const inputTokens = sumTokens(messages) + toolTokens;
