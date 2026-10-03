@@ -396,14 +396,14 @@ function applyBatch(
       const remaining = edits.length - i - 1;
       const notAttempted =
         remaining > 0 ? ` ${remaining} item(s) were not attempted.` : '';
+      // What happened is for both; how to retry is recovery advice for the model, so it rides in the hint.
+      const retry = `${landed}${notAttempted} Fix item ${i + 1} and resend the whole array.`.trim();
       return {
         status: 'fail',
         result: {
           ...r.result,
-          error:
-            `Edit ${i + 1} of ${edits.length} failed: ${r.result.error}\n` +
-            `Nothing was written — edits are applied or rolled back together.${landed}${notAttempted} ` +
-            `Fix item ${i + 1} and resend the whole array.`,
+          error: `Edit ${i + 1} of ${edits.length} failed: ${r.result.error}\nNothing was written — edits are applied or rolled back together.`,
+          hint: [r.result.hint, retry].filter(Boolean).join(' '),
         },
       };
     }
