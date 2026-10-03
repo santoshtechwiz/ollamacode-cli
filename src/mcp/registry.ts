@@ -8,6 +8,7 @@ import { McpClient } from './client';
 
 let connected: McpClient[] = [];
 let loading: Promise<import('../types.ts').ToolDef[]> | null = null;
+let registered: Promise<void> | null = null;
 
 /** What a configured server is doing right now, for anything that must answer "is it there?". */
 export interface McpServerStatus {
@@ -159,6 +160,23 @@ export function ensureMcpTools(): Promise<import('../types.ts').ToolDef[]> {
   return loading;
 }
 
+/**
+ * Connect the configured servers without holding up the caller: a server fetching itself with npx can take a minute,
+ * and one that cannot start must not keep the session from starting. `register` gets their tools once they are up.
+ */
+export function startMcpServers(register: (defs: import('../types.ts').ToolDef[]) => void): void {
+  registered ??= ensureMcpTools()
+    .then((defs) => {
+      if (defs.length) register(defs);
+    })
+    .catch((err) => logger.debug(`mcp tool discovery unavailable: ${err instanceof Error ? err.message : err}`));
+}
+
+/** Settles once the servers startMcpServers began have connected or failed, and their tools are registered. */
+export function mcpReady(): Promise<void> {
+  return registered ?? Promise.resolve();
+}
+
 /** Advertise deferred tools for a server explicitly requested by the user. */
 export function loadMcpServers(names: readonly string[]): number {
   const wanted = new Set(names.map((name) => name.toLowerCase()));
@@ -196,6 +214,7 @@ export async function closeMcpServers() {
   const toClose = connected;
   connected = [];
   loading = null;
+  registered = null;
   await Promise.all(toClose.map((c) => c.close().catch(() => {})));
 }
 

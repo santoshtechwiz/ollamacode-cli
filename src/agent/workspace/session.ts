@@ -6,7 +6,7 @@ import { createWorkspaceState } from '../../context/workspace-state';
 import { openWorkspaceIndex } from '../../context/workspace-index/open';
 import { ensureMemory } from '../../context/memory';
 import { ensureOwnExclude } from '../../tool/git/_git';
-import { ensureMcpTools, mcpLoaderTool } from '../../mcp/registry';
+import { startMcpServers, mcpLoaderTool } from '../../mcp/registry';
 import { isThinkingMode, type ThinkingMode } from '../../protocol';
 import { registerDynamicTools } from '../../tool/index';
 import { resolveScope } from './scope';
@@ -66,15 +66,11 @@ export async function inspectWorkspace(cwd: string, { sessionId, provider, model
     logger.debug(`session PATH refresh unavailable: ${(err as Error).message}`);
   }
 
-  try {
-    const mcpTools = await ensureMcpTools();
-    if (mcpTools.length) {
-      registerDynamicTools(mcpTools, { deferred: true });
-      registerDynamicTools([mcpLoaderTool(mcpTools)]);
-    }
-  } catch (err) {
-    logger.debug(`mcp tool discovery unavailable: ${(err as Error).message}`);
-  }
+  // MCP servers connect in the background; their tools join the registry when they are up.
+  startMcpServers((mcpTools) => {
+    registerDynamicTools(mcpTools, { deferred: true });
+    registerDynamicTools([mcpLoaderTool(mcpTools)]);
+  });
 
   try {
     ensureMemory(resolvedRoot, stacks);

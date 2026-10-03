@@ -10,7 +10,7 @@ import { getPlanPath } from '../planning/store';
 import { createAgentState, transition } from '../state';
 import { settlePlan } from '../planning/settle';
 import { namedMcpServers } from '../intent';
-import { loadMcpServers, mcpServerStatus } from '../../mcp/registry';
+import { loadMcpServers, mcpReady, mcpServerStatus } from '../../mcp/registry';
 import { stopResult, clearPlanState } from './helpers';
 import { applyRuntimeConfig } from './config';
 import { buildTurnContext, detectReplan, applyTaskScope } from './context';
@@ -114,8 +114,14 @@ export async function executeTurn({
 
   // 4. Scope resolution.
   const scope = applyTaskScope(workspace, turnInput, { onStatus });
+  const configured = mcpServerStatus().map((server) => server.name);
+  const requestedMcpNames = namedMcpServers(turnInput, configured);
+  // Servers connect in the background: one this request names may still be starting, and is not missing yet.
+  if (requestedMcpNames.length) {
+    onStatus?.(`Waiting for MCP ${requestedMcpNames.join(', ')} to start`);
+    await mcpReady();
+  }
   const mcpStatus = mcpServerStatus();
-  const requestedMcpNames = namedMcpServers(turnInput, mcpStatus.map((server) => server.name));
   const missingMcp = requestedMcpNames.filter((name) => {
     const server = mcpStatus.find((entry) => entry.name.toLowerCase() === name.toLowerCase());
     return !server?.connected;
