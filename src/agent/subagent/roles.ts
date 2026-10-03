@@ -10,6 +10,8 @@ export interface SubagentRole {
   summary: string;
   /** Only the read-only (planning) tools: it can look, never change anything. */
   readOnly: boolean;
+  /** Tools on top of that set, for a role whose looking reaches further than the project (the web). */
+  also?: readonly string[];
   /** The child's own instruction, after the system prompt it shares with the parent. */
   instruction: string;
   maxIterations: number;
@@ -24,9 +26,11 @@ const REPORT =
 export const SUBAGENT_ROLES: Readonly<Record<string, SubagentRole>> = Object.freeze({
   research: {
     id: 'research',
-    summary: 'reads the project to answer a question; changes nothing',
+    summary: 'looks things up in the project or on the web to answer a question; changes nothing',
     readOnly: true,
-    instruction: `${REPORT} Your task is research: read what you need and answer the question with file paths and line numbers. Change nothing.`,
+    // The web tools read; they change nothing in the project, so research keeps them.
+    also: ['web_search', 'web_fetch'],
+    instruction: `${REPORT} Your task is research: find what you need, in the project or on the web, and answer with where it came from (file and line, or the page). Change nothing.`,
     maxIterations: 12,
     timeoutMs: 180_000,
   },

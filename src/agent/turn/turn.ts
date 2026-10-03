@@ -204,6 +204,7 @@ export async function runTurn(
   const surface: ToolProfile = {
     core: toolProfile.core,
     readOnly,
+    include: toolProfile.include,
     exclude: [...(toolProfile.exclude ?? []), ...(delegate ? [] : [TOOL_NAME.DELEGATE_TASK])],
   };
 
@@ -261,6 +262,7 @@ export async function runTurn(
     textMode: !native,
     core: toolProfile.core,
     readOnly,
+    include: surface.include,
     exclude: surface.exclude,
     meta: { model: gateway.model, provider: gateway.provider?.id },
     turnState,

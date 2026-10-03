@@ -83,7 +83,7 @@ export function createSubagentRunner(
 
     // The role's tools, and only those: a call to anything else is refused at the child's own runner, so the limit
     // holds even where the model is sent no tool list to keep it to (text mode).
-    const profile: ToolProfile = { ...parent.toolProfile, readOnly: role.readOnly, exclude: CHILD_EXCLUDED_TOOLS };
+    const profile: ToolProfile = { ...parent.toolProfile, readOnly: role.readOnly, include: role.also ?? [], exclude: CHILD_EXCLUDED_TOOLS };
     const allowed = new Set(selectToolDefs(profile).map((def) => def.name));
     const toolRunner: ToolExecutor = {
       run: async (name, args, opts) => allowed.has(name)
@@ -174,7 +174,8 @@ export function createSubagentRunner(
 function unfinished(stopReason: string, timeoutMs: number, answer: string): string {
   if (stopReason === 'timed_out') return `it ran out of time after ${Math.round(timeoutMs / 1000)}s`;
   if (stopReason === STOP_REASONS.MAX_ITERATIONS) return 'it used all its steps without finishing';
-  if (stopReason === STOP_REASONS.GUARD_STUCK) return 'it kept repeating the same step';
+  // Repeats and rounds whose every call was refused both end a turn this way: say what is true of both.
+  if (stopReason === STOP_REASONS.GUARD_STUCK) return 'it stopped without making progress';
   if (!answer) return 'it ended without an answer';
   return `it stopped (${stopReason})`;
 }

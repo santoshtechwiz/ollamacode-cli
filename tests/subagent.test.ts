@@ -118,7 +118,32 @@ describe('what a child may do', () => {
     const offered = toolNames(s.asked.child[0]);
     for (const name of [...CHILD_EXCLUDED_TOOLS, 'edit_file', 'write_file']) assert.ok(!offered.includes(name), `${name} offered to a research child`);
     assert.ok(offered.includes('read_file'));
+    // Research looks things up on the web too: those tools read and change nothing in the project.
+    for (const name of ['web_search', 'web_fetch']) assert.ok(offered.includes(name), `${name} not offered to a research child`);
     assert.ok(toolNames(s.asked.parent[0]).includes('delegate_task'), 'the parent is offered it, with no setting at all');
+  });
+
+  it('in text mode, the research child\'s tool catalog lists its web tools and no edit tools', async () => {
+    const s = await session({
+      native: false,
+      parent: [{ toolCalls: [call('p1', 'delegate_task', { role: 'research', task: 'Find the latest LTS' })] }, { content: 'Done.' }],
+      child: [{ content: 'Found it.' }],
+    });
+    const prompt = s.asked.child[0].messages.filter((m: any) => m.role === ROLE.SYSTEM).map((m: any) => String(m.content)).join('\n');
+    assert.match(prompt, /^- web_search\(/m);
+    assert.match(prompt, /^- web_fetch\(/m);
+    assert.doesNotMatch(prompt, /^- edit_file\(/m);
+    assert.doesNotMatch(prompt, /^- delegate_task\(/m);
+  });
+
+  it('a review child stays inside the project: no web tools, no edits', async () => {
+    const s = await session({
+      parent: [{ toolCalls: [call('p1', 'delegate_task', { role: 'review', task: 'Review app.js' })] }, { content: 'Done.' }],
+      child: [{ content: 'Looks fine.' }],
+    });
+    const offered = toolNames(s.asked.child[0]);
+    for (const name of ['web_search', 'web_fetch', 'edit_file', 'write_file']) assert.ok(!offered.includes(name), `${name} offered to a review child`);
+    assert.ok(offered.includes('read_file'));
   });
 
   for (const native of [true, false]) it(`a call to a tool outside its role is refused at the child's runner, and nothing changes (${native ? 'tool channel' : 'text mode, where no tool list is sent'})`, async () => {
@@ -220,7 +245,7 @@ describe('the subagent runner', () => {
     assert.equal(r.ok, false);
     assert.equal(r.answer, 'got halfway');
     assert.equal(r.stopReason, STOP_REASONS.GUARD_STUCK);
-    assert.match(r.error!, /kept repeating/);
+    assert.match(r.error!, /stopped without making progress/);
     assert.deepEqual(r.toolsUsed, ['read_file']);
     assert.equal(r.steps, 4);
   });
