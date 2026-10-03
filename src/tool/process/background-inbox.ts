@@ -25,6 +25,14 @@ export interface BackgroundExit {
 
 export type ExitListener = (exit: BackgroundExit) => void;
 
+/** A process that went on running in the background; its end will be reported. */
+export interface BackgroundJob {
+  id: string;
+  command: string;
+}
+
+export type StartListener = (job: BackgroundJob) => void;
+
 const TAIL_LINES = 15;
 
 export class BackgroundInbox {
@@ -32,6 +40,24 @@ export class BackgroundInbox {
   /** How many of the oldest exits went into the last request; exits only ever append, so they are the first ones. */
   private shownCount = 0;
   private readonly listeners = new Set<ExitListener>();
+  private readonly startListeners = new Set<StartListener>();
+
+  /** A process now runs in the background and its end will be recorded here: tell whoever listens. */
+  watching(job: BackgroundJob): void {
+    for (const listener of this.startListeners) {
+      try {
+        listener(job);
+      } catch {
+        // Telling the person is best-effort; the exit is still recorded.
+      }
+    }
+  }
+
+  /** Hear about every process that starts running in the background; returns the way to stop listening. */
+  onStart(listener: StartListener): () => void {
+    this.startListeners.add(listener);
+    return () => this.startListeners.delete(listener);
+  }
 
   /** Something ended in the background: keep it for the model, and tell whoever listens. */
   record(exit: BackgroundExit): void {
@@ -104,8 +130,12 @@ export function reportWhenEnded(sub: SubprocessRecord, inbox: BackgroundInbox): 
   const report = () => {
     if (!sub.stopRequested) inbox.record(exitOf(sub));
   };
-  if (sub.exited) report();
-  else sub.process.once('close', report);
+  if (sub.exited) {
+    report();
+    return;
+  }
+  inbox.watching({ id: sub.id, command: sub.command });
+  sub.process.once('close', report);
 }
 
 export function formatDuration(ms: number): string {
@@ -137,12 +167,18 @@ export function describeExitsForModel(exits: readonly BackgroundExit[]): string[
 /** The last lines the person sees under the notice; the model gets the whole tail. */
 const PERSON_TAIL_LINES = 5;
 
+/** One line saying which background process ended and how. */
+export function exitHeadline(exit: BackgroundExit): string {
+  return `background "${exit.id}" ${endedHow(exit)} after ${formatDuration(exit.durationMs)}`;
+}
+
 /**
  * What the person sees when a background process ends: how it ended, then the last lines it printed,
  * so the result is on screen without asking for it. The note's own icon says whether it went well.
+ * `followUp` says what happens to it next; a front end that hands it to the agent itself says so.
  */
-export function describeExitForPerson(exit: BackgroundExit): string {
+export function describeExitForPerson(exit: BackgroundExit, followUp = 'the agent will see it with your next message'): string {
   const lines = exit.tail ? exit.tail.split('\n').filter((line) => line.trim()).slice(-PERSON_TAIL_LINES) : [];
-  const header = `background "${exit.id}" ${endedHow(exit)} after ${formatDuration(exit.durationMs)}${lines.length ? '' : ', printing nothing'} — the agent will see it with your next message`;
+  const header = `${exitHeadline(exit)}${lines.length ? '' : ', printing nothing'} — ${followUp}`;
   return [header, ...lines].join('\n');
 }

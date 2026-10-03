@@ -5,6 +5,7 @@ import { logger } from '../core/logger';
 import type { Message, ToolSchema } from '../types';
 import { messageTokens, estimateTokens, tokenCalibration, charsPerToken } from './tokens';
 import { describeSession, describeProject, type WorkspaceState } from './workspace-state';
+import { describeExitsForModel } from '../tool/process/background-inbox';
 import { textModeInstructions } from '../prompts/tools';
 import { EXECUTION_PIN_LEAD } from '../prompts/planning';
 import type { ContextBudget, ContextStore, PreparedContext } from './contracts';
@@ -69,8 +70,13 @@ export function liveTurnStart(store: Pick<CompactableStore, 'messages' | 'epheme
   return from < 0 ? store.messages.length : from;
 }
 
+/** The existing pins plus every index from `from` to the end: the live turn, kept whole. */
+function pinnedFrom(pins: ReadonlySet<number>, from: number, length: number): Set<number> {
+  return new Set([...pins, ...Array.from({ length: length - from }, (_, k) => from + k)]);
+}
+
 /** The mutable shape of a live conversation a reactive compaction may shrink. */
-export interface CompactableStore {
+interface CompactableStore {
   messages: Message[];
   pinnedIndices: Set<number>;
   ephemeralIds: Set<string>;
@@ -130,7 +136,7 @@ export function compactForRecovery(
   const budget = Math.max(0, Math.floor(capacityTokens));
   const messages = store.messages;
   const step = liveTurnStart(store);
-  const pinned = new Set([...store.pinnedIndices, ...Array.from({ length: messages.length - step }, (_, k) => step + k)]);
+  const pinned = pinnedFrom(store.pinnedIndices, step, messages.length);
   const result = compact(messages, pinned, budget);
   const positions = new Map<Message, number>();
   result.messages.forEach((m, i) => positions.set(m, i));
@@ -147,7 +153,7 @@ export function compactForRecovery(
   return { capacityTokens: budget, dropped: result.dropped };
 }
 
-export interface CompactResult {
+interface CompactResult {
   messages: Message[];
   /** Oldest unpinned messages evicted. */
   dropped: number;
@@ -155,6 +161,16 @@ export interface CompactResult {
   levels: string[];
   /** Line describing what was evicted; never placed in `messages`. */
   note: string | null;
+}
+
+/** The one line that stands in for evicted messages. */
+export function trimmedNote(count: number): string {
+  return `[Earlier conversation trimmed: ${count} message(s) omitted]`;
+}
+
+/** How many messages a trimmed note says were omitted; 0 for anything else. */
+export function trimmedCount(note: string | null | undefined): number {
+  return Number(/^\[Earlier conversation trimmed: (\d+) message\(s\) omitted\]$/.exec(String(note ?? ''))?.[1] ?? 0);
 }
 
 /** Library compaction (clear old tool output, then evict the oldest); pinned messages survive in place. */
@@ -179,11 +195,11 @@ export function compact(messages: Message[], pinned: Set<number>, maxTokens: num
     messages: start < 0 ? [] : kept.slice(start),
     dropped,
     levels,
-    note: dropped ? `[Earlier conversation trimmed: ${dropped} message(s) omitted]` : null,
+    note: dropped ? trimmedNote(dropped) : null,
   };
 }
 
-export interface BuildModelRequestParams {
+interface BuildModelRequestParams {
   systemMessages?: Message[];
   store: ContextStore;
   tools?: ToolSchema[];
@@ -200,15 +216,20 @@ export interface BuildModelRequestParams {
   meta?: { model?: string; provider?: string };
 }
 
-async function workspaceSnapshot(state: WorkspaceState): Promise<string> {
+/**
+ * The workspace as reference material, and what happened in it since the model last looked. Background processes that
+ * ended are news, not reference: under the "for reference only" wrapper a model passed over its own build finishing.
+ */
+async function workspaceSnapshot(state: WorkspaceState): Promise<{ reference: string; news: string }> {
   try {
-    const snapshot = [await describeProject(state), describeSession(state)].filter(Boolean).join('\n\n');
-    // The ended background processes in this record are now in front of the model; the turn's end settles them.
+    const reference = [await describeProject(state), describeSession(state, { exits: false })].filter(Boolean).join('\n\n');
+    const news = describeExitsForModel(state.background?.pending() ?? []).join('\n');
+    // The ended background processes are now in front of the model; the turn's end settles them.
     state.background?.markShown();
-    return snapshot;
+    return { reference, news };
   } catch (err) {
     logger.debug(`[context] workspace snapshot omitted: ${(err as Error)?.message ?? err}`);
-    return '';
+    return { reference: '', news: '' };
   }
 }
 
@@ -228,13 +249,15 @@ export async function buildModelRequest({
   const system = textMode
     ? [...systemMessages, { role: ROLE.SYSTEM, content: textModeInstructions({ core, readOnly }) }]
     : systemMessages;
-  const trailing = includeWorkspaceSnapshot && state ? await workspaceSnapshot(state) : '';
+  const snapshot = includeWorkspaceSnapshot && state ? await workspaceSnapshot(state) : { reference: '', news: '' };
+  const trailing = snapshot.reference;
+  const news = snapshot.news;
   const reserve = Math.max(0, Math.floor(Number(modelLimits.maxOutputTokens) || 0));
   const promptWindow = Math.max(0, (Number(modelLimits.contextWindow) || 0) - reserve);
 
   const systemTokens = sumTokens(system);
   const toolTokens = tools.length ? estimateTokens(JSON.stringify(tools)) : 0;
-  const trailingTokens = estimateTokens(trailing);
+  const trailingTokens = estimateTokens(trailing) + estimateTokens(news);
   const fixed = systemTokens + toolTokens + trailingTokens + estimateTokens(store.preservedSummary ?? '');
   // The current turn stays whole (compacting it evicts reads the model then re-runs in a loop); older turns share what the session budget leaves. Only the window or a retry cap trims the current turn.
   const from = store.messages.findLastIndex((m) => isTurnRequest(m, store.ephemeralIds));
@@ -245,16 +268,18 @@ export async function buildModelRequest({
   const target = store.budgetTokens ?? (Number.isFinite(room) ? Math.floor(room * HISTORY_SHARE) : UNKNOWN_WINDOW_HISTORY);
   const historyRoom = Math.min(Math.max(target, activeTokens), room);
   const keepActive = from >= 0 && activeTokens <= room;
-  const pinned = keepActive ? new Set([...store.pinnedIndices, ...Array.from({ length: history.length - from }, (_, k) => from + k)]) : store.pinnedIndices;
+  const pinned = keepActive ? pinnedFrom(store.pinnedIndices, from, history.length) : store.pinnedIndices;
   const pruned = compact(history, pinned, keepActive ? historyRoom - activeTokens : historyRoom);
   const kept = pruned.messages;
 
   // Summary and workspace snapshot ride inside the request, ahead of the person's words: as separate user messages small models answered them instead.
   const at = kept.findLastIndex((m) => isTurnRequest(m, store.ephemeralIds));
   const context = [store.preservedSummary, pruned.note, trailing].filter(Boolean).join('\n\n');
-  const request = at >= 0 && context ? { ...kept[at], content: `${CONTEXT_OPEN}\n${context}\n${CONTEXT_CLOSE}\n\n${kept[at].content}` } : kept[at];
+  // What just happened goes after the reference block, right before the person's words.
+  const head = [context ? `${CONTEXT_OPEN}\n${context}\n${CONTEXT_CLOSE}` : '', news].filter(Boolean).join('\n\n');
+  const request = at >= 0 && head ? { ...kept[at], content: `${head}\n\n${kept[at].content}` } : kept[at];
   // The request keeps its place: moved after this turn's tool results, it read as asked again and the model redid the work.
-  const conversation = at >= 0 ? kept.map((m, i) => (i === at ? request : m)) : [...kept, ...(context ? [{ role: ROLE.USER, content: context }] : [])];
+  const conversation = at >= 0 ? kept.map((m, i) => (i === at ? request : m)) : [...kept, ...(context || news ? [{ role: ROLE.USER, content: [context, news].filter(Boolean).join('\n\n') }] : [])];
   const messages = [...system, ...conversation].map((m) => Object.freeze({ ...m }));
 
   const inputTokens = sumTokens(messages) + toolTokens;

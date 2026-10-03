@@ -1,8 +1,6 @@
 import { MAX_SYMBOLS_PER_FILE, MAX_IMPORTS_PER_FILE } from './_shared';
 import { sourceRulesFor } from '../../env/languages';
 
-export { sourceRulesFor as rulesFor } from '../../env/languages';
-
 export function scanSource(content: string, ext: string): { symbols: { kind: string; name: string; }[]; imports: string[]; exports: string[]; } {
   const rule = sourceRulesFor(ext);
   if (!rule) return { symbols: [], imports: [], exports: [] };

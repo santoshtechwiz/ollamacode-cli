@@ -48,3 +48,9 @@ test('a cloud model that reports no size is ready and says the size is unknown',
   assert.equal(v.fit, 'ready');
   assert.match(v.message, /size not reported/);
 });
+
+test('no tool support and a small window names both', () => {
+  const v = judgeModel({ model: 'tinyllama:latest', nativeTools: false, parameterSize: '1.1B', contextLength: 2048 });
+  assert.equal(v.fit, 'unsuited');
+  assert.match(v.message, /no tool support and a 2k window/);
+});

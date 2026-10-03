@@ -4,7 +4,7 @@ import path from 'node:path';
 import { SESSION_ID_LENGTH, SESSION_RECORD_VERSION, STORAGE, EPHEMERAL_SESSION } from '../protocol';
 import { memoryDir } from '../context/memory';
 import { recoveryDir } from './session-recovery';
-import { compact } from '../context/builder';
+import { compact, trimmedCount, trimmedNote } from '../context/builder';
 import { isContinueInput } from '../agent/intent';
 import { checkpointPath } from './paths';
 import { logger } from './logger';
@@ -114,10 +114,11 @@ export function saveSession(rec: SessionRecord, root: string): SessionRecord {
   return full;
 }
 
-/** Bound the saved record to the token budget; what was evicted is noted in the summary. */
+/** Bound the saved record to the token budget; the summary counts everything evicted so far, not only this save's share. */
 function boundRecord(all: import('../types.ts').Message[], previous: string | undefined): { messages: import('../types.ts').Message[]; summary?: string; } {
-  const { messages, note } = compact(all, new Set(), MAX_RECORD_TOKENS);
-  return { messages, summary: note ?? previous };
+  const { messages, dropped } = compact(all, new Set(), MAX_RECORD_TOKENS);
+  if (!dropped) return { messages, summary: previous };
+  return { messages, summary: trimmedNote(trimmedCount(previous) + dropped) };
 }
 
 /** A stable key for a message: its `id` when stamped, else a hash of its content. */

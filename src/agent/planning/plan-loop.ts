@@ -73,7 +73,6 @@ async function presentedPlan(args: PlanLoopArgs, instruction: string): Promise<{
     history: exploring,
     systemMessages: [...args.system, { role: ROLE.SYSTEM, content: instruction }],
     toolsEnabled: true,
-    toolsAllowed: true,
     toolProfile: {
       compact: profile.compact,
       core: profile.core,
@@ -84,7 +83,6 @@ async function presentedPlan(args: PlanLoopArgs, instruction: string): Promise<{
     config: args.config,
     cwd: workspace.cwd,
     state: workspace.state,
-    workspace,
     signal: args.signal,
     gateway: args.gateway,
     toolRunner: args.toolRunner,

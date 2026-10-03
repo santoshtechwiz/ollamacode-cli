@@ -8,7 +8,7 @@ import { writeJsonAtomic } from '../core/config';
 const MAX_CONVENTIONS = 30;
 const MAX_FACTS = 20;
 
-export interface MemoryFact {
+interface MemoryFact {
   text: string;
   createdAt: number;
   source: 'user' | 'agent';

@@ -63,10 +63,7 @@ export interface WorkspaceState {
   grantedRoots: string[];
   stacks: import('../types.ts').StackInfo[];
   scope: string[];
-  scopedGrants: string[];
   activeProject: { id: number; root: string; name: string; } | null;
-  scopeNoMatch?: boolean;
-  scopeAll?: boolean;
   index: import('./workspace-index/_shared.ts').IndexHandle | null;
   tooling?: import('../env/tooling/manager.ts').ToolingManager | null;
   questionsAsked: number;
@@ -80,14 +77,8 @@ export interface WorkspaceState {
   /** The task that wrote `todos`; a list from another task is not shown as the running one's. */
   todosTask?: string | null;
 
-  pathBeliefs: Map<string, string>;
   planPath?: string | null;
   reviewOnly?: boolean;
-
-  reviewLocked?: boolean;
-  askLocked?: boolean;
-
-  readOnlyMode?: 'plan' | 'ask' | 'review' | null;
   plan?: import('../agent/planning/plan.ts').Plan | null;
   /** The plan text the model gave present_plan, waiting to be read and put to the user for approval. */
   presentedPlan?: string | null;
@@ -106,7 +97,8 @@ export interface WorkspaceState {
   note: (op: string, rel: string, type: 'file' | 'dir') => void;
   record: (entry: Execution) => void;
   grant: (dir: string) => void;
-  invalidateSnapshot: () => void;
+  /** Something outside the file tools (code that ran) may have changed the disk: the world moves, nothing is recorded. */
+  touch: () => void;
   startTurn: () => void;
   reset: () => void;
 }
@@ -114,7 +106,7 @@ export interface WorkspaceState {
 
 const SESSION_UNLOCK = new WeakMap<WorkspaceState, (next: string) => void>();
 
-export interface SessionIdentity {
+interface SessionIdentity {
   sessionId: string;
   taskId?: string;
 }
@@ -137,10 +129,7 @@ const state: WorkspaceState = {
     grantedRoots: [],
     stacks: [],
     scope: [],
-    scopedGrants: [],
     activeProject: null,
-    scopeNoMatch: false,
-    scopeAll: true,
     index: null,
     tooling: null,
     questionsAsked: 0,
@@ -150,7 +139,6 @@ const state: WorkspaceState = {
     background: new BackgroundInbox(),
     readFiles: new Set(),
     todos: [],
-    pathBeliefs: new Map(),
     planPath: null,
 
     note(op, rel, type) {
@@ -172,11 +160,8 @@ const state: WorkspaceState = {
       if (!state.grantedRoots.includes(abs)) state.grantedRoots.push(abs);
     },
 
-    invalidateSnapshot() {
-      state._projectCache = null;
-      state._projectCacheKey = null;
-      const projectRoot = state.activeProject?.root ?? state.root;
-      if (state.index) state.index.refreshProjectByRoot(projectRoot);
+    touch() {
+      state.mutationCount += 1;
     },
 
     startTurn() {
@@ -204,16 +189,11 @@ const state: WorkspaceState = {
       state._projectCache = null;
       state._projectCacheKey = null;
       state.scope = [];
-      state.scopedGrants = [];
       state.activeProject = null;
-      (state as any).scopeNoMatch = false;
-      (state as any).scopeAll = true;
       state.subprocesses = new Map();
       state.background.clear();
       state.readFiles = new Set();
       state.todos = [];
-      // A new conversation re-learns the filesystem rather than inheriting the old one's assumptions about it.
-      state.pathBeliefs = new Map();
       state.planPath = null;
     },
   };
@@ -251,13 +231,14 @@ export function replaceSession(state: WorkspaceState, id: string, reason: string
   logger.debug(`session replaced: ${previous} -> ${id} (${reason})`);
 }
 
-export function describeSession(state: WorkspaceState): string {
+/** `exits: false` leaves out the ended background processes, for a caller that tells the model about them on their own. */
+export function describeSession(state: WorkspaceState, { exits = true }: { exits?: boolean } = {}): string {
   const hasChanges = state.changes.length > 0;
   // Calls made for an earlier request are that request's; listed here they read as this one's work.
   const recent = state.executions.filter((e) => e.taskId === state.taskId).slice(-LEDGER_PROMPT_LINES);
 
   const running = [...state.subprocesses.values()].filter((s) => !s.exited && !s.error);
-  const ended = describeExitsForModel(state.background?.pending() ?? []);
+  const ended = exits ? describeExitsForModel(state.background?.pending() ?? []) : [];
   if (!hasChanges && recent.length === 0 && running.length === 0 && ended.length === 0) return '';
 
   const lines = ['SESSION RECORD (kept by the system, not by you)', ...ended];

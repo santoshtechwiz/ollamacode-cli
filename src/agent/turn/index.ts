@@ -110,8 +110,7 @@ export async function executeTurn({
   // 3. Replan detection — the only place `input` may be replaced.
   const replan = resumePlan ? null : detectReplan(workspace, continuing, toolsEnabled);
   let turnInput = replan?.input ?? rawInput;
-  let planMode = planModeIn;
-  if (replan) planMode = true;
+  const planMode = planModeIn || replan != null;
 
   // 4. Scope resolution.
   const scope = applyTaskScope(workspace, turnInput, { onStatus });
@@ -131,7 +130,6 @@ export async function executeTurn({
 
   // 5. Planning is an explicit mode (--plan, /plan, Shift+Tab); the wording of a request never forces it.
   const needPlan = replan != null || Boolean(planMode && toolsEnabled && onPlan && !noPlan);
-  const toolsAllowed = toolsEnabled;
 
   // 7. Prompt context (system + memory + mentions + auto-context).
   const { system, mentions, profile }: { system: Message[]; mentions: string[]; profile: Profile } =
@@ -146,28 +144,11 @@ export async function executeTurn({
   if (mentions.length) onMentions?.(mentions);
   if (systemExtra.length) system.push(...systemExtra);
 
-  const reviewOnly = reviewMode;
-  const askOnly = askMode && !reviewOnly;
-  const readOnly = reviewOnly || askOnly;
+  const askOnly = askMode && !reviewMode;
+  const readOnly = reviewMode || askOnly;
 
-  const resumingExecEarly = Boolean(planMode && box.resumable && box.plan && continuing);
-  const activeReadOnlyMode: 'plan' | 'ask' | 'review' | null =
-    resumingExecEarly
-      ? null
-      : reviewOnly
-        ? 'review'
-        : askOnly
-          ? 'ask'
-          : planMode
-            ? 'plan'
-            : null;
-  if (workspace.state) {
-    workspace.state.reviewOnly = readOnly;
-    workspace.state.reviewLocked = reviewMode;
-    (workspace.state as any).askLocked = askMode;
-    (workspace.state as any).readOnlyMode = activeReadOnlyMode;
-  }
-  if (reviewOnly) system.push({ role: 'system' as const, content: REVIEW_MODE });
+  if (workspace.state) workspace.state.reviewOnly = readOnly;
+  if (reviewMode) system.push({ role: 'system' as const, content: REVIEW_MODE });
   else if (askOnly) system.push({ role: 'system' as const, content: ASK_MODE });
 
   // 9. Continuing a plan that already ended → answer, don't execute.
@@ -191,7 +172,6 @@ export async function executeTurn({
   }
 
   if (isResume) {
-    if (workspace.state) (workspace.state as any).readOnlyMode = null;
     transition(box, AGENT_STATE.PLANNING);
     transition(box, AGENT_STATE.WAITING_FOR_APPROVAL);
     transition(box, AGENT_STATE.EXECUTING);
@@ -210,7 +190,7 @@ export async function executeTurn({
       config,
       profile,
       signal,
-      onPlan: onPlan as NonNullable<any>,
+      onPlan,
       replanFrom: replan,
       history,
       gateway,
@@ -223,7 +203,6 @@ export async function executeTurn({
       return outcome.result;
     }
     // Only an approved plan switches to Agent mode; a change the planner judged too small to plan just proceeds.
-    if (outcome.kind === 'proceed' && workspace.state) (workspace.state as any).readOnlyMode = null;
     if (outcome.kind === 'proceed' && outcome.approved) {
       if (typeof onModeSwitch === 'function') {
         try { onModeSwitch('agent'); } catch {}
@@ -244,7 +223,8 @@ export async function executeTurn({
   if (resumingTruncatedAnswer) turnInput = RESUME_TRUNCATED_ANSWER;
   if (workspace.state) workspace.state.pendingOutputContinuation = false;
 
-  if (mcpGap) history.addUser(mcpGap, { pinned: true });
+  // What this session cannot do is the harness's to say, not the person's: it rides with the turn's system context.
+  if (mcpGap) system.push({ role: 'system' as const, content: mcpGap });
   if (box.plan?.raw) {
     const pin = executionPin(executionProgress(box.plan, workspace.state?.changes ?? []));
     if (pin) {
@@ -279,7 +259,6 @@ export async function executeTurn({
       history,
       systemMessages: system,
       toolsEnabled,
-      toolsAllowed,
       toolProfile: {
         compact: profile.compact,
         core: profile.core,
@@ -291,7 +270,6 @@ export async function executeTurn({
       config,
       cwd: workspace.cwd,
       state: workspace.state,
-      workspace,
       signal,
       approve,
       ask,

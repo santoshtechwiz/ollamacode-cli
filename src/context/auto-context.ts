@@ -130,12 +130,15 @@ export async function gatherContext(
     const settled = reads[i];
     if (settled.status !== 'fulfilled') continue;
     const result = settled.value;
-    if (!result.ok || !result.display) continue;
+    // The file's own text: the display numbers every line, which only spends the budget on gutters.
+    const content = (result.data as { fullContent?: unknown } | undefined)?.fullContent;
+    const text = typeof content === 'string' ? content : result.display;
+    if (!result.ok || !text) continue;
 
     const label = KEY_FILES[i];
     const room = Math.min(MAX_FILE_CHARS, budget - label.length - 4);
     if (room <= 0) break;
-    const body = result.display.slice(0, room);
+    const body = text.slice(0, room);
     if (!body.trim()) continue;
     spend(label, body);
   }
