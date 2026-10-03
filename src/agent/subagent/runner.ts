@@ -7,7 +7,7 @@ import { CancelError } from '../../core/errors';
 import { ContextStore } from '../../context/store';
 import { selectToolDefs, type ToolProfile } from '../../context/tool-surface';
 import { fail } from '../../tool/core/tool-result';
-import { CHILD_EXCLUDED_TOOLS, MAX_DELEGATIONS_PER_TURN, SUBAGENT_ROLES } from './roles';
+import { CHILD_EXCLUDED_TOOLS, MAX_DELEGATIONS_PER_TURN, SUBAGENT_ROLES, type SubagentRole } from './roles';
 
 type TurnResult = import('../../protocol.ts').TurnResult;
 type Message = import('../../types.ts').Message;
@@ -62,17 +62,21 @@ export interface SubagentRun {
 
 /**
  * The parent's delegate function. `runChild` is runTurn itself, passed in so this module never imports the turn
- * that imports it; a test passes its own.
+ * that imports it; a test passes its own. `roles` defaults to the built-in ones.
  */
-export function createSubagentRunner(parent: ParentTurn, runChild: (params: any) => Promise<TurnResult>): DelegateFn {
+export function createSubagentRunner(
+  parent: ParentTurn,
+  runChild: (params: any) => Promise<TurnResult>,
+  roles: Readonly<Record<string, SubagentRole>> = SUBAGENT_ROLES,
+): DelegateFn {
   let started = 0;
 
   return async (request, signal) => {
-    const role = SUBAGENT_ROLES[String(request.role ?? '')];
+    const role = roles[String(request.role ?? '')];
     const refused = (error: string): SubagentResult => ({
       ok: false, role: String(request.role ?? ''), answer: '', stopReason: 'refused', filesChanged: [], toolsUsed: [], steps: 0, error,
     });
-    if (!role) return refused(`there is no "${request.role}" subagent; the roles are ${Object.keys(SUBAGENT_ROLES).join(', ')}`);
+    if (!role) return refused(`there is no "${request.role}" subagent; the roles are ${Object.keys(roles).join(', ')}`);
     if (!String(request.task ?? '').trim()) return refused('the task is empty');
     if (started >= MAX_DELEGATIONS_PER_TURN) return refused(`this turn already started ${MAX_DELEGATIONS_PER_TURN} subagents, the most one turn may`);
     started += 1;
