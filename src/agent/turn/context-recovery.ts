@@ -95,6 +95,8 @@ interface ContextRecoveryOptions {
   textMode: boolean;
   core?: boolean;
   readOnly: boolean;
+  /** Tools this turn never gets; the text-mode catalog leaves them out too. */
+  exclude?: readonly string[];
   meta: { model: string; provider?: string };
   turnState: TurnState;
   compactor: typeof compactForRecovery;
@@ -136,6 +138,7 @@ export function createContextRecovery(options: ContextRecoveryOptions): ContextR
       textMode: options.textMode,
       core: options.core,
       readOnly: options.readOnly,
+      exclude: options.exclude,
       includeWorkspaceSnapshot: true,
       meta: options.meta,
     });

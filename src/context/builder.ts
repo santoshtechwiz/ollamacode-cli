@@ -211,6 +211,8 @@ interface BuildModelRequestParams {
   textMode?: boolean;
   core?: boolean;
   readOnly?: boolean;
+  /** Tools the turn never gets: left out of the text-mode catalog as they are out of the tool list. */
+  exclude?: readonly string[];
   includeWorkspaceSnapshot?: boolean;
   /** For the structured `[context]` log. */
   meta?: { model?: string; provider?: string };
@@ -243,11 +245,12 @@ export async function buildModelRequest({
   textMode = false,
   core = false,
   readOnly = false,
+  exclude = [],
   includeWorkspaceSnapshot = true,
   meta,
 }: BuildModelRequestParams): Promise<PreparedContext> {
   const system = textMode
-    ? [...systemMessages, { role: ROLE.SYSTEM, content: textModeInstructions({ core, readOnly }) }]
+    ? [...systemMessages, { role: ROLE.SYSTEM, content: textModeInstructions({ core, readOnly, exclude }) }]
     : systemMessages;
   const snapshot = includeWorkspaceSnapshot && state ? await workspaceSnapshot(state) : { reference: '', news: '' };
   const trailing = snapshot.reference;

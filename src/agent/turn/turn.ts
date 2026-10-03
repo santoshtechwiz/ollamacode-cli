@@ -1,4 +1,4 @@
-import { STOP_REASONS, RATE_SAMPLE_MIN_TOKENS, AGENT_STATUS } from '../../protocol';
+import { STOP_REASONS, RATE_SAMPLE_MIN_TOKENS, AGENT_STATUS, TOOL_NAME } from '../../protocol';
 import type { TurnResult } from '../../protocol';
 import type { ModelGateway } from '../../model/gateway';
 import { isContextLengthError, type GatewayCallResult } from '../../model/gateway';
@@ -23,6 +23,7 @@ import { processToolCalls } from './tool-calls';
 import { summarizeRound } from './round-guards';
 import { closingAnswer } from './closing-answer';
 import { createContextRecovery } from './context-recovery';
+import { createSubagentRunner } from '../subagent/runner';
 
 export interface TurnCallbacks {
   onDelta?: (chunk: string, full: string) => void;
@@ -68,6 +69,8 @@ interface RunTurnParams {
   callbacks?: TurnCallbacks;
   /** Reactive history compaction for a context-full retry; injectable for tests. */
   compactor?: typeof compactForRecovery;
+  /** 1 for a subagent's turn, which can never start one of its own. */
+  subagentDepth?: number;
 }
 
 function buildResult(
@@ -189,15 +192,29 @@ export async function runTurn(
         callbacks.onCommandOutput,
     });
 
+  // A turn that may change things, with subagents switched on, may hand tasks to them; a subagent's turn never can,
+  // so they go one level deep. The delegate tool is offered only where this function exists.
+  const delegate =
+    toolsEnabled && !readOnly && config.subagents === true && !params.subagentDepth
+      ? createSubagentRunner(
+          { provider, model, systemMessages, budgetTokens: history.budgetTokens, toolProfile, config, cwd, state: workspaceState, approve, gateway, toolRunner, callbacks },
+          runTurn,
+        )
+      : undefined;
+  const surface: ToolProfile = {
+    core: toolProfile.core,
+    readOnly,
+    exclude: [...(toolProfile.exclude ?? []), ...(delegate ? [] : [TOOL_NAME.DELEGATE_TASK])],
+  };
+
   // On-demand discovery: the request carries the index, the always-tools and whatever the conversation has loaded.
-  const discoverable = new Set(selectToolDefs({ core: toolProfile.core, readOnly }).map((def) => def.name));
+  const discoverable = new Set(selectToolDefs(surface).map((def) => def.name));
 
   const resolver = new ToolResolver({
     registry: defaultRegistry,
     compact: toolProfile.compact,
     always: selectAlwaysToolDefs({
-      core: toolProfile.core,
-      readOnly,
+      ...surface,
       always: toolProfile.always,
     }).map((def) => def.name),
     selectable: (def) =>
@@ -244,6 +261,7 @@ export async function runTurn(
     textMode: !native,
     core: toolProfile.core,
     readOnly,
+    exclude: surface.exclude,
     meta: { model: gateway.model, provider: gateway.provider?.id },
     turnState,
     compactor,
@@ -354,6 +372,7 @@ export async function runTurn(
       discovery: tools.length > 0 ? { resolver, onWire: namesOnWire(tools) } : undefined,
       signal,
       approve,
+      delegate,
     });
 
     if (signal?.aborted) {

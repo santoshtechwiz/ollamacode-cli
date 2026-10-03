@@ -600,7 +600,7 @@ function homeFor(base, scenario) {
 
 // How edit_file fared: calls made, and how many of them landed. A reused or refused repeat counts as a call that did not.
 function editTally(session) {
-  const messages = [...(session?.explored ?? []).flat(), ...(session?.messages ?? [])];
+  const messages = [...(session?.explored ?? []).flat(), ...(session?.subagents ?? []).flatMap((r) => r.messages ?? []), ...(session?.messages ?? [])];
   const edits = new Set();
   for (const m of messages) for (const c of m.tool_calls ?? []) if (c.function?.name === 'edit_file') edits.add(c.id);
   let landed = 0;
@@ -611,7 +611,7 @@ function editTally(session) {
 // What the model did, read from the calls and results it actually made.
 function behaviour(session) {
   // Plan-mode exploration is saved beside the conversation; its calls count like any other.
-  const messages = [...(session?.explored ?? []).flat(), ...(session?.messages ?? [])];
+  const messages = [...(session?.explored ?? []).flat(), ...(session?.subagents ?? []).flatMap((r) => r.messages ?? []), ...(session?.messages ?? [])];
   const calls = new Map();
   const tools = new Set();
   const errors = [];

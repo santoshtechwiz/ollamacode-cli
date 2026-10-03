@@ -28,6 +28,8 @@ export interface SessionRecord {
   messages: import('../types.ts').Message[];
   /** What plan mode looked at before presenting each plan: a record for diagnosis, never replayed to the model. */
   explored?: import('../types.ts').Message[][];
+  /** Subagent conversations, for diagnosis; never loaded back into the conversation. */
+  subagents?: import('../agent/subagent/runner.ts').SubagentRun[];
   cwd?: string;
   permissions?: { alwaysAllowAll: boolean; alwaysAllowTools: string[]; };
   /** Summary of exchanges trimmed out of the record's messages; owned by saveSession. */

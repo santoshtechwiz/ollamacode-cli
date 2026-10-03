@@ -1,7 +1,7 @@
 import { buildToolCatalog } from '../tool/common/catalog';
 import { coreToolNames, readOnlyToolNames } from '../context/tool-surface';
 
-export function textModeInstructions({ core = false, readOnly = false }: any = {}): string {
+export function textModeInstructions({ core = false, readOnly = false, exclude = [] }: any = {}): string {
   const only = readOnly
     ? readOnlyToolNames()
     : core
@@ -14,6 +14,6 @@ single JSON object and nothing else:
 {"name": "<tool>", "arguments": { ... }}
 
 Wait for the result before continuing. Available tools:
-${buildToolCatalog({ only })}`;
+${buildToolCatalog({ only, exclude })}`;
 }
 

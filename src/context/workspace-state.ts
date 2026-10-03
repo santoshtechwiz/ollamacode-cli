@@ -91,6 +91,8 @@ export interface WorkspaceState {
   presentedPlanSteps?: string[] | null;
   /** Each plan-mode exploration this session, kept for the saved session record only. */
   planExplorations?: import('../types.ts').Message[][];
+  /** Each subagent's conversation this session, kept for the saved session record only. */
+  subagentRuns?: import('../agent/subagent/runner.ts').SubagentRun[];
   permissions?: import('../tool/policy/permission-policy.ts').PermissionState;
   agentState?: import('../agent/state.ts').AgentStateBox;
   tunnel?: boolean;

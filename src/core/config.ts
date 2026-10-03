@@ -65,6 +65,8 @@ export interface AgentConfig {
   /** Measured generation rate, for sizing what one reply may cost. */
   tokensPerSec?: number;
   memory?: { enabled: boolean; maxChars?: number; };
+  /** Let the agent hand self-contained tasks to subagents (delegate_task). Off unless switched on. */
+  subagents?: boolean;
 }
 
 export const DEFAULTS = Object.freeze({
