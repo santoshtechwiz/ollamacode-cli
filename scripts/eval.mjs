@@ -554,6 +554,23 @@ const SCENARIOS = [
     prompt: "Give formatPrice in src/format.js a second parameter, currency, defaulting to '$', and pass it through: cartLine and invoiceTotal each take an optional currency as their last parameter and hand it to formatPrice. Then run node test.js.",
     check: (cwd) => sh('node test.js', cwd).status === 0,
   },
+  // Subagent tasks: switched on through a private config, they pass only when the parent delegated and the work is right.
+  {
+    id: 'subagent-research',
+    repo: null,
+    config: { agent: { subagents: true } },
+    setup: (cwd) => writeAll(cwd, SERVER_APP),
+    prompt: 'Use a research subagent (delegate_task) to find which line of app.js sets the default port, then tell me the line number and the default value. Do not change any files.',
+    check: (cwd, run) => run.tools.includes('delegate_task') && /\b4\b/.test(run.answer) && /3000/.test(run.answer) && !/8080/.test(read(join(cwd, 'app.js'))),
+  },
+  {
+    id: 'subagent-coding',
+    repo: null,
+    config: { agent: { subagents: true } },
+    setup: (cwd) => writeAll(cwd, PRICING),
+    prompt: 'Delegate this to a coding subagent with delegate_task: in src/pricing.js rename the parameter rate to taxRate everywhere, without changing behaviour, and run node test.js. Then tell me what it changed.',
+    check: (cwd, run) => run.tools.includes('delegate_task') && sh('node test.js', cwd).status === 0 && !/\brate\b/.test(read(join(cwd, 'src/pricing.js'))),
+  },
 ];
 
 // The newest saved session under a workspace; each eval workspace holds exactly one.
@@ -593,7 +610,13 @@ function homeFor(base, scenario) {
   } catch {
     // An unreadable config runs on defaults, as ocode itself would.
   }
-  writeFileSync(join(home, 'config.json'), JSON.stringify({ ...config, ...scenario.config }, null, 2));
+  // One level deep: { agent: { subagents: true } } adds to the user's agent settings instead of replacing them.
+  const merged = { ...config };
+  for (const [key, value] of Object.entries(scenario.config)) {
+    const mine = merged[key];
+    merged[key] = value && typeof value === 'object' && !Array.isArray(value) && mine && typeof mine === 'object' ? { ...mine, ...value } : value;
+  }
+  writeFileSync(join(home, 'config.json'), JSON.stringify(merged, null, 2));
   if (existsSync(join(real, 'providers'))) cpSync(join(real, 'providers'), join(home, 'providers'), { recursive: true });
   return home;
 }
