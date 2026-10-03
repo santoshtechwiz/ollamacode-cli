@@ -155,9 +155,20 @@ export class McpClient {
     this._notify('notifications/initialized', {});
   }
 
+  /** Pages a tool listing may run to before ocode stops asking: a server that always offers another is not followed forever. */
+  static MAX_TOOL_PAGES = 100;
+
+  /** Every tool the server lists, following its pages: tools past the first page used to be dropped. */
   async listTools(): Promise<McpTool[]> {
-    const res = await this._request('tools/list', {});
-    return Array.isArray(res?.tools) ? res.tools : [];
+    const tools: McpTool[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < McpClient.MAX_TOOL_PAGES; page++) {
+      const res = await this._request('tools/list', cursor ? { cursor } : {});
+      if (Array.isArray(res?.tools)) tools.push(...res.tools);
+      cursor = typeof res?.nextCursor === 'string' && res.nextCursor ? res.nextCursor : undefined;
+      if (!cursor) break;
+    }
+    return tools;
   }
 
   async callTool(toolName: string, args: Record<string, unknown>, timeoutMs = 60_000, signal?: AbortSignal): Promise<{ text: string; isError: boolean; }> {

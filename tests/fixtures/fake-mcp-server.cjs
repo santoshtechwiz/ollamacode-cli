@@ -3,6 +3,7 @@
 //   die         exits on every tools/call
 //   die-once    exits on the first tools/call (marker file in argv[3]), answers after a restart
 //   image       answers tools/call with a large image
+//   paged       lists its tools over two pages
 //   slow        never answers tools/call; records a cancel notification in argv[3]
 //   asks        before answering tools/list, sends its own ping with the same id, and records the reply in argv[3]
 const fs = require('node:fs');
@@ -31,6 +32,11 @@ process.stdin.on('data', (chunk) => {
       send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: { name: 'fake', version: '1' } } });
     } else if (msg.method === 'tools/list') {
       if (mode === 'asks') send({ jsonrpc: '2.0', id: msg.id, method: 'ping' });
+      if (mode === 'paged') {
+        const second = msg.params && msg.params.cursor === 'page-2';
+        send({ jsonrpc: '2.0', id: msg.id, result: second ? { tools: [{ name: 'second' }] } : { tools: [{ name: 'echo' }], nextCursor: 'page-2' } });
+        continue;
+      }
       send({ jsonrpc: '2.0', id: msg.id, result: { tools: [{ name: 'echo', inputSchema: { type: 'object', properties: {} } }] } });
     } else if (msg.method === 'tools/call') {
       if (mode === 'die') process.exit(3);

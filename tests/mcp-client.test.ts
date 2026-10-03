@@ -103,3 +103,15 @@ describe('stopping a call', () => {
     }
   });
 });
+
+describe('listing tools', () => {
+  it('follows every page of the listing', async () => {
+    const client = fake('big', 'paged');
+    try {
+      await client.connect(5000);
+      assert.deepEqual((await client.listTools()).map((t) => t.name), ['echo', 'second']);
+    } finally {
+      await client.close();
+    }
+  });
+});
