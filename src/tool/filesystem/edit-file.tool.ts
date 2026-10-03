@@ -7,6 +7,7 @@ import { fileStamp, samePath } from '../../core/paths';
 import { defineTool } from '../core/defineTool';
 import { ok, fail, fromError } from '../core/tool-result';
 import { noteChange } from './_fs';
+import { noteSeen, linesMayHaveMoved } from './_seen';
 import { openTextFile, writeAndVerify, safeDiff } from './_text-file';
 import { numberedWindow } from './_window';
 import {
@@ -434,6 +435,13 @@ type ResolvedArgs =
   | { status: 'ok'; args: EditArgs }
   | { status: 'fail'; result: ToolResult };
 
+const has = (v: unknown) => v !== undefined && v !== null;
+
+/** The edit names the text it changes (search or symbol), so where it lands does not hang on line numbers. */
+function hasText(edit: EditSpec): boolean {
+  return (typeof edit.search === 'string' && edit.search !== '') || hasSymbol(edit);
+}
+
 function hasSymbol(edit: EditSpec): boolean {
   return typeof edit.symbol === 'string' && edit.symbol.trim() !== '';
 }
@@ -621,6 +629,21 @@ async function openEdit(
       'delete it and create it again with write_file if you genuinely mean to replace its contents with UTF-8 text.',
   });
   if (!opened.ok) return { failure: opened.result, rel: null, opened: null, edits: null, outcome: null, stamp: null };
+
+  // An edit placed by number alone is only right against the version those numbers came from. Search and symbol
+  // edits name their text, which proves itself; numbers do not, so they wait for a read of what is there now.
+  const byNumber = items.filter((e) => !hasText(e) && (has(e.line_start) || has(e.insert_at_line)));
+  if (byNumber.length > 0 && linesMayHaveMoved(ctx?.state, rel, opened.content)) {
+    const first = Math.max(1, Math.min(...byNumber.map((e) => Number(has(e.line_start) ? e.line_start : e.insert_at_line))));
+    const last = Math.max(...byNumber.map((e) => Number(has(e.line_end) ? e.line_end : has(e.line_start) ? e.line_start : e.insert_at_line)));
+    // What it is shown now is the version its next numbers will come from.
+    noteSeen(ctx?.state, rel, opened.content);
+    return refused(fail(`${rel} has changed since you last read it, so line ${first} may now be a different line — nothing was written.`, {
+      code: TOOL_ERROR_CODE.ENOMATCH,
+      hint: 'Take the line numbers from the listing below (it is the file as it is now), or name the text with search instead of numbers.',
+      display: `${rel} now contains:\n${numberedWindow(opened.content, first, Math.max(first, last), { pad: 6, mark: true })}`,
+    }));
+  }
 
   // Symbols resolve against the file as read, before matching: the rest of
   // the pipeline (and wouldWrite's sync preview, which skips symbols) is untouched.
@@ -913,6 +936,9 @@ export default defineTool({
       }
 
       noteChange(ctx, 'edit', abs, 'file');
+      // The model knows what it just wrote: when no line was added or removed, every number it holds still names the
+      // same line. When some were, the numbers past them moved, and a later edit by number waits for a fresh read.
+      if (countLines(updated) === countLines(content)) noteSeen(ctx?.state, rel, updated);
 
       const diff = safeDiff(content, updated);
       const changeCount = totalReplacements;

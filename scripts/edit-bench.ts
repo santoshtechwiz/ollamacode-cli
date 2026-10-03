@@ -161,6 +161,40 @@ const CASES: Case[] = [
     refused: { show: [10] },
   },
   {
+    id: 'line-range-after-own-edit',
+    seen: 'a second edit by number after the model changed a line in place',
+    file: 'app.js', content: APP_JS,
+    before: [
+      { tool: 'read_file', args: { path: 'app.js' } },
+      { tool: 'edit_file', args: { path: 'app.js', line_start: 7, line_end: 7, replace: 'const app = express();  // server' } },
+    ],
+    call: { path: 'app.js', line_start: 8, line_end: 8, replace: 'const PORT = 8080;' },
+    applies: APP_JS.replace('const app = express();', 'const app = express();  // server').replace('const PORT = process.env.PORT || 3000;', 'const PORT = 8080;'),
+  },
+  {
+    id: 'line-range-after-own-insert',
+    seen: 'line numbers from before the model\'s own edit added lines above them',
+    file: 'app.js', content: APP_JS,
+    before: [
+      { tool: 'read_file', args: { path: 'app.js' } },
+      { tool: 'edit_file', args: { path: 'app.js', insert_at_line: 1, replace: "'use strict';\n" } },
+    ],
+    call: { path: 'app.js', line_start: 8, line_end: 8, replace: 'const PORT = 8080;' },
+    refused: { show: [10] },
+  },
+  {
+    id: 'line-range-after-refusal',
+    seen: 'the next call takes its numbers from the listing a refusal showed',
+    file: 'app.js', content: APP_JS,
+    before: [
+      { tool: 'read_file', args: { path: 'app.js' } },
+      { touch: (text) => text.replace("const path = require('path');\n", "'use strict';\n\nconst path = require('path');\n") },
+      { tool: 'edit_file', args: { path: 'app.js', line_start: 8, line_end: 8, replace: 'const PORT = 8080;' } },
+    ],
+    call: { path: 'app.js', line_start: 10, line_end: 10, replace: 'const PORT = 8080;' },
+    applies: "'use strict';\n\n" + APP_JS.replace('const PORT = process.env.PORT || 3000;', 'const PORT = 8080;'),
+  },
+  {
     id: 'overlapping-batch',
     seen: 'two items of one edits array change the same lines',
     file: 'app.js', content: APP_JS,

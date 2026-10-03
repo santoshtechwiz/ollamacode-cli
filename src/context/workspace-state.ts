@@ -74,6 +74,8 @@ export interface WorkspaceState {
   /** Background processes that ended on their own, until a turn has shown them to the model. */
   background: BackgroundInbox;
   readFiles: Set<string>;
+  /** The version of each file the model last saw, by path, so line numbers it quotes can be checked (see _seen). */
+  seenText: Map<string, string>;
   todos: import('../agent/planning/todo-write.tool.ts').TodoItem[];
   /** The task that wrote `todos`; a list from another task is not shown as the running one's. */
   todosTask?: string | null;
@@ -139,6 +141,7 @@ const state: WorkspaceState = {
     subprocesses: new Map(),
     background: new BackgroundInbox(),
     readFiles: new Set(),
+    seenText: new Map(),
     todos: [],
     planPath: null,
 
@@ -194,6 +197,7 @@ const state: WorkspaceState = {
       state.subprocesses = new Map();
       state.background.clear();
       state.readFiles = new Set();
+      state.seenText = new Map();
       state.todos = [];
       state.planPath = null;
     },
