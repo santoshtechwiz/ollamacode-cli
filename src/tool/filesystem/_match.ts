@@ -215,6 +215,44 @@ function reindentReplacement(fileIndent: string, replacement: string): string {
     .join('\n');
 }
 
+/** The indentation step a text uses: a tab, or the common width of its space indents; '' when it indents nothing. */
+export function indentUnit(text: string): string {
+  let tabs = 0;
+  let width = 0;
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+  for (const line of String(text ?? '').split('\n')) {
+    if (!line.trim()) continue;
+    const lead = /^[ \t]*/.exec(line)![0];
+    if (lead.startsWith('\t')) tabs += 1;
+    else if (lead.length > 0) width = gcd(width, lead.length);
+  }
+  if (tabs > 0 && width === 0) return '\t';
+  if (width > 0 && tabs === 0) return ' '.repeat(width);
+  return '';
+}
+
+/**
+ * A replacement written in the search's indentation, moved to the file's: a match made ignoring whitespace used to
+ * write the model's tabs into a file indented with spaces. Only when both indent in one clear way and they differ.
+ */
+function matchIndentation(replacement: string, search: string, content: string): string {
+  const from = indentUnit(search);
+  const to = indentUnit(content);
+  if (!from || !to || from === to) return replacement;
+  return replacement
+    .split('\n')
+    .map((line) => {
+      let depth = 0;
+      let rest = line;
+      while (rest.startsWith(from)) {
+        depth += 1;
+        rest = rest.slice(from.length);
+      }
+      return to.repeat(depth) + rest;
+    })
+    .join('\n');
+}
+
 export function lineAt(content: string, offset: number): number {
   return content.slice(0, offset).split('\n').length;
 }
@@ -576,7 +614,8 @@ export function planEdit(
     };
   }
 
-  const replacement = reindentReplacement(opts.fileIndent ?? '', normalizeReplacement(content, replace));
+  const shaped = via === 'whitespace' ? matchIndentation(replace, search, content) : replace;
+  const replacement = reindentReplacement(opts.fileIndent ?? '', normalizeReplacement(content, shaped));
   const targets = replaceAll ? [...ranges] : chosen.slice(0, 1);
   // How it matched, said once.
   const how =
