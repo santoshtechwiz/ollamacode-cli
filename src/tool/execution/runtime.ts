@@ -170,6 +170,10 @@ export class ToolRuntime {
         : null;
       memo?.note(resolved, args, result, scopePath);
       if (result.ok && def?.runsCode) memo?.invalidateAll();
+      // A tool that may change things without naming the file (a shell, a script, git) may have changed anything on disk,
+      // whether or not it succeeded, so the workspace has moved: an earlier read or listing is no longer the current one.
+      // File tools move it themselves when they record the change.
+      if ((def?.risky || def?.runsCode) && fileTargetArg(resolved, args) === null) context.state?.touch?.();
       const retryable = !result.ok && result.code && isTransient(result.code);
       if (!retryable || retries > 0 || ctx?.signal?.aborted) {
         if (result.ok) {

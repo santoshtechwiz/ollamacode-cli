@@ -5,6 +5,9 @@ import { REASONING_MIN_PREDICT, REASONING_RESERVE_FRACTION } from '../../protoco
 import type { Workspace } from './session';
 import { resolveThinking } from './thinking';
 import { judgeModel, type ModelVerdict } from './model-fit';
+import { buildSystemPrompt } from '../../prompts/system';
+import { textModeInstructions } from '../../prompts/tools';
+import { estimateTokens } from '../../context/tokens';
 
 // Budget (from budget.ts)
 function generationAffordable({ cpuOnly, remote }: { cpuOnly?: boolean; remote?: boolean; }): boolean {
@@ -103,6 +106,20 @@ export async function refreshModelCapabilities(workspace: Workspace, { provider,
     supportsThinking: (workspace as any).supportsThinking,
     tunnel: (workspace as any).tunnel,
   };
+}
+
+/**
+ * Whether the window left after the reply budget holds the system prompt with tools written into it as text, the way
+ * a model without native tool calling is sent them. Unknown windows count as fitting: nothing says they do not.
+ */
+export function textToolsFit(workspace: Workspace): boolean {
+  const ws = workspace as any;
+  const window = Number(ws.contextWindow) || 0;
+  if (window <= 0) return true;
+  const room = window - (Number(ws.maxTokens) || 0);
+  const profile = chooseProfile(ws.contextLength ?? ws.contextWindow, { cpuOnly: ws.cpuOnly, remote: ws.remote });
+  const prompt = buildSystemPrompt({ cwd: ws.cwd, stacks: ws.stacks, runtimes: ws.runtimes, toolsEnabled: true, brief: profile.brief });
+  return estimateTokens(prompt + textModeInstructions({ core: profile.core })) < room;
 }
 
 /** The session model's coding fitness, or null when it was already shown this session. */

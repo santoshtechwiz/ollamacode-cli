@@ -97,6 +97,8 @@ export interface WorkspaceState {
   note: (op: string, rel: string, type: 'file' | 'dir') => void;
   record: (entry: Execution) => void;
   grant: (dir: string) => void;
+  /** Something outside the file tools (code that ran) may have changed the disk: the world moves, nothing is recorded. */
+  touch: () => void;
   startTurn: () => void;
   reset: () => void;
 }
@@ -156,6 +158,10 @@ const state: WorkspaceState = {
     grant(dir) {
       const abs = path.resolve(dir);
       if (!state.grantedRoots.includes(abs)) state.grantedRoots.push(abs);
+    },
+
+    touch() {
+      state.mutationCount += 1;
     },
 
     startTurn() {
@@ -225,13 +231,14 @@ export function replaceSession(state: WorkspaceState, id: string, reason: string
   logger.debug(`session replaced: ${previous} -> ${id} (${reason})`);
 }
 
-export function describeSession(state: WorkspaceState): string {
+/** `exits: false` leaves out the ended background processes, for a caller that tells the model about them on their own. */
+export function describeSession(state: WorkspaceState, { exits = true }: { exits?: boolean } = {}): string {
   const hasChanges = state.changes.length > 0;
   // Calls made for an earlier request are that request's; listed here they read as this one's work.
   const recent = state.executions.filter((e) => e.taskId === state.taskId).slice(-LEDGER_PROMPT_LINES);
 
   const running = [...state.subprocesses.values()].filter((s) => !s.exited && !s.error);
-  const ended = describeExitsForModel(state.background?.pending() ?? []);
+  const ended = exits ? describeExitsForModel(state.background?.pending() ?? []) : [];
   if (!hasChanges && recent.length === 0 && running.length === 0 && ended.length === 0) return '';
 
   const lines = ['SESSION RECORD (kept by the system, not by you)', ...ended];

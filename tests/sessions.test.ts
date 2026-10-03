@@ -90,3 +90,17 @@ test('a session another live window holds is not deleted', async () => {
   assert.equal(sessionFiles(root).length, 1);
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test('the saved summary counts every message trimmed so far, not just the latest save', () => {
+  const root = workspace();
+  const id = newSessionId();
+  const big = (n: number) => ({ id: `m${n}`, role: n % 2 ? 'assistant' : 'user', content: `turn ${n} `.padEnd(40_000, 'x') });
+  const batch = (from: number) => Array.from({ length: 8 }, (_, k) => big(from + k));
+
+  saveSession({ ...record(id, 'first'), messages: batch(0) }, root);
+  const saved = saveSession({ ...record(id, 'second'), messages: batch(8) }, root);
+
+  const omitted = Number(/trimmed: (\d+) message/.exec(String(saved.summary))?.[1]);
+  assert.ok(omitted > 0, 'the record was over budget, so something was trimmed');
+  assert.equal(omitted + saved.messages.length, 16, 'every message saved is either kept or counted as trimmed');
+});

@@ -226,3 +226,26 @@ describe('a reworded restart that keeps finding nothing new', () => {
     }
   });
 });
+
+describe('a background process that ended reaches the model as news', () => {
+  it('sits after the "for reference only" block, right before the person\'s words', async () => {
+    const { buildModelRequest } = await import('../src/context/builder');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-news-'));
+    try {
+      const state = createWorkspaceState(root);
+      state.background.record(exit('fizzbuzz', 1, { tail: 'FizzBuzz' }));
+      const store = new ContextStore();
+      store.addUser('run the fizz app', { pinned: true });
+
+      const { messages } = await buildModelRequest({ store, state });
+      const request = String(messages.at(-1)?.content);
+      const reference = request.slice(0, request.indexOf('[End of workspace context]'));
+      const after = request.slice(request.indexOf('[End of workspace context]'));
+
+      assert.doesNotMatch(reference, /fizzbuzz/, 'not filed under reference material');
+      assert.match(after, /Background processes that ended[\s\S]*fizzbuzz[\s\S]*FizzBuzz[\s\S]*run the fizz app$/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
