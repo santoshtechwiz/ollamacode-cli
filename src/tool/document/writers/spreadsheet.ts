@@ -1,4 +1,5 @@
 import { parseBlocks } from './markdown';
+import { loadXlsx } from '../xlsx';
 
 const MAX_SHEET_NAME = 31;
 const MAX_COL_WIDTH = 60;
@@ -25,7 +26,7 @@ function sheetName(wanted: string, taken: Set<string>): string {
 
 /** Each markdown table becomes a sheet named after the heading above it; content without tables becomes one sheet of lines. */
 export async function writeSpreadsheet(markdown: string, title?: string): Promise<SheetOutcome> {
-  const XLSX = await import('xlsx');
+  const XLSX = await loadXlsx();
   const blocks = parseBlocks(markdown);
   const taken = new Set<string>();
   const book = XLSX.utils.book_new();

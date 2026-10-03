@@ -86,7 +86,9 @@
     "turndown": "^7.2.4",
     "typescript": "^5.6.0",
     "unpdf": "^1.8.1",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "yaml": "^2.9.1"
+  },
+  "optionalDependencies": {
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   }
 }

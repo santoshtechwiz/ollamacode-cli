@@ -2,6 +2,7 @@ import fsp from 'node:fs/promises';
 import { TOOL_ERROR_CODE } from '../../protocol';
 import { defineTool } from '../core/defineTool';
 import { ok, fail, fromError } from '../core/tool-result';
+import { ToolError } from '../core/tool-error';
 import { TtlCache } from '../content/cache';
 import { readerFor, supportedExtensions } from './readers/index';
 import { renderDocument } from './view';
@@ -67,6 +68,8 @@ export default defineTool({
         try {
           doc = await reader.read(new Uint8Array(await fsp.readFile(abs)));
         } catch (err) {
+          // A reader that cannot run at all says so itself; anything else is this file failing to parse.
+          if (err instanceof ToolError) return fromError(err);
           const message = (err as Error)?.message ?? String(err);
           const locked = /password/i.test(message) || (err as { name?: string })?.name === 'PasswordException';
           return fail(

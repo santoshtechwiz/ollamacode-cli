@@ -1,4 +1,5 @@
 import type { DocumentReader, DocSection } from '../types';
+import { loadXlsx } from '../xlsx';
 
 const MAX_ROWS = 100_000;
 const CELL_CHARS = 200;
@@ -13,7 +14,7 @@ export const spreadsheetReader: DocumentReader = {
   extensions: ['.xlsx', '.xlsm', '.xls'],
   mimeType: /spreadsheetml|ms-excel/i,
   async read(bytes) {
-    const XLSX = await import('xlsx');
+    const XLSX = await loadXlsx();
     const book = XLSX.read(bytes, { type: 'array', dense: true, cellDates: true, sheetRows: MAX_ROWS + 1 });
     let clipped = false;
     const sections: DocSection[] = book.SheetNames.map((name) => {
