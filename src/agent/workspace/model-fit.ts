@@ -45,6 +45,12 @@ export function judgeModel(facts: ModelFacts): ModelVerdict {
   const name = facts.model;
   const window = Number(facts.contextLength) || 0;
 
+  if (facts.nativeTools === false && window > 0 && window < UNUSABLE_WINDOW) {
+    return {
+      fit: 'unsuited',
+      message: `${name} has no tool support and a ${windowLabel(window)} window, too short for coding — it can answer questions without tools; pick a larger model with tool support for coding.`,
+    };
+  }
   if (facts.nativeTools === false) {
     return {
       fit: 'unsuited',
