@@ -15,13 +15,13 @@ const walk = (dir) => {
 };
 walk(join(root, 'tests'));
 
-// A file that waits on something that never comes fails after a deadline instead of holding the run forever, and a
-// file whose tests are done exits even when a process or handle it started lingers (Windows is slow to let go).
+// A file that waits on something that never comes fails after a deadline instead of holding the run forever.
 // The deadline covers a whole file, not one test: the end-to-end chat test alone allows itself four minutes, and
 // Windows starts processes many times slower, so it only catches a run that has stopped, not a slow one.
-// Older Nodes lack these flags, so each is passed only where this Node accepts it.
+// No --test-force-exit: it ended files before all their results were reported, so a run could pass with tests missing.
+// Older Nodes lack the flag, so it is passed only where this Node accepts it.
 const supported = (flag) => spawnSync(process.execPath, [flag, '-e', ''], { stdio: 'ignore' }).status === 0;
-const guards = ['--test-timeout=900000', '--test-force-exit'].filter(supported);
+const guards = ['--test-timeout=900000'].filter(supported);
 
 const args = ['--import', 'tsx', '--import', './tests/setup.ts', '--test', ...guards, ...process.argv.slice(2), ...found.sort()];
 const run = spawnSync(process.execPath, args, { cwd: root, stdio: 'inherit' });
