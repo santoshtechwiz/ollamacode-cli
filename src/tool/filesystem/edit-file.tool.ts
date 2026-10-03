@@ -319,19 +319,20 @@ function commitEdits(
   content: string,
   planned: Array<Extract<PlannedEdit, { status: 'ok' }>>,
 ): EditOutcome {
-  const ops: TextEditOp[] = [];
+  // Each op remembers the edit item it came from: one item with replace_all makes several ops.
+  const ops: Array<TextEditOp & { item: number }> = [];
   const notes: string[] = [];
   let totalReplacements = 0;
   let allExact = true;
 
-  for (const p of planned) {
+  planned.forEach((p, item) => {
     notes.push(p.note);
     totalReplacements += p.replacements;
     allExact = allExact && p.exact;
     for (const t of p.targets) {
-      ops.push({ start: t.start, end: t.end, replacement: p.replacement });
+      ops.push({ start: t.start, end: t.end, replacement: p.replacement, item });
     }
-  }
+  });
 
   if (ops.length === 0) {
     return okOutcome(content, 0, allExact, notes.join(', ') || 'no change');
@@ -345,13 +346,17 @@ function commitEdits(
     const previous = ordered[i - 1];
     const current = ordered[i];
     if (current.start < previous.end) {
+      // In lines, as the model reads the file: character offsets told it nothing it could act on.
+      const from = lineAt(content, current.start);
+      const to = lineAt(content, Math.max(current.start, Math.min(previous.end, current.end) - 1));
+      const items = previous.item === current.item
+        ? `edit ${current.item + 1} matches`
+        : `edits ${Math.min(previous.item, current.item) + 1} and ${Math.max(previous.item, current.item) + 1} both change`;
       return failOutcome(
-        fail('Nothing was written — planned edits overlap.', {
+        fail(`Nothing was written — ${items} ${lineSpanLabel(from, to)}.`, {
           code: TOOL_ERROR_CODE.EINVAL,
-          hint:
-            `Edit operations ${previous.index + 1} and ${current.index + 1} target overlapping ` +
-            `ranges (${previous.start}-${previous.end}) and (${current.start}-${current.end}). ` +
-            'Widen the searches or split the changes into separate calls.',
+          hint: 'Each item must change its own lines of the file as read: merge the two into one item, or split them into separate calls.',
+          display: numberedWindow(content, from, to, { pad: 3, mark: true }),
         }),
       );
     }
