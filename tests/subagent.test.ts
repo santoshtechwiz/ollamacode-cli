@@ -189,6 +189,14 @@ function runner(runChild: (params: any) => Promise<any>, roles = SUBAGENT_ROLES)
 const finished = (content: string, extra: Record<string, unknown> = {}) => ({ content, stopReason: STOP_REASONS.COMPLETE, toolResults: [], iterations: 1, ...extra });
 
 describe('the subagent runner', () => {
+  it('marks where the child\'s work starts and ends, for the person reading the transcript', async () => {
+    const notes: string[] = [];
+    const { delegate, parent } = runner(async () => finished('done', { iterations: 2 }));
+    parent.callbacks = { note: (text: string) => notes.push(text) };
+    await delegate({ role: 'coding', task: 'Change the port to 8080 and run the tests' });
+    assert.deepEqual(notes, ['coding subagent started: Change the port to 8080 and run the tests', 'coding subagent finished · 2 steps · changed no files']);
+  });
+
   it('starts the child with its role: the task alone, its instruction, its step budget, one level deep', async () => {
     let seen: any;
     const { delegate } = runner(async (params) => {

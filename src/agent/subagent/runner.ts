@@ -105,6 +105,9 @@ export function createSubagentRunner(
     history.addUser(request.context ? `${request.task}\n\nContext from the agent that delegated this:\n${request.context}` : request.task);
     const changesBefore = (parent.state?.changes ?? []).length;
     const callbacks = parent.callbacks ?? {};
+    // The child's tool lines look like the parent's: two notes mark where its work starts and ends.
+    const brief = request.task.replace(/\s+/g, ' ').trim();
+    callbacks.note?.(`${role.id} subagent started: ${brief.length > 90 ? `${brief.slice(0, 89)}…` : brief}`, 'dim');
 
     let turn: TurnResult | undefined;
     try {
@@ -147,6 +150,14 @@ export function createSubagentRunner(
     const toolsUsed = [...new Set((turn?.toolResults ?? []).map((t) => t.name))];
     const filesChanged: string[] = [...new Set<string>((parent.state?.changes ?? []).slice(changesBefore).map((c: { path: string }) => String(c.path)))];
     const finished = !timedOut && stopReason === STOP_REASONS.COMPLETE && answer !== '';
+    const steps = Number(turn?.iterations ?? 0);
+    const touched = filesChanged.length ? `changed ${filesChanged.join(', ')}` : 'changed no files';
+    callbacks.note?.(
+      finished
+        ? `${role.id} subagent finished · ${steps} step${steps === 1 ? '' : 's'} · ${touched}`
+        : `${role.id} subagent stopped: ${unfinished(stopReason, role.timeoutMs, answer)} · ${touched}`,
+      finished ? 'success' : 'warn',
+    );
     return {
       ok: finished,
       role: role.id,
@@ -154,7 +165,7 @@ export function createSubagentRunner(
       stopReason,
       filesChanged,
       toolsUsed,
-      steps: Number(turn?.iterations ?? 0),
+      steps,
       ...(finished ? {} : { error: unfinished(stopReason, role.timeoutMs, answer) }),
     };
   };
