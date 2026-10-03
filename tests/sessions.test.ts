@@ -85,7 +85,8 @@ test('a session another live window holds is not deleted', async () => {
     other.kill();
   }
   // Once that window is gone, the next save cleans its record up.
-  await new Promise((r) => other.once('exit', r));
+  // One that already exited sends no second 'exit': waiting for it would never end.
+  if (other.exitCode === null && other.signalCode === null) await new Promise((r) => other.once('exit', r));
   saveSession(record(newSessionId(), 'later task'), root);
   assert.equal(sessionFiles(root).length, 1);
   fs.rmSync(root, { recursive: true, force: true });

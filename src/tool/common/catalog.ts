@@ -1,9 +1,9 @@
 import { defaultRegistry } from '../execution/registry';
 import { TOOL_NAME } from '../../protocol';
 
-export function buildToolCatalog({ only = null }: { only?: Iterable<string> | null } = {}): string {
+export function buildToolCatalog({ only = null, exclude = [] }: { only?: Iterable<string> | null; exclude?: readonly string[] } = {}): string {
   const names = only ? new Set(only) : null;
-  return defaultRegistry.defs.filter((t) => (!names || names.has(t.name)) && defaultRegistry.isOffered(t.name) && t.name !== TOOL_NAME.LOAD_TOOLS).map((t) => {
+  return defaultRegistry.defs.filter((t) => (!names || names.has(t.name)) && defaultRegistry.isOffered(t.name) && t.name !== TOOL_NAME.LOAD_TOOLS && !exclude.includes(t.name)).map((t) => {
     const required = t.parameters.required ?? [];
     const params = Object.entries(t.parameters.properties ?? {})
       .map(([k, v]) => `${k}${required.includes(k) ? '' : '?'}: ${(v as { type?: string }).type}`)

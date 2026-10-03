@@ -23,7 +23,7 @@ export function createPromptFn(host: ChatTurnContext, signal: AbortSignal): Prom
     const ans = await holdingTerminal(host, () =>
       confirmRisky(shown, { danger: call.dangerous, confirm: call.confirm, alwaysScope: 'routine changes this session', signal })
     );
-    if (ans === 'always') render.note('→ won\'t ask again this session for routine changes; deletes, git changes and risky commands still ask', 'dim');
+    if (ans === 'always') render.note('→ won\'t ask again this session for routine changes; deletes, git pushes and merges, and risky commands still ask', 'dim');
     if (ans === 'no') render.note('→ declined; the model is told the call did not run', 'dim');
     return ans;
   };

@@ -46,6 +46,8 @@ interface ToolCallBatch {
   discovery?: { resolver: ToolResolver; onWire: ReadonlySet<string> };
   signal?: AbortSignal;
   approve?: ApproveFn;
+  /** Set in a turn that may start subagents; the delegate tool reads it from its context. */
+  delegate?: import('../subagent/runner.ts').DelegateFn;
 }
 
 type Decision = ToolDecision | DiscoveryDecision;
@@ -193,7 +195,7 @@ async function resultForDecision(
       if (!prepared.prep.ok) return { result: prepared.prep.result, ran: false };
       callbacks.onStatus?.(activityForTool(name));
       callbacks.onToolStart?.(name, prepared.call.function.arguments);
-      const outcome = await batch.toolRunner.run(name, prepared.call.function.arguments, { signal: batch.signal, approve: batch.approve });
+      const outcome = await batch.toolRunner.run(name, prepared.call.function.arguments, { signal: batch.signal, approve: batch.approve, delegate: batch.delegate });
       return { result: outcome.result, ran: true };
     }
   }

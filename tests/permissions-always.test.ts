@@ -11,6 +11,15 @@ import { createWorkspaceState } from '../src/context/workspace-state';
 import { createAgentState } from '../src/agent/state';
 import { createApproveFn } from '../src/cli/chat/turn/approval-service';
 
+/**
+ * Windows will not remove a folder a running process still has as its working directory, so the session's own
+ * processes are stopped first, and the removal retries while their handles close.
+ */
+function removeWorkspace(state: { reset: () => void }, cwd: string): void {
+  state.reset();
+  fs.rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+}
+
 /** The chat session's real approval path, with the person's answers scripted; counts how often they were asked. */
 function session(answers: string[]) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-always-'));
@@ -26,7 +35,7 @@ function session(answers: string[]) {
   });
   const executor = createExecutor({ root: cwd, state, approve, timeoutMs: 20_000 });
   const start = async (command: string, id: string): Promise<any> => (await executor.run('start_subprocess', { command, id }, {})).result;
-  return { cwd, agentState, asked, start, cleanup: () => fs.rmSync(cwd, { recursive: true, force: true }) };
+  return { cwd, agentState, asked, start, cleanup: () => removeWorkspace(state, cwd) };
 }
 
 describe('"always allow" on starting a process', () => {
@@ -96,8 +105,8 @@ describe('the "always" policy (/permissions)', () => {
 describe('answering "always" once', () => {
   it('covers routine changes of every tool for the session; deletes still ask', async () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-always-all-'));
+    const state: any = createWorkspaceState(cwd);
     try {
-      const state: any = createWorkspaceState(cwd);
       const agentState = createAgentState();
       state.permissions = agentState.permissions;
       const host = { workspace: { cwd, root: cwd, state }, agentState, interactive: true, cfg: { permissions: { risky: 'ask' } }, flags: {} } as any;
@@ -120,7 +129,7 @@ describe('answering "always" once', () => {
       await run('delete_file', { path: 'c.txt' });
       assert.deepEqual(asked, ['exec_shell', 'exec_shell', 'delete_file'], 'deletes are still asked about');
     } finally {
-      fs.rmSync(cwd, { recursive: true, force: true });
+      removeWorkspace(state, cwd);
     }
   });
 });

@@ -6,6 +6,7 @@ import { ok, fail, fromError, clamp } from '../core/tool-result';
 import { isBinaryFile, decodeUtf8 } from './_fs';
 import { isJsonPath, stripBom } from './_json';
 import { readerFor } from '../document/readers/index';
+import { noteSeen } from './_seen';
 
 const MAX_BYTES = 512 * 1024;
 const MAX_DISPLAY = 60_000;
@@ -80,6 +81,8 @@ export default defineTool({
       const stripped = stripBom(decodeUtf8(raw).text);
       const hadBom = stripped.hadBom;
       const content = stripped.text;
+      // A range is still read from this version: its line numbers are this version's.
+      noteSeen(ctx?.state, rel, content);
       const lines = content.split('\n');
       const jsonFile = isJsonPath(rel);
       const singleLineJson = jsonFile && lines.length <= 2 && content.trim().length > 2000;

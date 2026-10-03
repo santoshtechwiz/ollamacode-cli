@@ -509,6 +509,8 @@ export const TOOL_NAME = Object.freeze({
   UNDO: 'undo',
   /** Discovery: the call the model makes to get a tool's real schema. */
   LOAD_TOOLS: 'load_tools',
+  /** Hands a task to a subagent; offered only in a turn that can start one. */
+  DELEGATE_TASK: 'delegate_task',
 } as const);
 
 

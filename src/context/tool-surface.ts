@@ -19,17 +19,22 @@ export interface ToolProfile {
   readOnly?: boolean;
   /** Overrides which tools are advertised up front instead of through discovery. */
   always?: readonly string[];
+  /** Tools this turn gets on top of what the profile allows (a research subagent's web tools on a read-only set). */
+  include?: readonly string[];
+  /** Tools this turn never gets, whatever else the profile allows (a subagent's, or one with no delegate). */
+  exclude?: readonly string[];
 }
 
 /** The tools a profile makes available, in registration order; the one place a profile becomes a list. */
-export function selectToolDefs({ core = false, readOnly = false }: ToolProfile = {}): import('../types.ts').ToolDef[] {
-  const selected = readOnly
+export function selectToolDefs({ core = false, readOnly = false, include = [], exclude = [] }: ToolProfile = {}): import('../types.ts').ToolDef[] {
+  const base = readOnly
     ? TOOLS.filter((t) => PLANNING_TOOLS.includes(t.name))
     : core
       ? TOOLS.filter((t) => CORE_TOOLS.includes(t.name) || isDynamicTool(t.name))
       : TOOLS;
 
-  return selected.filter((t) => isOfferedTool(t.name) && t.name !== TOOL_NAME.LOAD_TOOLS);
+  const selected = [...base, ...TOOLS.filter((t) => include.includes(t.name) && !base.includes(t))];
+  return selected.filter((t) => isOfferedTool(t.name) && t.name !== TOOL_NAME.LOAD_TOOLS && !exclude.includes(t.name));
 }
 
 /** The always-tools the profile allows; a profile that excludes one simply does not get it. */

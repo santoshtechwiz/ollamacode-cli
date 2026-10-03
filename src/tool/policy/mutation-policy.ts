@@ -634,11 +634,28 @@ export function dangerousReason(command: string, cwd?: string): string | null {
   return null;
 }
 
-/** Why a shell command is asked about every time, even under an always-allow: it writes to git or deletes files. */
+/**
+ * The git commands, in shell text, that are asked about every time: they reach a remote, rewrite the branch or its
+ * history, or delete. Staging, committing, switching and stashing are routine and an always-allow covers them; what
+ * destroys work outright (a hard reset, a clean, a force-push, a discarding restore) is a danger, asked separately.
+ */
+const GIT_CONSEQUENTIAL: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^\s*git\s+push\b/i, 'sends commits to a remote'],
+  [/^\s*git\s+(?:pull|merge|rebase)\b/i, 'rewrites the branch and the files in it'],
+  [/^\s*git\s+commit\b.*\s--amend\b/i, 'rewrites the last commit'],
+  [/^\s*git\s+branch\b.*\s(?:-D|-[a-z]*D[a-z]*|--delete\s+--force|--force\s+--delete)(?:\s|$)/, 'deletes a branch, merged or not'],
+  [/^\s*git\s+rm\b(?!.*\s--cached\b)/i, 'deletes files'],
+  [/^\s*git\s+checkout\s+(?:\.|--)(?:\s|$)/i, 'discards uncommitted changes'],
+];
+
+/** Why a shell command is asked about every time, even under an always-allow: a consequential git command, or a delete. */
 export function shellConfirmReason(command: string): string | null {
   const c = String(command ?? '').trim();
   if (!c || PRINTS_ITS_ARGUMENTS.test(c)) return null;
-  if (chainSegments(c).some((segment) => GIT_MUTATING_PATTERN.test(segment))) return 'changes the git repository';
+  for (const segment of chainSegments(c)) {
+    const hit = GIT_CONSEQUENTIAL.find(([pattern]) => pattern.test(segment));
+    if (hit) return hit[1];
+  }
   if (mentionsDelete(c)) return 'deletes files';
   return null;
 }

@@ -103,37 +103,60 @@ async function describeWindowsProcess(pid: number): Promise<{ command: string; e
   }
 }
 
+/** Windows: the fields asked for, tab-separated, one process a line. */
+function windowsProcessQuery(properties: string[]): string {
+  const fields = properties.map((p) => `$($_.${p})`).join('`t');
+  return `$ProgressPreference='SilentlyContinue'; Get-CimInstance -ClassName Win32_Process -Property ${properties.join(',')} | ForEach-Object { "${fields}" }`;
+}
+
+/** Process listings can be long: every command line, on a machine running many. */
+const PROCESS_LIST_MAX_BUFFER = 64 * 1024 * 1024;
+
+/**
+ * Reading every command line makes Windows open each process, which on a busy machine outlasts any short timeout;
+ * a listing that timed out came back empty, and ocode could no longer see its own lineage. When the full listing
+ * fails, the ids, parents and names alone are fetched: they are quick, and they are what the lineage needs.
+ */
+async function listWindowsProcesses(): Promise<ProcessInfo[]> {
+  const run = async (properties: string[], timeout: number) =>
+    (await execFileAsync('powershell', ['-NoProfile', '-NonInteractive', '-Command', windowsProcessQuery(properties)], {
+      timeout,
+      maxBuffer: PROCESS_LIST_MAX_BUFFER,
+      windowsHide: true,
+    })).stdout;
+  let stdout: string;
+  try {
+    stdout = String(await run(['ProcessId', 'ParentProcessId', 'Name', 'ExecutablePath', 'CommandLine'], 30_000));
+  } catch {
+    stdout = String(await run(['ProcessId', 'ParentProcessId', 'Name'], 30_000));
+  }
+  return parseWindowsProcesses(stdout);
+}
+
+/** Parse the tab-separated listing: pid, parent pid, name, then (when asked for) the executable and the command line. */
+export function parseWindowsProcesses(stdout: string): ProcessInfo[] {
+  const out: ProcessInfo[] = [];
+  for (const line of String(stdout ?? '').split('\n')) {
+    const parts = line.replace(/\r$/, '').split('\t');
+    if (parts.length < 3) continue;
+    const pid = Number((parts[0] ?? '').trim());
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    const parentPid = Number((parts[1] ?? '').trim());
+    out.push({
+      pid,
+      ...(Number.isInteger(parentPid) && parentPid > 0 ? { parentPid } : {}),
+      image: (parts[2] ?? '').trim() || `PID ${pid}`,
+      exePath: (parts[3] ?? '').trim() || undefined,
+      command: (parts.slice(4).join('\t') ?? '').trim().slice(0, 512),
+    });
+  }
+  return out;
+}
+
 /** Every visible process, best-effort. */
 export async function listProcesses(): Promise<ProcessInfo[]> {
   try {
-    if (process.platform === 'win32') {
-      const { stdout } = await execFileAsync(
-        'powershell',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine,ExecutablePath | ForEach-Object { "$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.Name)`t$($_.ExecutablePath)`t$($_.CommandLine)" }',
-        ],
-        { timeout: 15000 } as { timeout: number },
-      );
-      const out: ProcessInfo[] = [];
-      for (const line of String(stdout ?? '').split('\n')) {
-        const parts = line.split('\t');
-        if (parts.length < 3) continue;
-        const pid = Number((parts[0] ?? '').trim());
-        if (!Number.isInteger(pid) || pid <= 0) continue;
-        const parentPid = Number((parts[1] ?? '').trim());
-        out.push({
-          pid,
-          ...(Number.isInteger(parentPid) && parentPid > 0 ? { parentPid } : {}),
-          image: (parts[2] ?? '').trim() || `PID ${pid}`,
-          exePath: (parts[3] ?? '').trim() || undefined,
-          command: (parts.slice(4).join('\t') ?? '').trim().slice(0, 512),
-        });
-      }
-      return out;
-    }
+    if (process.platform === 'win32') return await listWindowsProcesses();
     const { stdout } = await execFileAsync('ps', ['-eo', 'pid,ppid,comm,args']);
     const out: ProcessInfo[] = [];
     for (const line of String(stdout ?? '').split('\n').slice(1)) {

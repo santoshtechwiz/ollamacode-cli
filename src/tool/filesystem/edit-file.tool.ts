@@ -7,6 +7,7 @@ import { fileStamp, samePath } from '../../core/paths';
 import { defineTool } from '../core/defineTool';
 import { ok, fail, fromError } from '../core/tool-result';
 import { noteChange } from './_fs';
+import { noteSeen, linesMayHaveMoved } from './_seen';
 import { openTextFile, writeAndVerify, safeDiff } from './_text-file';
 import { numberedWindow } from './_window';
 import {
@@ -129,9 +130,11 @@ function contentUnchanged(original: string, updated: string): boolean {
 function hasTruncationMarker(search: string): boolean {
   const s = String(search ?? '');
   // Only treat an ellipsis as truncation when it is clearly a standalone diagnostic marker.
-  return /(?:^|[\\s])(?:…|\\.\\.\\.)(?:$|[\\s])/.test(s) ||
-    /…\\s*$/.test(s) ||
-    /\\.{3}\\s*$/.test(s);
+  // Written as regex literals: the escapes were once doubled as if in a string, so `[\\s]` matched a backslash or an
+  // "s" and none of these ever fired.
+  return /(?:^|\s)(?:…|\.\.\.)(?:$|\s)/.test(s) ||
+    /…\s*$/.test(s) ||
+    /\.{3}\s*$/.test(s);
 }
 
 function notFoundFailure(
@@ -142,12 +145,14 @@ function notFoundFailure(
   isJson: boolean,
   why: string,
   definitions: string[] = [],
+  where: { focus?: { line: number; lineEnd: number }; divergedAt?: number } = {},
 ): ToolResult {
   const totalLines = countLines(content);
-  const best = bestMatchLine(content, search);
+  // The listing shows the line the verdict names; a listing chosen another way showed lines the model had not got wrong.
+  const best = where.focus?.line ?? bestMatchLine(content, search);
   const preview =
     best !== null
-      ? numberedWindow(content, best, best, { pad: 6 })
+      ? numberedWindow(content, best, best, { pad: 6, mark: where.divergedAt !== undefined })
       : content
           .split('\n')
           .slice(0, HEADLESS_PREVIEW_LINES)
@@ -197,7 +202,8 @@ function notFoundFailure(
 
   // Last fallback after exact and whitespace matching failed, and only as a
   // suggestion — never applied. Skipped when it collapses onto the preview.
-  const fuzzy = fuzzyLines(content, search, best);
+  // A search that parted ways at a named line needs no guess at where it was meant to go.
+  const fuzzy = where.divergedAt === undefined ? fuzzyLines(content, search, best) : null;
   if (fuzzy !== null && !(best !== null && fuzzy.line === best && fuzzy.lineEnd === best)) {
     hint += ` Did you mean ${lineSpanLabel(fuzzy.line, fuzzy.lineEnd)}? If so, quote that region verbatim from the listing below.`;
   }
@@ -214,7 +220,8 @@ function notFoundFailure(
     hint,
     code: TOOL_ERROR_CODE.ENOMATCH,
     display: `${rel} currently contains:\n${preview}${previewTail}`,
-    data: { path: rel, lines: totalLines },
+    // Where the listing points, so a caller that rebuilds this failure (with definitions) points at the same place.
+    data: { path: rel, lines: totalLines, where },
   };
 }
 
@@ -278,7 +285,7 @@ function planOneEdit(
 
   if (!plan.ok) {
     if (plan.code === TOOL_ERROR_CODE.ENOMATCH) {
-      return { status: 'fail', result: notFoundFailure(content, String(edit.search), rel, ctx, isJson, plan.why) };
+      return { status: 'fail', result: notFoundFailure(content, String(edit.search), rel, ctx, isJson, plan.why, [], plan) };
     }
     if (plan.code === TOOL_ERROR_CODE.EAMBIGUOUS) {
       return { status: 'fail', result: ambiguousFailure(content, String(edit.search), plan.ranges, rel, isJson, plan.why) };
@@ -313,19 +320,20 @@ function commitEdits(
   content: string,
   planned: Array<Extract<PlannedEdit, { status: 'ok' }>>,
 ): EditOutcome {
-  const ops: TextEditOp[] = [];
+  // Each op remembers the edit item it came from: one item with replace_all makes several ops.
+  const ops: Array<TextEditOp & { item: number }> = [];
   const notes: string[] = [];
   let totalReplacements = 0;
   let allExact = true;
 
-  for (const p of planned) {
+  planned.forEach((p, item) => {
     notes.push(p.note);
     totalReplacements += p.replacements;
     allExact = allExact && p.exact;
     for (const t of p.targets) {
-      ops.push({ start: t.start, end: t.end, replacement: p.replacement });
+      ops.push({ start: t.start, end: t.end, replacement: p.replacement, item });
     }
-  }
+  });
 
   if (ops.length === 0) {
     return okOutcome(content, 0, allExact, notes.join(', ') || 'no change');
@@ -339,13 +347,17 @@ function commitEdits(
     const previous = ordered[i - 1];
     const current = ordered[i];
     if (current.start < previous.end) {
+      // In lines, as the model reads the file: character offsets told it nothing it could act on.
+      const from = lineAt(content, current.start);
+      const to = lineAt(content, Math.max(current.start, Math.min(previous.end, current.end) - 1));
+      const items = previous.item === current.item
+        ? `edit ${current.item + 1} matches`
+        : `edits ${Math.min(previous.item, current.item) + 1} and ${Math.max(previous.item, current.item) + 1} both change`;
       return failOutcome(
-        fail('Nothing was written — planned edits overlap.', {
+        fail(`Nothing was written — ${items} ${lineSpanLabel(from, to)}.`, {
           code: TOOL_ERROR_CODE.EINVAL,
-          hint:
-            `Edit operations ${previous.index + 1} and ${current.index + 1} target overlapping ` +
-            `ranges (${previous.start}-${previous.end}) and (${current.start}-${current.end}). ` +
-            'Widen the searches or split the changes into separate calls.',
+          hint: 'Each item must change its own lines of the file as read: merge the two into one item, or split them into separate calls.',
+          display: numberedWindow(content, from, to, { pad: 3, mark: true }),
         }),
       );
     }
@@ -396,14 +408,14 @@ function applyBatch(
       const remaining = edits.length - i - 1;
       const notAttempted =
         remaining > 0 ? ` ${remaining} item(s) were not attempted.` : '';
+      // What happened is for both; how to retry is recovery advice for the model, so it rides in the hint.
+      const retry = `${landed}${notAttempted} Fix item ${i + 1} and resend the whole array.`.trim();
       return {
         status: 'fail',
         result: {
           ...r.result,
-          error:
-            `Edit ${i + 1} of ${edits.length} failed: ${r.result.error}\n` +
-            `Nothing was written — edits are applied or rolled back together.${landed}${notAttempted} ` +
-            `Fix item ${i + 1} and resend the whole array.`,
+          error: `Edit ${i + 1} of ${edits.length} failed: ${r.result.error}\nNothing was written — edits are applied or rolled back together.`,
+          hint: [r.result.hint, retry].filter(Boolean).join(' '),
         },
       };
     }
@@ -422,6 +434,13 @@ function applyBatch(
 type ResolvedArgs =
   | { status: 'ok'; args: EditArgs }
   | { status: 'fail'; result: ToolResult };
+
+const has = (v: unknown) => v !== undefined && v !== null;
+
+/** The edit names the text it changes (search or symbol), so where it lands does not hang on line numbers. */
+function hasText(edit: EditSpec): boolean {
+  return (typeof edit.search === 'string' && edit.search !== '') || hasSymbol(edit);
+}
 
 function hasSymbol(edit: EditSpec): boolean {
   return typeof edit.symbol === 'string' && edit.symbol.trim() !== '';
@@ -611,6 +630,21 @@ async function openEdit(
   });
   if (!opened.ok) return { failure: opened.result, rel: null, opened: null, edits: null, outcome: null, stamp: null };
 
+  // An edit placed by number alone is only right against the version those numbers came from. Search and symbol
+  // edits name their text, which proves itself; numbers do not, so they wait for a read of what is there now.
+  const byNumber = items.filter((e) => !hasText(e) && (has(e.line_start) || has(e.insert_at_line)));
+  if (byNumber.length > 0 && linesMayHaveMoved(ctx?.state, rel, opened.content)) {
+    const first = Math.max(1, Math.min(...byNumber.map((e) => Number(has(e.line_start) ? e.line_start : e.insert_at_line))));
+    const last = Math.max(...byNumber.map((e) => Number(has(e.line_end) ? e.line_end : has(e.line_start) ? e.line_start : e.insert_at_line)));
+    // What it is shown now is the version its next numbers will come from.
+    noteSeen(ctx?.state, rel, opened.content);
+    return refused(fail(`${rel} has changed since you last read it, so line ${first} may now be a different line — nothing was written.`, {
+      code: TOOL_ERROR_CODE.ENOMATCH,
+      hint: 'Take the line numbers from the listing below (it is the file as it is now), or name the text with search instead of numbers.',
+      display: `${rel} now contains:\n${numberedWindow(opened.content, first, Math.max(first, last), { pad: 6, mark: true })}`,
+    }));
+  }
+
   // Symbols resolve against the file as read, before matching: the rest of
   // the pipeline (and wouldWrite's sync preview, which skips symbols) is untouched.
   const resolved = await resolveSymbols(opened.content, args, rel);
@@ -628,10 +662,11 @@ async function openEdit(
     // search isn't recoverable from the wrapped error. The sync match path
     // can't parse (WASM load is async), so the hint is enriched here, on the
     // async path both cannotRun and execute share.
+    const where = ((outcome.result.data as { where?: { focus?: { line: number; lineEnd: number }; divergedAt?: number } } | undefined)?.where) ?? {};
     const defs = await nearbyDefinitions(
       rel,
       opened.content,
-      bestMatchLine(opened.content, String(effective.search ?? '')),
+      where.focus?.line ?? bestMatchLine(opened.content, String(effective.search ?? '')),
     );
     if (defs.length > 0) {
       outcome = failOutcome(
@@ -643,6 +678,7 @@ async function openEdit(
           opened.isJson,
           String(outcome.result.error),
           defs,
+          where,
         ),
       );
     }
@@ -900,6 +936,9 @@ export default defineTool({
       }
 
       noteChange(ctx, 'edit', abs, 'file');
+      // The model knows what it just wrote: when no line was added or removed, every number it holds still names the
+      // same line. When some were, the numbers past them moved, and a later edit by number waits for a fresh read.
+      if (countLines(updated) === countLines(content)) noteSeen(ctx?.state, rel, updated);
 
       const diff = safeDiff(content, updated);
       const changeCount = totalReplacements;

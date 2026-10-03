@@ -215,6 +215,44 @@ function reindentReplacement(fileIndent: string, replacement: string): string {
     .join('\n');
 }
 
+/** The indentation step a text uses: a tab, or the common width of its space indents; '' when it indents nothing. */
+export function indentUnit(text: string): string {
+  let tabs = 0;
+  let width = 0;
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+  for (const line of String(text ?? '').split('\n')) {
+    if (!line.trim()) continue;
+    const lead = /^[ \t]*/.exec(line)![0];
+    if (lead.startsWith('\t')) tabs += 1;
+    else if (lead.length > 0) width = gcd(width, lead.length);
+  }
+  if (tabs > 0 && width === 0) return '\t';
+  if (width > 0 && tabs === 0) return ' '.repeat(width);
+  return '';
+}
+
+/**
+ * A replacement written in the search's indentation, moved to the file's: a match made ignoring whitespace used to
+ * write the model's tabs into a file indented with spaces. Only when both indent in one clear way and they differ.
+ */
+function matchIndentation(replacement: string, search: string, content: string): string {
+  const from = indentUnit(search);
+  const to = indentUnit(content);
+  if (!from || !to || from === to) return replacement;
+  return replacement
+    .split('\n')
+    .map((line) => {
+      let depth = 0;
+      let rest = line;
+      while (rest.startsWith(from)) {
+        depth += 1;
+        rest = rest.slice(from.length);
+      }
+      return to.repeat(depth) + rest;
+    })
+    .join('\n');
+}
+
 export function lineAt(content: string, offset: number): number {
   return content.slice(0, offset).split('\n').length;
 }
@@ -292,8 +330,7 @@ function firstDivergence(content: string, search: string): { start: number; line
 const shown = (line: string) => (line === '' ? 'a blank line' : `“${line.length > 60 ? `${line.slice(0, 59)}…` : line}”`);
 
 /** Why a search did not match, naming the first differing line when the search starts matching and then parts ways. */
-function notFoundWhy(content: string, search: string, rel: string): string {
-  const d = firstDivergence(content, search);
+function notFoundWhy(content: string, search: string, rel: string, d = firstDivergence(content, search)): string {
   if (!d) return `“${quoteSearchText(search)}” is not in ${rel}`;
   return `the search matches ${rel} from line ${d.start} but differs at line ${d.line}: the file has ${shown(d.file)} where the search has ${shown(d.search)}`;
 }
@@ -317,6 +354,8 @@ export interface EditPlan {
   via: 'exact' | 'whitespace' | 'json';
   /** Set when a line range chose between several matches. */
   disambiguatedBy?: { line: number; lineEnd: number };
+  /** A search that matched for some lines and then parted ways: the file line where it did. `focus` points there. */
+  divergedAt?: number;
 }
 
 export interface EditArgError {
@@ -512,12 +551,16 @@ export function planEdit(
   }
 
   if (ranges.length === 0) {
-    const near = bestMatchLine(content, search);
+    // One answer to "where did it go wrong", for the sentence and the listing alike: the line where a search that
+    // started matching parts ways, else the line sharing most of its words.
+    const diverged = firstDivergence(content, search);
+    const near = diverged?.line ?? bestMatchLine(content, search);
     return {
       ok: false,
       code: 'ENOMATCH',
       ranges: [],
-      why: notFoundWhy(content, search, rel),
+      why: notFoundWhy(content, search, rel, diverged),
+      ...(diverged ? { divergedAt: diverged.line } : {}),
       targets: [],
       replacement: '',
       replacements: 0,
@@ -571,7 +614,8 @@ export function planEdit(
     };
   }
 
-  const replacement = reindentReplacement(opts.fileIndent ?? '', normalizeReplacement(content, replace));
+  const shaped = via === 'whitespace' ? matchIndentation(replace, search, content) : replace;
+  const replacement = reindentReplacement(opts.fileIndent ?? '', normalizeReplacement(content, shaped));
   const targets = replaceAll ? [...ranges] : chosen.slice(0, 1);
   // How it matched, said once.
   const how =
