@@ -17,7 +17,7 @@ import { dim, cyan, yellow, gray, icons, SHOW_CURSOR } from '../../ui/ansi';
 import { liveChecklist } from '../../agent/planning/plan';
 import { taskTodos } from '../../agent/planning/todo-write.tool';
 import { STOP_REASONS } from '../../protocol';
-import { describeExitForPerson } from '../../tool/process/background-inbox';
+import { createBackgroundHandoff } from './background-handoff';
 import { clearWorkspacePlans, pruneStalePlans } from '../../agent/planning/store';
 import { logger } from '../../core/logger';
 import { getCommand, CmdResult } from '../commands/registry';
@@ -53,6 +53,8 @@ interface Frontend {
   armed: boolean;
   /** Inputs waiting behind a running turn. */
   pending: string[];
+  /** The last turn was stopped or failed; what it left is not picked up again on its own. */
+  lastTurnUnfinished?: boolean;
   /** Live-prompt hooks some slash commands use (insert text, queue input…). */
   ui?: Record<string, unknown>;
 }
@@ -149,9 +151,11 @@ async function runTurn(s: ChatSession, fe: Frontend, text: string, { resumePlan 
     if (result.content?.trim() && !s.lastOutput) s.lastOutput = { label: 'answer', text: String(result.content) };
     if (result.telemetry?.length) s.sessionTelemetry.push(...result.telemetry);
     cancelled = result.stopReason === STOP_REASONS.CANCELLED;
+    fe.lastTurnUnfinished = cancelled;
     process.exitCode = await reportChatTurn(host, result);
   } catch (err) {
     cancelled = controller.signal.aborted || isCancel(err);
+    fe.lastTurnUnfinished = true;
     // Never interrupt() the view here: it unmounts Ink and leaves a live prompt deaf.
     const msg = err && typeof err === 'object' && 'message' in err ? String((err as any).message) : String(err);
     // Whatever stopped the turn (Esc, Ctrl-C, the repetition guard, a dismissed prompt) already said so where it happened.
@@ -438,9 +442,26 @@ async function runLive(s: ChatSession) {
     },
   };
 
-  // A background process that ends is said once, when it happens; the agent is shown it with the next message.
-  s.workspace.state?.background?.subscribe((exit) =>
-    render.note(describeExitForPerson(exit), exit.outcome === 'finished' ? 'success' : 'warn'));
+  // A background process the agent started ends: the person sees the result and the agent is handed it, untyped.
+  const handoff = createBackgroundHandoff({
+    background: s.workspace.state?.background,
+    busy: () => Boolean(fe.active && !fe.active.signal.aborted),
+    queued: () => fe.pending.length > 0,
+    typing: () => Boolean(promptValue.trim()),
+    lastTurnUnfinished: () => Boolean(fe.lastTurnUnfinished),
+    note: (text, tone) => render.note(text, tone),
+    echo: (text) => render.raw(`\n${cyan('❯')} ${dim(`(sent for you) ${text}`)}\n`),
+    runTurn: async (text) => {
+      await runTurn(s, fe, text);
+      promptDisabled = false;
+      render.resume();
+    },
+    afterTurn: async () => {
+      const next = fe.pending.shift();
+      if (next !== undefined) await processInput(next);
+      else await handoff.handOff();
+    },
+  });
 
   // The same key closes its own reveal; the other key swaps it. Nothing enters the transcript, so toggling never appends.
   function toggleReveal(kind: 'file' | 'output', source: { label: string; text: string } | null, verb: string) {
@@ -476,6 +497,9 @@ async function runLive(s: ChatSession) {
     const text = String(raw ?? '').trim();
     fe.armed = false;
     if (!text) return;
+    // The person is back: background results may be handed to the agent again.
+    handoff.personSpoke();
+    fe.lastTurnUnfinished = false;
     cmdHistory.record(text);
     if (fe.active && !fe.active.signal.aborted) {
       fe.pending.push(text);
@@ -496,5 +520,7 @@ async function runLive(s: ChatSession) {
     }
     const next = fe.pending.shift();
     if (next !== undefined) await processInput(next);
+    // A background process that ended after the turn's last request is still waiting for the agent.
+    else await handoff.handOff();
   }
 }
