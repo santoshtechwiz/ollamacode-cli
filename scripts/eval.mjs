@@ -640,6 +640,12 @@ function mine() {
   const errors = [];
   let sessions = 0;
   for (const dir of dirs.length ? dirs : [LAB, join(tmpdir(), 'ocode-eval')]) {
+    // A folder that is not there found nothing: say so, rather than report "0 sessions" as if it had been searched.
+    // Git Bash drops the backslashes of an unquoted C:\path, so the hint names the forms that survive it.
+    if (!existsSync(dir)) {
+      console.log(`not found: ${dir}${/^[A-Za-z]:[^\\/]/.test(dir) ? '  (in Git Bash write C:/projects/x or quote the path)' : ''}`);
+      continue;
+    }
     for (const file of sessionFiles(dir)) {
       try {
         const session = JSON.parse(readFileSync(file, 'utf8'));
