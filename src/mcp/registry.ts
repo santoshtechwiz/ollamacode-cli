@@ -20,7 +20,7 @@ export interface McpServerStatus {
 
 /** Every configured server and whether it is actually usable. */
 export function mcpServerStatus(): McpServerStatus[] {
-  const live = new Set(connected.map((c) => String(c.name)));
+  const live = new Set(connected.filter((c) => !c.dead).map((c) => String(c.name)));
   return mcpServersConfig().map((cfg) => ({
     name: String(cfg.name),
     enabled: !cfg.disabled,
@@ -49,6 +49,14 @@ function bridgeTool(client: McpClient, tool: import('./client.ts').McpTool): imp
     risky: true,
     async execute(args) {
       try {
+        // A server that stopped is started again, a bounded number of times, before its tool is called.
+        if (client.dead) {
+          const reason = client.dead.message;
+          const restarted = await client.restart().catch((err: unknown) => {
+            throw new Error(`${reason}, and starting it again failed: ${err instanceof Error ? err.message : err}`);
+          });
+          if (!restarted) return fail(`${reason}; it was restarted ${McpClient.MAX_RESTARTS} times already, so its tools are unavailable this session`, { code: 'EUNKNOWN' });
+        }
         const res = await client.callTool(tool.name, args);
         if (res.isError) return fail(res.text || `${name} reported an error`, { code: 'EUNKNOWN' });
         return ok({ kind: 'text', display: res.text, data: { raw: res.text } });

@@ -38,6 +38,10 @@ export class McpClient {
   nextId: any;
   buffer: any;
   closed: any;
+  /** Why the server can no longer answer: it exited, or it never started. Calls fail at once with this. */
+  dead: Error | null;
+  /** How many times a dead server was started again this session. */
+  restarts: number;
 
   constructor(cfg: import('../core/config.ts').McpServerConfig) {
     this.name = cfg.name;
@@ -48,12 +52,22 @@ export class McpClient {
     this.nextId = 1;
     this.buffer = '';
     this.closed = null;
+    this.dead = null;
+    this.restarts = 0;
   }
+
+  /** Restarts a server gets after it stops, so one that crashes on every call does not respawn forever. */
+  static MAX_RESTARTS = 2;
+
+  /** How long close() waits for the process to go before giving up on it. */
+  static CLOSE_GRACE_MS = 5_000;
 
   /** A server launched through a package-manager shim may have to *fetch itself* first, and that is not a hang. */
   static COLD_START_GRACE_MS = 90_000;
 
   async connect(timeoutMs?: number) {
+    this.dead = null;
+    this.buffer = '';
     this.usesShell = needsWindowsShell(this.cfg.command);
     const budget = timeoutMs ?? (isPackageRunner(this.cfg.command) ? McpClient.COLD_START_GRACE_MS : 15_000);
     const child = spawn(this.cfg.command, this.cfg.args ?? [], {
@@ -69,17 +83,25 @@ export class McpClient {
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk) => logger.debug(`mcp[${this.name}] stderr: ${chunk.trim()}`));
 
+    let settle!: () => void;
     this.closed = new Promise<void>((resolve) => {
-      child.on('exit', (code, signal) => {
-        const err = new Error(`mcp server "${this.name}" exited (code=${code}, signal=${signal})`);
-        for (const [, p] of this.pending) p.reject(err);
-        this.pending.clear();
-        resolve();
-      });
+      settle = resolve;
     });
-    child.on('error', (err) => {
+    // A process replaced by a restart may still exit later: what it does is no longer this connection's news.
+    const stop = (err: Error) => {
+      if (this.child !== child) return;
+      this.dead = err;
       for (const [, p] of this.pending) p.reject(err);
       this.pending.clear();
+    };
+    child.on('exit', (code, signal) => {
+      stop(new Error(`mcp server "${this.name}" stopped (exit code ${code ?? 'none'}${signal ? `, signal ${signal}` : ''})`));
+      settle();
+    });
+    child.on('error', (err) => {
+      stop(err);
+      // A command that could not be started never exits: without this, close() waited on it forever.
+      if (child.pid === undefined) settle();
     });
 
     await this._request(
@@ -112,13 +134,28 @@ export class McpClient {
   async close() {
     if (!this.child) return;
     this.child.stdin?.end();
-    try {
-      await killProcessTreeAndWait(this.child);
-    } catch {}
-    await this.closed;
+    if (this.child.pid !== undefined && !this.dead) {
+      try {
+        await killProcessTreeAndWait(this.child);
+      } catch {}
+    }
+    // Never wait without end: a process that will not go is left to the exit handler, not allowed to hang the caller.
+    await Promise.race([this.closed, new Promise((resolve) => setTimeout(resolve, McpClient.CLOSE_GRACE_MS).unref())]);
+  }
+
+  /** Start a server that stopped again, a bounded number of times; false when it has had its restarts. */
+  async restart(): Promise<boolean> {
+    if (this.restarts >= McpClient.MAX_RESTARTS) return false;
+    this.restarts += 1;
+    await this.close().catch(() => {});
+    this.pending = new Map();
+    await this.connect();
+    return true;
   }
 
   _request(method: string, params: any, timeoutMs: number = 15_000): Promise<any> {
+    // A server that has stopped cannot answer: say so now rather than wait out the timeout.
+    if (this.dead) return Promise.reject(this.dead);
     const id = this.nextId++;
     const payload = { jsonrpc: '2.0', id, method, params };
     return new Promise((resolve, reject) => {

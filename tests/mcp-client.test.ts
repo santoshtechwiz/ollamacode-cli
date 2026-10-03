@@ -1,0 +1,55 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { McpClient } from '../src/mcp/client';
+
+const SERVER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-mcp-server.cjs');
+const fake = (name: string, ...args: string[]) => new McpClient({ name, command: process.execPath, args: [SERVER, ...args] } as any);
+const elapsed = async (fn: () => Promise<unknown>) => {
+  const t = Date.now();
+  await fn().catch(() => {});
+  return Date.now() - t;
+};
+
+describe('an MCP server that cannot be started, or stops', () => {
+  it('a command that does not exist fails to connect, and closing it returns at once', async () => {
+    const client = new McpClient({ name: 'missing', command: 'no-such-mcp-binary-for-ocode-tests', args: [] } as any);
+    await assert.rejects(client.connect(3000), /ENOENT|not found|cannot find/i);
+    assert.ok((await elapsed(() => client.close())) < 1000, 'close() used to wait forever for an exit that never comes');
+  });
+
+  it('once the server stopped, a call fails at once and says why, instead of waiting out the timeout', async () => {
+    const client = fake('dying', 'die');
+    await client.connect(5000);
+    await assert.rejects(client.callTool('echo', {}, 10_000), /stopped \(exit code 3\)/);
+    let message = '';
+    const took = await elapsed(async () => {
+      try {
+        await client.callTool('echo', {}, 10_000);
+      } catch (err) {
+        message = (err as Error).message;
+      }
+    });
+    assert.match(message, /stopped/);
+    assert.ok(took < 1000, `failed after ${took}ms`);
+  });
+
+  it('a stopped server can be started again, a bounded number of times', async () => {
+    const marker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-mcp-')), 'died');
+    const client = fake('flaky', 'die-once', marker);
+    try {
+      await client.connect(5000);
+      await assert.rejects(client.callTool('echo', {}, 5000), /stopped/);
+      assert.equal(await client.restart(), true);
+      assert.equal((await client.callTool('echo', {}, 5000)).text, 'echoed');
+      client.restarts = McpClient.MAX_RESTARTS;
+      assert.equal(await client.restart(), false, 'no more restarts once they are used up');
+    } finally {
+      await client.close();
+      fs.rmSync(path.dirname(marker), { recursive: true, force: true });
+    }
+  });
+});
