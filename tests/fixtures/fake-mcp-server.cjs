@@ -1,6 +1,9 @@
 // A minimal stdio MCP server for tests. argv[2] picks how it misbehaves:
 //   ok          answers everything
-//   die         exits on every tools/call
+//   die         exits on every tools/call, saying why on stderr first
+//   invalid     answers tools/call with a JSON-RPC invalid-arguments error
+//   hello       records the initialize params in argv[3]
+//   flood       answers tools/call with argv[3] characters and no line end, then ends that line and replies
 //   die-once    exits on the first tools/call (marker file in argv[3]), answers after a restart
 //   image       answers tools/call with a large image
 //   paged       lists its tools over two pages
@@ -29,6 +32,7 @@ process.stdin.on('data', (chunk) => {
       continue;
     }
     if (msg.method === 'initialize') {
+      if (mode === 'hello' && marker) fs.writeFileSync(marker, JSON.stringify(msg.params));
       send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: { name: 'fake', version: '1' } } });
     } else if (msg.method === 'tools/list') {
       if (mode === 'asks') send({ jsonrpc: '2.0', id: msg.id, method: 'ping' });
@@ -39,7 +43,23 @@ process.stdin.on('data', (chunk) => {
       }
       send({ jsonrpc: '2.0', id: msg.id, result: { tools: [{ name: 'echo', inputSchema: { type: 'object', properties: {} } }] } });
     } else if (msg.method === 'tools/call') {
-      if (mode === 'die') process.exit(3);
+      if (mode === 'die') {
+        process.stderr.write('fatal: GITHUB_TOKEN is not set\n', () => process.exit(3));
+        continue;
+      }
+      if (mode === 'invalid') {
+        send({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'repo is required' } });
+        continue;
+      }
+      if (mode === 'flood') {
+        process.stdout.write('x'.repeat(Number(marker) || 4096));
+        const id = msg.id;
+        setTimeout(() => {
+          process.stdout.write('\n');
+          send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'echoed' }] } });
+        }, 100);
+        continue;
+      }
       if (mode === 'slow') continue;
       if (mode === 'die-once' && marker && !fs.existsSync(marker)) {
         fs.writeFileSync(marker, 'died');

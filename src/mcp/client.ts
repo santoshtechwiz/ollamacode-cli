@@ -1,10 +1,24 @@
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { logger } from '../core/logger';
 import { CancelError } from '../core/errors';
 import { killProcessTreeAndWait } from '../env/process/index';
 
 const PROTOCOL_VERSION = '2024-11-05';
+
+/** ocode's own version, which servers see in the handshake. */
+const CLIENT_VERSION: string = (() => {
+  try {
+    return String(createRequire(import.meta.url)('../../package.json').version ?? '0.0.0');
+  } catch {
+    return '0.0.0';
+  }
+})();
+
+/** What a server last wrote to stderr, kept so a failure can say why: a missing module, a bad token. */
+const STDERR_TAIL_CHARS = 2_000;
+
 
 const WINDOWS_SHIM_COMMANDS = new Set(['npm', 'npx', 'pnpm', 'yarn', 'tsc', 'corepack']);
 
@@ -15,6 +29,18 @@ function baseCommand(command: string): string {
 function needsWindowsShell(command: string): boolean {
   if (process.platform !== 'win32') return false;
   return WINDOWS_SHIM_COMMANDS.has(baseCommand(command));
+}
+
+/**
+ * One argument as cmd.exe reads it. Through the shell Node joins arguments with spaces and quotes nothing, so a path
+ * with a space became two arguments and `&` or `|` in one ran a second command.
+ */
+export function quoteForCmd(arg: string): string {
+  const s = String(arg ?? '');
+  if (s && !/[\s"&|<>^%()!,;=]/.test(s)) return s;
+  // Inside the quotes cmd's & | < > are plain text. Backslashes before a quote are doubled and the quote escaped,
+  // the C runtime's rule, so node and npx read the argument back whole.
+  return `"${s.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;
 }
 
 /** Launchers that may download the server before running it. */
@@ -60,6 +86,28 @@ function describeContent(block: any): string {
   }
 }
 
+/** A JSON-RPC error a server answered with, keeping its code: -32602 (bad arguments) and -32601 (no such method) read differently. */
+export class McpError extends Error {
+  code: number | undefined;
+  data: unknown;
+  constructor(server: string, error: { code?: unknown; message?: unknown; data?: unknown }) {
+    const code = typeof error?.code === 'number' ? error.code : undefined;
+    const known = code !== undefined ? JSON_RPC_ERRORS[code] : undefined;
+    super(`mcp "${server}" ${String(error?.message ?? 'error')}${code !== undefined ? ` (${known ? `${known}, ` : ''}code ${code})` : ''}`);
+    this.name = 'McpError';
+    this.code = code;
+    this.data = error?.data;
+  }
+}
+
+const JSON_RPC_ERRORS: Record<number, string> = {
+  [-32700]: 'unparseable request',
+  [-32600]: 'invalid request',
+  [-32601]: 'no such method',
+  [-32602]: 'invalid arguments',
+  [-32603]: 'server internal error',
+};
+
 export interface McpTool {
   name: string;
   description?: string;
@@ -81,6 +129,10 @@ export class McpClient {
   dead: Error | null;
   /** How many times a dead server was started again this session. */
   restarts: number;
+  /** The end of what the server wrote to stderr, for failure messages. */
+  stderrTail: string;
+  /** A line past MAX_LINE_CHARS was dropped and its rest is still arriving. */
+  skipping: boolean;
 
   constructor(cfg: import('../core/config.ts').McpServerConfig) {
     this.name = cfg.name;
@@ -93,10 +145,15 @@ export class McpClient {
     this.closed = null;
     this.dead = null;
     this.restarts = 0;
+    this.stderrTail = '';
+    this.skipping = false;
   }
 
   /** Restarts a server gets after it stops, so one that crashes on every call does not respawn forever. */
   static MAX_RESTARTS = 2;
+
+  /** Longest line ocode waits for: past it a server is writing something other than JSON-RPC, and the buffer is dropped. */
+  static MAX_LINE_CHARS = 16 * 1024 * 1024;
 
   /** How long close() waits for the process to go before giving up on it. */
   static CLOSE_GRACE_MS = 5_000;
@@ -107,9 +164,12 @@ export class McpClient {
   async connect(timeoutMs?: number) {
     this.dead = null;
     this.buffer = '';
+    this.skipping = false;
+    this.stderrTail = '';
     this.usesShell = needsWindowsShell(this.cfg.command);
     const budget = timeoutMs ?? (isPackageRunner(this.cfg.command) ? McpClient.COLD_START_GRACE_MS : 15_000);
-    const child = spawn(this.cfg.command, this.cfg.args ?? [], {
+    const args: string[] = (this.cfg.args ?? []).map(String);
+    const child = spawn(this.cfg.command, this.usesShell ? args.map(quoteForCmd) : args, {
       env: this.cfg.env ? { ...process.env, ...this.cfg.env } : process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
@@ -120,7 +180,10 @@ export class McpClient {
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => this._onData(chunk));
     child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk) => logger.debug(`mcp[${this.name}] stderr: ${chunk.trim()}`));
+    child.stderr.on('data', (chunk) => {
+      logger.debug(`mcp[${this.name}] stderr: ${chunk.trim()}`);
+      this.stderrTail = (this.stderrTail + chunk).slice(-STDERR_TAIL_CHARS);
+    });
 
     let settle!: () => void;
     this.closed = new Promise<void>((resolve) => {
@@ -134,8 +197,17 @@ export class McpClient {
       this.pending.clear();
     };
     child.on('exit', (code, signal) => {
-      stop(new Error(`mcp server "${this.name}" stopped (exit code ${code ?? 'none'}${signal ? `, signal ${signal}` : ''})`));
-      settle();
+      // What it said on its way out (a missing token, a crash) can still be in the pipe when the exit arrives.
+      let reported = false;
+      const report = () => {
+        if (reported) return;
+        reported = true;
+        stop(new Error(`mcp server "${this.name}" stopped (exit code ${code ?? 'none'}${signal ? `, signal ${signal}` : ''})${this._stderrNote()}`));
+        settle();
+      };
+      if (child.stderr.readableEnded) return report();
+      child.stderr.once('end', report);
+      setTimeout(report, 250).unref();
     });
     child.on('error', (err) => {
       stop(err);
@@ -148,7 +220,7 @@ export class McpClient {
       {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: 'ollamacode', version: '0.1.0' },
+        clientInfo: { name: 'ollamacode', version: CLIENT_VERSION },
       },
       budget
     );
@@ -223,7 +295,7 @@ export class McpClient {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         signal?.removeEventListener('abort', onAbort);
-        reject(new Error(`mcp "${this.name}" ${method} timed out after ${timeoutMs}ms`));
+        reject(new Error(`mcp "${this.name}" ${method} timed out after ${timeoutMs}ms${this._stderrNote()}`));
       }, timeoutMs);
       signal?.addEventListener('abort', onAbort, { once: true });
       this.pending.set(id, {
@@ -249,8 +321,27 @@ export class McpClient {
     this.child.stdin.write(`${JSON.stringify(payload)}\n`);
   }
 
+  /** The last lines the server wrote to stderr, as a suffix for a failure message; empty when it wrote none. */
+  _stderrNote(): string {
+    const lines = this.stderrTail.trim().split(/\r?\n/).slice(-5).join('\n').trim();
+    return lines ? `; its last output:\n${lines}` : '';
+  }
+
   _onData(chunk: string) {
+    if (this.skipping) {
+      // The rest of a line already dropped: nothing in it can be read.
+      const end = chunk.indexOf('\n');
+      if (end === -1) return;
+      this.skipping = false;
+      chunk = chunk.slice(end + 1);
+    }
     this.buffer += chunk;
+    if (this.buffer.length > McpClient.MAX_LINE_CHARS && !this.buffer.includes('\n')) {
+      logger.warn(`mcp[${this.name}] wrote more than ${McpClient.MAX_LINE_CHARS} characters with no line end; dropped`);
+      this.buffer = '';
+      this.skipping = true;
+      return;
+    }
     for (let idx = this.buffer.indexOf('\n'); idx !== -1; idx = this.buffer.indexOf('\n')) {
       const line = this.buffer.slice(0, idx).trim();
       this.buffer = this.buffer.slice(idx + 1);
@@ -288,7 +379,7 @@ export class McpClient {
     if (!pending) return;
     this.pending.delete(msg.id);
     if (msg.error) {
-      pending.reject(new Error(msg.error.message ?? `mcp "${this.name}" error ${msg.error.code ?? ''}`));
+      pending.reject(new McpError(this.name, msg.error));
     } else {
       pending.resolve(msg.result);
     }

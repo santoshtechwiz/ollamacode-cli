@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { McpClient } from '../src/mcp/client';
+import { McpClient, quoteForCmd } from '../src/mcp/client';
 
 const SERVER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-mcp-server.cjs');
 const fake = (name: string, ...args: string[]) => new McpClient({ name, command: process.execPath, args: [SERVER, ...args] } as any);
@@ -24,7 +24,7 @@ describe('an MCP server that cannot be started, or stops', () => {
   it('once the server stopped, a call fails at once and says why, instead of waiting out the timeout', async () => {
     const client = fake('dying', 'die');
     await client.connect(5000);
-    await assert.rejects(client.callTool('echo', {}, 10_000), /stopped \(exit code 3\)/);
+    await assert.rejects(client.callTool('echo', {}, 10_000), /stopped \(exit code 3\); its last output:\nfatal: GITHUB_TOKEN is not set/);
     let message = '';
     const took = await elapsed(async () => {
       try {
@@ -113,5 +113,64 @@ describe('listing tools', () => {
     } finally {
       await client.close();
     }
+  });
+});
+
+describe('when a server says no', () => {
+  it('an error reply keeps its JSON-RPC code and says what it means', async () => {
+    const client = fake('strict', 'invalid');
+    try {
+      await client.connect(5000);
+      await assert.rejects(client.callTool('echo', {}, 5000), (err: any) =>
+        err.code === -32602 && /repo is required \(invalid arguments, code -32602\)/.test(err.message));
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('a line far past any reply is dropped without holding it, and the reply after it still reads', async () => {
+    const previous = McpClient.MAX_LINE_CHARS;
+    McpClient.MAX_LINE_CHARS = 1024;
+    const client = fake('noisy', 'flood', '4096');
+    let held = 0;
+    const read = client._onData.bind(client);
+    client._onData = (chunk: string) => {
+      read(chunk);
+      held = Math.max(held, client.buffer.length);
+    };
+    try {
+      await client.connect(5000);
+      assert.equal((await client.callTool('echo', {}, 5000)).text, 'echoed');
+      assert.ok(held <= 1024, `held ${held} characters`);
+    } finally {
+      McpClient.MAX_LINE_CHARS = previous;
+      await client.close();
+    }
+  });
+});
+
+describe('the handshake', () => {
+  it('tells the server the version of ocode that is running', async () => {
+    const seen = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-mcp-')), 'hello.json');
+    const client = fake('greeter', 'hello', seen);
+    try {
+      await client.connect(5000);
+      const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+      assert.deepEqual(JSON.parse(fs.readFileSync(seen, 'utf8')).clientInfo, { name: 'ollamacode', version: pkg.version });
+    } finally {
+      await client.close();
+      fs.rmSync(path.dirname(seen), { recursive: true, force: true });
+    }
+  });
+});
+
+describe('arguments through a Windows shim', () => {
+  it('quotes what cmd.exe would split or run, and leaves plain words alone', () => {
+    assert.equal(quoteForCmd('@playwright/mcp@latest'), '@playwright/mcp@latest');
+    assert.equal(quoteForCmd('C:\\Program Files\\data'), '"C:\\Program Files\\data"');
+    assert.equal(quoteForCmd('a&b'), '"a&b"');
+    assert.equal(quoteForCmd('--root=C:\\dir\\'), '"--root=C:\\dir\\\\"');
+    assert.equal(quoteForCmd('say "hi"'), '"say \\"hi\\""');
+    assert.equal(quoteForCmd(''), '""');
   });
 });
