@@ -107,6 +107,18 @@ describe('pausing and permissions', () => {
     assert.deepEqual(stopLines, ['Plan paused — 1 of 2 steps done. Stopped at `docker build -t demorefactored DemoRefactored`: error during connect: Docker Desktop is not running. Fix that, then type /continue, or /plan close to drop it.']);
   });
 
+  it('quotes what a framed error says, not the frame around it', async () => {
+    const { host, notes } = reporter();
+    const planChecklist = [{ title: 'Init', text: 'Init', status: 'done' }, { title: 'Validate', text: 'Validate', status: 'open' }];
+    const validate = {
+      name: 'exec_shell',
+      args: { command: 'terraform validate' },
+      result: { ok: false, kind: 'command', code: 'EEXIT', error: 'Command exited with code 1', data: { execution: { stderr: '╷\n│ Error: Unsupported argument\n│\n│   on main.tf line 4\n╵\n' } } },
+    };
+    await reportChatTurn(host, { content: '', toolResults: [validate], iterations: 3, stopReason: STOP_REASONS.GUARD_STUCK, planChecklist, planRemaining: 1 } as any, {});
+    assert.ok(notes.some((n) => n.includes('Stopped at `terraform validate`: Error: Unsupported argument.')), notes.join(' | '));
+  });
+
   it('updating the task list never asks for approval', async () => {
     const { PermissionPolicy, createPermissions } = await import('../src/tool/policy/permission-policy.ts');
     const { TOOL_META } = await import('../src/tool/index.ts');

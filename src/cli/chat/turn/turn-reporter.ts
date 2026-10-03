@@ -165,6 +165,15 @@ function reportPlan(host: ChatTurnContext, result: TurnResult): void {
 }
 
 /**
+ * A line of output as words, or '' when it has none. Tools frame errors with box-drawing characters (`╷`, `│ Error: …`,
+ * `╵`); the frame is decoration, and the first line with a letter or digit in it is what the tool said.
+ */
+function spokenLine(line: string): string {
+  const text = line.replace(/^[\s\u2500-\u257F]+/u, '').trim();
+  return /[\p{L}\p{N}]/u.test(text) ? text : '';
+}
+
+/**
  * The last call this turn that ran and failed, in its own words: what it was and the first line it reported.
  * A stuck plan stopped because something kept failing; the person needs that, not "the model repeated a step".
  */
@@ -176,7 +185,7 @@ function lastFailure(result: TurnResult): string | null {
     ? `\`${failed.args.command.trim()}\``
     : toolLabel(failed.name, failed.args);
   const said = [failed.result?.data?.execution?.stderr, failed.result?.error]
-    .map((text) => String(text ?? '').split(/\r?\n/).map((line) => line.trim()).find(Boolean))
+    .map((text) => String(text ?? '').split(/\r?\n/).map(spokenLine).find(Boolean))
     .find(Boolean);
   const line = said && said.length > 120 ? `${said.slice(0, 119)}…` : said;
   return line ? `${what}: ${line}` : what;
