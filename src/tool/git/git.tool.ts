@@ -83,11 +83,13 @@ export default defineTool({
   },
 
   // Unstaged restore and stash drop destroy work permanently, so they always confirm; --yes and always never cover them.
+  // Staging, committing, switching, stashing and unstaging are routine: an always-allow covers them. A merge rewrites
+  // the branch and its files, and a branch delete is a delete, so those are asked about every time.
   confirmReason(args) {
     const op = String(args?.operation ?? '').toLowerCase();
-    // Listing branches or stashes writes nothing; every other write op changes the repository.
-    const listing = (op === 'branch' && !args?.name) || (op === 'stash' && String(args?.subcommand ?? '').toLowerCase() === 'list');
-    return WRITE_OPS.has(op) && !listing ? 'changes the git repository' : null;
+    if (op === 'merge') return 'rewrites the branch and the files in it';
+    if (op === 'branch' && args?.delete) return 'deletes a branch';
+    return null;
   },
 
   dangerReason(args) {

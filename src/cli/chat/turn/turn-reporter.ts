@@ -1,4 +1,5 @@
 import { liveChecklist } from '../../../agent/planning/plan';
+import { taskTodos } from '../../../agent/planning/todo-write.tool';
 import { STOP_REASONS } from '../../../protocol';
 import { toolTally } from '../../../ui/tool-preview';
 import { toolLabel } from '../../../ui/render/labels';
@@ -144,10 +145,12 @@ function reportPlan(host: ChatTurnContext, result: TurnResult): void {
     return;
   }
   if (!result.planChecklist?.length) {
-    // No plan, but the model kept a task list this turn: its final state goes in the transcript once.
-    const lists = (result.toolResults ?? []).map((t: any) => t.result?.data?.todos).filter(Array.isArray);
-    const last = lists[lists.length - 1] as Array<{ content?: unknown; status?: unknown }> | undefined;
-    if (last?.length) render.commitTasks(liveChecklist(null, { todos: last }));
+    // No plan, but the task keeps a list: its state as the turn ended goes in the transcript once. The task's list,
+    // so a /continue turn that never rewrote it still ends with it shown; else the last one this turn wrote.
+    const written = (result.toolResults ?? []).map((t: any) => t.result?.data?.todos).filter(Array.isArray);
+    const owned = taskTodos(host.workspace?.state);
+    const todos = owned.length ? owned : (written[written.length - 1] as Array<{ content?: unknown; status?: unknown }> | undefined);
+    if (todos?.length) render.commitTasks(liveChecklist(null, { todos }));
     return;
   }
   render.commitTasks(result.planChecklist);
@@ -165,6 +168,15 @@ function reportPlan(host: ChatTurnContext, result: TurnResult): void {
 }
 
 /**
+ * A line of output as words, or '' when it has none. Tools frame errors with box-drawing characters (`╷`, `│ Error: …`,
+ * `╵`); the frame is decoration, and the first line with a letter or digit in it is what the tool said.
+ */
+function spokenLine(line: string): string {
+  const text = line.replace(/^[\s\u2500-\u257F]+/u, '').trim();
+  return /[\p{L}\p{N}]/u.test(text) ? text : '';
+}
+
+/**
  * The last call this turn that ran and failed, in its own words: what it was and the first line it reported.
  * A stuck plan stopped because something kept failing; the person needs that, not "the model repeated a step".
  */
@@ -176,7 +188,7 @@ function lastFailure(result: TurnResult): string | null {
     ? `\`${failed.args.command.trim()}\``
     : toolLabel(failed.name, failed.args);
   const said = [failed.result?.data?.execution?.stderr, failed.result?.error]
-    .map((text) => String(text ?? '').split(/\r?\n/).map((line) => line.trim()).find(Boolean))
+    .map((text) => String(text ?? '').split(/\r?\n/).map(spokenLine).find(Boolean))
     .find(Boolean);
   const line = said && said.length > 120 ? `${said.slice(0, 119)}…` : said;
   return line ? `${what}: ${line}` : what;

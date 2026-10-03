@@ -52,7 +52,7 @@ export class ToolExecutor {
   async run(
     name: string,
     args: any,
-    overrides: { signal?: AbortSignal; timeoutMs?: number; approve?: any } = {},
+    overrides: { signal?: AbortSignal; timeoutMs?: number; approve?: any; delegate?: import('../../agent/subagent/runner.ts').DelegateFn } = {},
   ): Promise<{ result: import('../../types.ts').ToolResult; timedOut: boolean; durationMs: number }> {
     const startedAt = Date.now();
     const signal = overrides.signal;
@@ -142,6 +142,7 @@ export class ToolExecutor {
       log: logger,
       ask: whileAsking(this.ask),
       onCommandOutput: this.onCommandOutput,
+      delegate: overrides.delegate,
     };
 
     try {

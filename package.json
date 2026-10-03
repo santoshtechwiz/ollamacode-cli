@@ -24,6 +24,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node scripts/test.mjs",
     "eval": "node scripts/eval.mjs",
+    "bench:edit": "node --import tsx scripts/edit-bench.ts",
     "prepare": "node scripts/install-hooks.mjs"
   },
   "engines": {

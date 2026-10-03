@@ -262,6 +262,7 @@ export function saveChat(s: ChatSession): void {
         askMode: s.askMode,
         messages: sanitizeMessages(s.history.serialize(), isKnownTool).messages,
         ...(s.workspace.state?.planExplorations?.length ? { explored: s.workspace.state.planExplorations } : {}),
+        ...(s.workspace.state?.subagentRuns?.length ? { subagents: s.workspace.state.subagentRuns } : {}),
         cwd: s.workspace.cwd,
         permissions: persistentPermissions(s.agentState.permissions),
         plan: planSnapshot(s.workspace.cwd) ?? undefined,

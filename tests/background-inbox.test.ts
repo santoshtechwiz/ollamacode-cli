@@ -95,7 +95,18 @@ describe('a background process that ends tells the session', () => {
     return { cwd, state, ctx: { cwd, root: cwd, state } as any, cleanup: () => removeWorkspace(cwd, state) };
   };
   const job = (code: number) => `node job.js ${code}`;
-  const ended = (state: any) => new Promise<BackgroundExit>((resolve) => state.background.subscribe(resolve));
+  // An exit recorded before the wait began counts, and one that never comes fails the test rather than hanging the run.
+  const ended = (state: any, withinMs = 30_000) => {
+    const already = state.background.pending()[0];
+    if (already) return Promise.resolve<BackgroundExit>(already);
+    return new Promise<BackgroundExit>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`no background exit was recorded within ${withinMs}ms`)), withinMs);
+      state.background.subscribe((exit: BackgroundExit) => {
+        clearTimeout(timer);
+        resolve(exit);
+      });
+    });
+  };
 
   it('records the end of a job it was not watching, and the model sees it in the session record', async () => {
     const t = session();

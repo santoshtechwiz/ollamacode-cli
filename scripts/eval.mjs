@@ -1,7 +1,7 @@
 // `npm run eval -- --model <name>`: drive real ocode chat turns through fixed tasks and score how the model behaved.
 // `npm run eval -- --mine <dir...>`: group the tool errors in saved sessions, so the next argument fix comes from data.
-import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { cpSync, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -56,6 +56,307 @@ const DEAD_CODE_SRC = {
   'src/orders.js': `export function normalizeOrders(items) {\n${DUPLICATED}}\n`,
   'src/carts.js': `export function normalizeCarts(items) {\n${DUPLICATED}}\n`,
   'src/index.js': "import { add } from './math.js';\nimport { normalizeOrders } from './orders.js';\nimport { normalizeCarts } from './carts.js';\n\nconsole.log(add(1, 2), normalizeOrders([]), normalizeCarts([]));\n",
+};
+
+// The edit tasks: each is a shape edit_file failed on in a saved session, in a project that needs nothing installed.
+const TODO_APP = {
+  'package.json': JSON.stringify({ name: 'todo-app', private: true }, null, 2),
+  'src/models/todoModel.js': [
+    "const { randomUUID } = require('node:crypto');",
+    '',
+    'class TodoModel {',
+    '    constructor() {',
+    '        this.todos = [];',
+    '    }',
+    '',
+    '    findAll() {',
+    '        return this.todos;',
+    '    }',
+    '',
+    '    findById(id) {',
+    '        return this.todos.find((t) => t.id === id) || null;',
+    '    }',
+    '',
+    '    create(data) {',
+    '        const todo = { id: randomUUID(), title: data.title, completed: false };',
+    '        this.todos.push(todo);',
+    '        return todo;',
+    '    }',
+    '',
+    '    update(id, data) {',
+    '        const todo = this.findById(id);',
+    '        if (!todo) return null;',
+    '        if (data.title !== undefined) todo.title = data.title;',
+    '        if (data.completed !== undefined) todo.completed = data.completed;',
+    '',
+    '        return todo;',
+    '    }',
+    '',
+    '    remove(id) {',
+    '        const i = this.todos.findIndex((t) => t.id === id);',
+    '        if (i === -1) return false;',
+    '        this.todos.splice(i, 1);',
+    '        return true;',
+    '    }',
+    '}',
+    '',
+    'module.exports = new TodoModel();',
+    '',
+  ].join('\n'),
+  'src/service.js': [
+    "const model = require('./models/todoModel');",
+    '',
+    'function addTodo(title) {',
+    "    if (!title) throw new Error('title is required');",
+    '    return model.create({ title });',
+    '}',
+    '',
+    'function complete(id) {',
+    '    return model.update(id, { completed: true });',
+    '}',
+    '',
+    'function openTodos() {',
+    '    return model.findAll().filter((t) => !t.completed);',
+    '}',
+    '',
+    'module.exports = { addTodo, complete, openTodos };',
+    '',
+  ].join('\n'),
+  'test.js': [
+    "const assert = require('node:assert/strict');",
+    "const model = require('./src/models/todoModel');",
+    "const service = require('./src/service');",
+    '',
+    '(async () => {',
+    "    const a = await service.addTodo('write tests');",
+    "    await service.addTodo('ship');",
+    '    await service.complete(a.id);',
+    "    assert.deepEqual((await service.openTodos()).map((t) => t.title), ['ship']);",
+    '    assert.equal(await model.remove(a.id), true);',
+    "    console.log('ok');",
+    '})().catch((err) => { console.error(err); process.exit(1); });',
+    '',
+  ].join('\n'),
+};
+
+const PRICING = {
+  'src/pricing.js': [
+    'function withTax(amount, rate) {',
+    '  return round(amount * (1 + rate));',
+    '}',
+    '',
+    'function taxOnly(amount, rate) {',
+    '  return round(amount * rate);',
+    '}',
+    '',
+    'function lineTotal(qty, price, rate) {',
+    '  return withTax(qty * price, rate);',
+    '}',
+    '',
+    'function round(x) {',
+    '  return Math.round(x * 100) / 100;',
+    '}',
+    '',
+    'module.exports = { withTax, taxOnly, lineTotal, round };',
+    '',
+  ].join('\n'),
+  'test.js': [
+    "const assert = require('node:assert/strict');",
+    "const p = require('./src/pricing');",
+    'assert.equal(p.withTax(100, 0.2), 120);',
+    'assert.equal(p.taxOnly(50, 0.1), 5);',
+    'assert.equal(p.lineTotal(3, 10, 0.5), 45);',
+    "console.log('ok');",
+    '',
+  ].join('\n'),
+};
+
+// Saved by an editor on Windows: CRLF throughout, indented with tabs.
+const CRLF_JS = [
+  'function parsePort(value) {',
+  '\tconst n = Number(value);',
+  '\treturn n;',
+  '}',
+  '',
+  'module.exports = { parsePort };',
+  '',
+].join('\r\n');
+
+const SERVER_APP = {
+  'app.js': [
+    "const http = require('node:http');",
+    '',
+    'const HOST = process.env.HOST || "127.0.0.1";',
+    'const PORT = Number(process.env.PORT) || 3000;',
+    '',
+    'function start() {',
+    "    return http.createServer((req, res) => res.end('ok')).listen(PORT, HOST);",
+    '}',
+    '',
+    'module.exports = { HOST, PORT, start };',
+    '',
+  ].join('\n'),
+  // Run first by the task: it adds lines above everything, so line numbers from before it name other lines after it.
+  'add-license.js': [
+    "const fs = require('node:fs');",
+    "const text = fs.readFileSync('app.js', 'utf8');",
+    "if (!text.startsWith('// SPDX')) fs.writeFileSync('app.js', '// SPDX-License-Identifier: MIT\\n// (c) Example\\n\\n' + text);",
+    '',
+  ].join('\n'),
+};
+
+// A long file: three changes far apart in it, asked for at once. Twenty plain functions pad it out so a search quoted
+// from memory has lots of near-identical text to drift into.
+const BIG_INVENTORY = (() => {
+  const helpers = Array.from({ length: 20 }, (_, i) => [
+    `function metric${i}(items) {`,
+    `  let total = 0;`,
+    `  for (const item of items) {`,
+    `    total += item.qty * ${i + 1};`,
+    `  }`,
+    `  return total;`,
+    `}`,
+    '',
+  ].join('\n')).join('\n');
+  return {
+    'src/inventory.js': [
+      "'use strict';",
+      '',
+      'const LOW_STOCK = 5;',
+      'const MAX_QTY = 1000;',
+      '',
+      'function restock(stock, sku, qty) {',
+      '  stock[sku] = (stock[sku] || 0) + qty;',
+      '  return stock[sku];',
+      '}',
+      '',
+      helpers,
+      'function reserve(stock, sku, qty) {',
+      '  if ((stock[sku] || 0) < qty) return false;',
+      '  stock[sku] -= qty;',
+      '  return true;',
+      '}',
+      '',
+      'function lowStock(stock) {',
+      '  return Object.keys(stock).filter((sku) => stock[sku] <= LOW_STOCK);',
+      '}',
+      '',
+      'module.exports = { LOW_STOCK, MAX_QTY, restock, reserve, lowStock, metric0, metric19 };',
+      '',
+    ].join('\n'),
+    'test.js': [
+      "const assert = require('node:assert/strict');",
+      "const inv = require('./src/inventory');",
+      'const stock = {};',
+      "assert.equal(inv.addStock(stock, 'a', 4), 4);",
+      "assert.throws(() => inv.addStock(stock, 'a', 0));",
+      "assert.throws(() => inv.addStock(stock, 'a', 1001));",
+      "assert.equal(inv.reserve(stock, 'a', 3), true);",
+      "assert.deepEqual(inv.lowStock(stock), ['a']);",
+      "inv.addStock(stock, 'b', 9);",
+      "assert.deepEqual(inv.lowStock(stock), ['a', 'b']);",
+      "assert.equal(inv.metric19([{ qty: 2 }]), 40);",
+      "console.log('ok');",
+      '',
+    ].join('\n'),
+  };
+})();
+
+// The Result.cs session as JavaScript: a second request changes lines right next to the first one's.
+const RESULT_JS = {
+  'src/result.js': [
+    'class Result {',
+    '  constructor(ok, error) {',
+    '    this.ok = ok;',
+    '    this.error = error;',
+    '  }',
+    '',
+    '  static success() {',
+    '    return new Result(true, null);',
+    '  }',
+    '',
+    '  static failure(error) {',
+    '    return new Result(false, error);',
+    '  }',
+    '}',
+    '',
+    'class ValueResult extends Result {',
+    '  constructor(value, ok, error) {',
+    '    super(ok, error);',
+    '    this.value = value;',
+    '  }',
+    '',
+    '  static success(value) {',
+    '    return new ValueResult(value, true, null);',
+    '  }',
+    '',
+    '  static failure(error) {',
+    '    return new ValueResult(undefined, false, error);',
+    '  }',
+    '}',
+    '',
+    'module.exports = { Result, ValueResult };',
+    '',
+  ].join('\n'),
+  'test.js': [
+    "const assert = require('node:assert/strict');",
+    "const { Result, ValueResult } = require('./src/result');",
+    "assert.equal(Result.success().error, '');",
+    "assert.equal(ValueResult.success(3).error, '');",
+    'assert.equal(ValueResult.success(3).value, 3);',
+    "const v = new ValueResult(7);",
+    "assert.equal(v.ok, true);",
+    "assert.equal(v.error, '');",
+    "assert.equal(Result.failure('x').error, 'x');",
+    "console.log('ok');",
+    '',
+  ].join('\n'),
+};
+
+// One signature, three files that must agree on it.
+const FORMAT_APP = {
+  'src/format.js': [
+    'function formatPrice(amount) {',
+    "  return '$' + amount.toFixed(2);",
+    '}',
+    '',
+    'module.exports = { formatPrice };',
+    '',
+  ].join('\n'),
+  'src/cart.js': [
+    "const { formatPrice } = require('./format');",
+    '',
+    'function cartLine(name, amount) {',
+    "  return name + ': ' + formatPrice(amount);",
+    '}',
+    '',
+    'module.exports = { cartLine };',
+    '',
+  ].join('\n'),
+  'src/invoice.js': [
+    "const { formatPrice } = require('./format');",
+    '',
+    'function invoiceTotal(lines) {',
+    '  const total = lines.reduce((sum, l) => sum + l.amount, 0);',
+    "  return 'Total ' + formatPrice(total);",
+    '}',
+    '',
+    'module.exports = { invoiceTotal };',
+    '',
+  ].join('\n'),
+  'test.js': [
+    "const assert = require('node:assert/strict');",
+    "const { formatPrice } = require('./src/format');",
+    "const { cartLine } = require('./src/cart');",
+    "const { invoiceTotal } = require('./src/invoice');",
+    "assert.equal(formatPrice(3), '$3.00');",
+    "assert.equal(formatPrice(3, '€'), '€3.00');",
+    "assert.equal(cartLine('tea', 2, '£'), 'tea: £2.00');",
+    "assert.equal(invoiceTotal([{ amount: 1 }, { amount: 2 }], '€'), 'Total €3.00');",
+    "assert.equal(invoiceTotal([{ amount: 1 }]), 'Total $1.00');",
+    "console.log('ok');",
+    '',
+  ].join('\n'),
 };
 
 const SCENARIOS = [
@@ -187,6 +488,87 @@ const SCENARIOS = [
     // Nobody asks for a review: this measures whether the model checks its own change before it finishes.
     check: (cwd, run) => !clean(cwd) && sh('npm test', cwd).status === 0 && run.tools.includes('code_review'),
   },
+  // Edit tasks: they pass on the result, and each run's line says how many edit_file calls landed (see editTally).
+  {
+    id: 'edit-async',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, TODO_APP),
+    prompt: 'Convert every method of TodoModel in src/models/todoModel.js to async (async/await), and update src/service.js so its functions are async and await the model. Then run node test.js.',
+    check: (cwd) => sh('node test.js', cwd).status === 0 && /async findAll\(\)/.test(read(join(cwd, 'src/models/todoModel.js'))) && /await model\./.test(read(join(cwd, 'src/service.js'))),
+  },
+  {
+    id: 'edit-rename-param',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, PRICING),
+    prompt: 'In src/pricing.js rename the parameter rate to taxRate in every function that takes it, without changing behaviour. Then run node test.js.',
+    check: (cwd) => sh('node test.js', cwd).status === 0 && !/\brate\b/.test(read(join(cwd, 'src/pricing.js'))) && /taxRate/.test(read(join(cwd, 'src/pricing.js'))),
+  },
+  {
+    id: 'edit-crlf-tabs',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, { 'src/port.js': CRLF_JS }),
+    prompt: 'Make parsePort in src/port.js throw an Error when the value is not an integer between 1 and 65535. Keep the file\'s style.',
+    check: (cwd) => {
+      const text = read(join(cwd, 'src/port.js'));
+      // Still CRLF throughout and still tab-indented: an edit that mixed in LF or spaces fails.
+      const style = !/(?<!\r)\n/.test(text) && !/^ +\S/m.test(text);
+      return style && script(cwd, "import { createRequire } from 'node:module'; const { parsePort } = createRequire(import.meta.url)('./src/port.js'); const bad = ['x', '0', '70000', '1.5']; process.exit(parsePort('8080') === 8080 && bad.every((v) => { try { parsePort(v); return false; } catch { return true; } }) ? 0 : 1);");
+    },
+  },
+  {
+    id: 'edit-after-shell',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, SERVER_APP),
+    inputs: ['Read app.js and tell me which line sets the default port.', 'Run node add-license.js, then change the default port in app.js to 8080. Do not change anything else.'],
+    check: (cwd) => {
+      const text = read(join(cwd, 'app.js'));
+      return /Number\(process\.env\.PORT\) \|\| 8080;/.test(text) && text.startsWith('// SPDX') && /HOST \|\| "127\.0\.0\.1"/.test(text) && (text.match(/SPDX/g) ?? []).length === 1;
+    },
+  },
+  {
+    id: 'edit-big-file',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, BIG_INVENTORY),
+    prompt: 'Make three changes in src/inventory.js: rename restock to addStock (and export it under the new name), make addStock throw an Error when qty is not an integer from 1 to MAX_QTY, and change LOW_STOCK to 10. Then run node test.js.',
+    check: (cwd) => {
+      const text = read(join(cwd, 'src/inventory.js'));
+      // The twenty helpers must come through untouched: a wide edit that rewrote them is not the change asked for.
+      const helpers = Array.from({ length: 20 }, (_, i) => text.includes(`    total += item.qty * ${i + 1};`)).every(Boolean);
+      return sh('node test.js', cwd).status === 0 && helpers && !/\brestock\b/.test(text);
+    },
+  },
+  {
+    id: 'edit-second-change',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, RESULT_JS),
+    inputs: [
+      "In src/result.js, make Result.success() and ValueResult.success() use an empty string '' for error instead of null.",
+      'Now give the ValueResult constructor defaults: ok defaults to true and error to an empty string. Then run node test.js.',
+    ],
+    check: (cwd) => sh('node test.js', cwd).status === 0 && !/null/.test(read(join(cwd, 'src/result.js'))),
+  },
+  {
+    id: 'edit-three-files',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, FORMAT_APP),
+    prompt: "Give formatPrice in src/format.js a second parameter, currency, defaulting to '$', and pass it through: cartLine and invoiceTotal each take an optional currency as their last parameter and hand it to formatPrice. Then run node test.js.",
+    check: (cwd) => sh('node test.js', cwd).status === 0,
+  },
+  // Subagent tasks (on by default): they pass only when the parent delegated and the work is right.
+  {
+    id: 'subagent-research',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, SERVER_APP),
+    prompt: 'Use a research subagent (delegate_task) to find which line of app.js sets the default port, then tell me the line number and the default value. Do not change any files.',
+    check: (cwd, run) => run.tools.includes('delegate_task') && /\b4\b/.test(run.answer) && /3000/.test(run.answer) && !/8080/.test(read(join(cwd, 'app.js'))),
+  },
+  {
+    id: 'subagent-coding',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, PRICING),
+    prompt: 'Delegate this to a coding subagent with delegate_task: in src/pricing.js rename the parameter rate to taxRate everywhere, without changing behaviour, and run node test.js. Then tell me what it changed.',
+    check: (cwd, run) => run.tools.includes('delegate_task') && sh('node test.js', cwd).status === 0 && !/\brate\b/.test(read(join(cwd, 'src/pricing.js'))),
+  },
 ];
 
 // The newest saved session under a workspace; each eval workspace holds exactly one.
@@ -226,15 +608,31 @@ function homeFor(base, scenario) {
   } catch {
     // An unreadable config runs on defaults, as ocode itself would.
   }
-  writeFileSync(join(home, 'config.json'), JSON.stringify({ ...config, ...scenario.config }, null, 2));
+  // One level deep: { agent: { subagents: true } } adds to the user's agent settings instead of replacing them.
+  const merged = { ...config };
+  for (const [key, value] of Object.entries(scenario.config)) {
+    const mine = merged[key];
+    merged[key] = value && typeof value === 'object' && !Array.isArray(value) && mine && typeof mine === 'object' ? { ...mine, ...value } : value;
+  }
+  writeFileSync(join(home, 'config.json'), JSON.stringify(merged, null, 2));
   if (existsSync(join(real, 'providers'))) cpSync(join(real, 'providers'), join(home, 'providers'), { recursive: true });
   return home;
+}
+
+// How edit_file fared: calls made, and how many of them landed. A reused or refused repeat counts as a call that did not.
+function editTally(session) {
+  const messages = [...(session?.explored ?? []).flat(), ...(session?.subagents ?? []).flatMap((r) => r.messages ?? []), ...(session?.messages ?? [])];
+  const edits = new Set();
+  for (const m of messages) for (const c of m.tool_calls ?? []) if (c.function?.name === 'edit_file') edits.add(c.id);
+  let landed = 0;
+  for (const m of messages) if (m.role === 'tool' && edits.has(m.tool_call_id) && /^OK edit_file/.test(String(m.content ?? ''))) landed += 1;
+  return { calls: edits.size, landed };
 }
 
 // What the model did, read from the calls and results it actually made.
 function behaviour(session) {
   // Plan-mode exploration is saved beside the conversation; its calls count like any other.
-  const messages = [...(session?.explored ?? []).flat(), ...(session?.messages ?? [])];
+  const messages = [...(session?.explored ?? []).flat(), ...(session?.subagents ?? []).flatMap((r) => r.messages ?? []), ...(session?.messages ?? [])];
   const calls = new Map();
   const tools = new Set();
   const errors = [];
@@ -256,7 +654,58 @@ function behaviour(session) {
   return { toolCalls, tools: [...tools], reused, errors, answer: String(last?.content ?? '').trim() };
 }
 
-function runScenario(model, scenario, base, timeoutMs) {
+// One chat run. What it prints goes to `logFile` as it comes, so a long task can be followed while it runs
+// (tail -f the file). At the deadline the whole process tree is stopped: killing only ocode left a test or server it
+// had started holding the pipes open, and on Windows the eval then waited for ever.
+function runChat(args, { cwd, env, input, timeoutMs, logFile }) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [cli, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
+    const log = createWriteStream(logFile);
+    let output = '';
+    const take = (chunk) => {
+      const text = String(chunk);
+      output += text;
+      log.write(text);
+    };
+    child.stdout.on('data', take);
+    child.stderr.on('data', take);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      stopTree(child);
+    }, timeoutMs);
+    let settled = false;
+    const finish = (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      log.end();
+      resolve({ output, code, timedOut });
+    };
+    // 'exit', not 'close': close waits for every holder of the pipes, which a leftover grandchild may never let go.
+    child.on('exit', (code) => setTimeout(() => finish(code), 500));
+    child.on('error', (err) => {
+      take(String(err?.message ?? err));
+      finish(null);
+    });
+    child.stdin.on('error', () => {});
+    child.stdin.end(input);
+  });
+}
+
+function stopTree(child) {
+  if (!child.pid) return;
+  if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
+  else {
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      child.kill('SIGKILL');
+    }
+  }
+}
+
+async function runScenario(model, scenario, base, timeoutMs) {
   const cwd = join(base, scenario.id);
   if (scenario.repo) {
     const cloned = sh(`git clone -q --local "${join(LAB, scenario.repo)}" "${cwd}"`, base);
@@ -269,34 +718,36 @@ function runScenario(model, scenario, base, timeoutMs) {
   const started = Date.now();
   const inputs = scenario.inputs ?? [scenario.prompt];
   const env = scenario.config ? { ...process.env, OLLAMACODE_HOME: homeFor(base, scenario) } : process.env;
-  const run = spawnSync(process.execPath, [cli, '--yes', '--new', ...(scenario.args ?? []), ...(model ? ['--model', model] : [])], {
+  const logFile = join(base, `${scenario.id}.out.txt`);
+  const run = await runChat(['--yes', '--new', ...(scenario.args ?? []), ...(model ? ['--model', model] : [])], {
     cwd,
     env,
     input: `${inputs.join('\n')}\n`,
-    encoding: 'utf8',
-    timeout: timeoutMs * inputs.length,
+    timeoutMs: timeoutMs * inputs.length,
+    logFile,
   });
-  const out = String(run.stdout ?? '') .replace(ANSI, '') + String(run.stderr ?? '').replace(ANSI, '');
-  writeFileSync(join(base, `${scenario.id}.out.txt`), out);
+  const out = run.output.replace(ANSI, '');
+  writeFileSync(logFile, out);
   const seen = behaviour(sessionOf(cwd));
   const modelCalls = Number(/(\d+) model calls?/.exec(out)?.[1] ?? 0);
   const result = {
     id: scenario.id,
     seconds: Math.round((Date.now() - started) / 1000),
-    timedOut: run.error?.code === 'ETIMEDOUT',
-    exit: run.status,
+    timedOut: run.timedOut,
+    exit: run.code,
     modelCalls,
     ...seen,
     stopReason: stopReasonOf(cwd),
-    providerError: /Ollama error|usage limit|ECONNREFUSED/i.test(out),
+    providerError: /Ollama error|usage limit|ECONNREFUSED|No LLM provider is available/i.test(out),
   };
+  result.edits = editTally(sessionOf(cwd));
   result.stuck = result.stopReason === 'guard_stuck';
   result.limit = result.stopReason === 'max_iterations' || result.stopReason === 'output_truncated';
   result.pass = !result.timedOut && !result.providerError && Boolean(scenario.check(cwd, result));
   return result;
 }
 
-function evaluate() {
+async function evaluate() {
   const model = flag('model');
   const only = flag('only')?.split(',');
   const timeoutMs = Number(flag('timeout') ?? 300) * 1000;
@@ -308,14 +759,16 @@ function evaluate() {
   // One live run at a time: the backend cannot take parallel sessions.
   const results = [];
   for (const scenario of picked) {
-    process.stdout.write(`  ${scenario.id} … `);
-    const r = runScenario(model, scenario, base, timeoutMs);
+    process.stdout.write(`  ${scenario.id} … (up to ${Math.round((timeoutMs * (scenario.inputs?.length ?? 1)) / 1000)}s; follow ${join(base, `${scenario.id}.out.txt`)}) `);
+    const r = await runScenario(model, scenario, base, timeoutMs);
     results.push(r);
-    console.log(r.error ?? `${r.pass ? 'PASS' : 'FAIL'} · ${r.seconds}s · ${r.toolCalls} calls · ${r.errors.length} errors${r.stuck ? ' · stuck' : ''}${r.limit ? ` · stopped (${r.stopReason})` : ''}${r.timedOut ? ' · timed out' : ''}${r.providerError ? ' · provider error' : ''}${r.answer ? '' : ' · no answer'}`);
+    console.log(r.error ?? `${r.pass ? 'PASS' : 'FAIL'} · ${r.seconds}s · ${r.toolCalls} calls${r.edits?.calls ? ` · edits ${r.edits.landed}/${r.edits.calls} landed` : ''} · ${r.errors.length} errors${r.stuck ? ' · stuck' : ''}${r.limit ? ` · stopped (${r.stopReason})` : ''}${r.timedOut ? ' · timed out' : ''}${r.providerError ? ' · provider error' : ''}${r.answer ? '' : ' · no answer'}`);
   }
 
   const passed = results.filter((r) => r.pass).length;
   const errors = results.flatMap((r) => r.errors ?? []);
+  const edits = results.reduce((t, r) => ({ calls: t.calls + (r.edits?.calls ?? 0), landed: t.landed + (r.edits?.landed ?? 0) }), { calls: 0, landed: 0 });
+  if (edits.calls) console.log(`\nedit_file: ${edits.landed}/${edits.calls} calls landed (${Math.round((100 * edits.landed) / edits.calls)}%)`);
   console.log(`\n${passed}/${results.length} passed · ${errors.length} tool error(s) · ${results.filter((r) => r.stuck).length} stuck · ${results.filter((r) => !r.answer && !r.error).length} without an answer`);
   if (errors.length) {
     console.log('\ntool errors:');
@@ -391,6 +844,12 @@ function mine() {
   const errors = [];
   let sessions = 0;
   for (const dir of dirs.length ? dirs : [LAB, join(tmpdir(), 'ocode-eval')]) {
+    // A folder that is not there found nothing: say so, rather than report "0 sessions" as if it had been searched.
+    // Git Bash drops the backslashes of an unquoted C:\path, so the hint names the forms that survive it.
+    if (!existsSync(dir)) {
+      console.log(`not found: ${dir}${/^[A-Za-z]:[^\\/]/.test(dir) ? '  (in Git Bash write C:/projects/x or quote the path)' : ''}`);
+      continue;
+    }
     for (const file of sessionFiles(dir)) {
       try {
         const session = JSON.parse(readFileSync(file, 'utf8'));
@@ -414,4 +873,4 @@ function mine() {
 }
 
 if (argv.includes('--mine')) mine();
-else evaluate();
+else await evaluate();

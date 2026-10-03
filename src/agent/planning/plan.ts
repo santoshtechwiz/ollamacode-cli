@@ -714,13 +714,11 @@ export function liveChecklist(
   state: { todos?: Array<{ content?: unknown; status?: unknown }>; changes?: FsChange[] } | null | undefined,
   changesFrom = 0,
 ): ChecklistItem[] {
-  const todos = state?.todos ?? [];
-  if (todos.length > 0) {
-    const status: Record<string, ChecklistStatus> = { completed: 'done', in_progress: 'active', pending: 'open' };
-    return todos.map((t) => ({ title: String(t.content ?? ''), text: String(t.content ?? ''), status: status[String(t.status)] ?? 'open' }));
-  }
-  if (!plan) return [];
-  return planChecklist(plan, (state?.changes ?? []).slice(Number(changesFrom) || 0), { running: true });
+  // A running plan is the one list: its steps, ticked on evidence, live and in the transcript alike. A task list the
+  // model keeps beside it would be a second, differently worded copy of the same work, so it shows only without a plan.
+  if (plan) return planChecklist(plan, (state?.changes ?? []).slice(Number(changesFrom) || 0), { running: true });
+  const status: Record<string, ChecklistStatus> = { completed: 'done', in_progress: 'active', pending: 'open' };
+  return (state?.todos ?? []).map((t) => ({ title: String(t.content ?? ''), text: String(t.content ?? ''), status: status[String(t.status)] ?? 'open' }));
 }
 
 export function executionProgress(

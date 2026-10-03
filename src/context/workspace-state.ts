@@ -7,6 +7,7 @@ import { failureImplication } from '../prompts/recovery';
 import { logger } from '../core/logger';
 import { normalizeRelPath } from '../core/paths';
 import { BackgroundInbox, describeExitsForModel } from '../tool/process/background-inbox';
+import { taskTodos } from '../agent/planning/todo-write.tool';
 
 const MAX_CHANGES = 50;
 
@@ -73,6 +74,8 @@ export interface WorkspaceState {
   /** Background processes that ended on their own, until a turn has shown them to the model. */
   background: BackgroundInbox;
   readFiles: Set<string>;
+  /** The version of each file the model last saw, by path, so line numbers it quotes can be checked (see _seen). */
+  seenText: Map<string, string>;
   todos: import('../agent/planning/todo-write.tool.ts').TodoItem[];
   /** The task that wrote `todos`; a list from another task is not shown as the running one's. */
   todosTask?: string | null;
@@ -88,6 +91,8 @@ export interface WorkspaceState {
   presentedPlanSteps?: string[] | null;
   /** Each plan-mode exploration this session, kept for the saved session record only. */
   planExplorations?: import('../types.ts').Message[][];
+  /** Each subagent's conversation this session, kept for the saved session record only. */
+  subagentRuns?: import('../agent/subagent/runner.ts').SubagentRun[];
   permissions?: import('../tool/policy/permission-policy.ts').PermissionState;
   agentState?: import('../agent/state.ts').AgentStateBox;
   tunnel?: boolean;
@@ -138,6 +143,7 @@ const state: WorkspaceState = {
     subprocesses: new Map(),
     background: new BackgroundInbox(),
     readFiles: new Set(),
+    seenText: new Map(),
     todos: [],
     planPath: null,
 
@@ -193,6 +199,7 @@ const state: WorkspaceState = {
       state.subprocesses = new Map();
       state.background.clear();
       state.readFiles = new Set();
+      state.seenText = new Map();
       state.todos = [];
       state.planPath = null;
     },
@@ -239,9 +246,17 @@ export function describeSession(state: WorkspaceState, { exits = true }: { exits
 
   const running = [...state.subprocesses.values()].filter((s) => !s.exited && !s.error);
   const ended = exits ? describeExitsForModel(state.background?.pending() ?? []) : [];
-  if (!hasChanges && recent.length === 0 && running.length === 0 && ended.length === 0) return '';
+  // The task list as the model last wrote it for this task: the tool result that set it scrolls away, the list does not.
+  const todos = taskTodos(state);
+  if (!hasChanges && recent.length === 0 && running.length === 0 && ended.length === 0 && todos.length === 0) return '';
 
   const lines = ['SESSION RECORD (kept by the system, not by you)', ...ended];
+
+  if (todos.length > 0) {
+    const mark = { pending: '[ ]', in_progress: '[~]', completed: '[x]' } as const;
+    lines.push('Your task list, as you last wrote it (todo_write with the full list replaces it):');
+    for (const t of todos) lines.push(`${mark[t.status] ?? '[ ]'} ${t.content}`);
+  }
 
   if (running.length > 0) {
     lines.push('Background subprocesses still running (check one with subprocess_status, end it with stop_subprocess — do not start another for the same job):');

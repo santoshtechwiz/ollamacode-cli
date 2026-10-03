@@ -34,6 +34,7 @@ import search_symbols from '../search/search-symbols.tool';
 import commit_message from '../git/commit-message.tool';
 import undo from '../filesystem/undo.tool';
 import load_tools from '../core/load-tools.tool';
+import delegate_task from '../../agent/subagent/delegate.tool';
 
 type ToolDef = import('../../types.ts').ToolDef;
 
@@ -78,4 +79,5 @@ export const BUILT_IN_TOOLS: ToolDef[] = [
   commit_message,
   undo,
   load_tools,
+  delegate_task,
 ];

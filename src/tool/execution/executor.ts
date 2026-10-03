@@ -7,7 +7,7 @@ export interface ToolExecutor {
   run(
     name: string,
     args: Record<string, unknown>,
-    opts?: { signal?: AbortSignal; approve?: ApproveFn },
+    opts?: { signal?: AbortSignal; approve?: ApproveFn; delegate?: import('../../agent/subagent/runner.ts').DelegateFn },
   ): Promise<{ result: ToolResult; timedOut: boolean; durationMs: number }>;
 }
 

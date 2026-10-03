@@ -3,11 +3,14 @@ import { killProcessTree } from '../env/process/index';
 import { ok, fail } from '../tool/core/tool-result';
 import { mcpServersConfig } from '../core/config';
 import { logger } from '../core/logger';
+import { isCancel } from '../core/errors';
 import { defaultRegistry } from '../tool/execution/registry';
 import { McpClient } from './client';
+import { createHash } from 'node:crypto';
 
 let connected: McpClient[] = [];
 let loading: Promise<import('../types.ts').ToolDef[]> | null = null;
+let registered: Promise<void> | null = null;
 
 /** What a configured server is doing right now, for anything that must answer "is it there?". */
 export interface McpServerStatus {
@@ -20,7 +23,7 @@ export interface McpServerStatus {
 
 /** Every configured server and whether it is actually usable. */
 export function mcpServerStatus(): McpServerStatus[] {
-  const live = new Set(connected.map((c) => String(c.name)));
+  const live = new Set(connected.filter((c) => !c.dead).map((c) => String(c.name)));
   return mcpServersConfig().map((cfg) => ({
     name: String(cfg.name),
     enabled: !cfg.disabled,
@@ -28,31 +31,74 @@ export function mcpServerStatus(): McpServerStatus[] {
   }));
 }
 
-function qualify(serverName: string, toolName: string): string {
-  const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^[^a-z]/, 't$&');
-  return `mcp__${clean(serverName)}__${clean(toolName)}`;
+/** Longest tool name ocode sends; some model backends refuse function names past 64 characters. */
+const MAX_TOOL_NAME = 64;
+
+function cleanPart(s: string): string {
+  return String(s).toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^[^a-z]/, 't$&');
 }
 
-function bridgeTool(client: McpClient, tool: import('./client.ts').McpTool): import('../types.ts').ToolDef {
-  const name = qualify(client.name, tool.name);
+/** The prefix every tool of one server carries. */
+export function mcpToolPrefix(serverName: string): string {
+  return `mcp__${cleanPart(serverName)}__`;
+}
+
+/**
+ * The name the model calls a server's tool by: cleaned, at most 64 characters, and unique among the names in `taken`.
+ * Cleaning maps "my-server" and "my_server" to the same text, so a later one gets a numbered suffix; a long one is cut
+ * and ends in a short hash of the original, so it stays stable and distinct.
+ */
+function qualify(serverName: string, toolName: string, taken: Set<string>): string {
+  let base = `${mcpToolPrefix(serverName)}${cleanPart(toolName)}`;
+  if (base.length > MAX_TOOL_NAME) {
+    const hash = createHash('sha1').update(`${serverName}\u0000${toolName}`).digest('hex').slice(0, 8);
+    base = `${base.slice(0, MAX_TOOL_NAME - hash.length - 1)}_${hash}`;
+  }
+  let name = base;
+  for (let n = 2; taken.has(name); n++) {
+    const suffix = `_${n}`;
+    name = `${base.slice(0, MAX_TOOL_NAME - suffix.length)}${suffix}`;
+  }
+  taken.add(name);
+  return name;
+}
+
+/** One server tool as an ocode tool: it calls the server, and its risk is what the server declares about it. */
+export function bridgeTool(client: McpClient, tool: import('./client.ts').McpTool, taken: Set<string> = new Set()): import('../types.ts').ToolDef {
+  const name = qualify(client.name, tool.name, taken);
   const schema =
     tool.inputSchema && typeof tool.inputSchema === 'object'
       ? { type: 'object', properties: {}, ...tool.inputSchema }
       : { type: 'object', properties: {} };
-  const parameters = prepareMcpSchema(client.name, tool.name, schema);
 
   return defineTool({
     name,
     label: `${client.name}: ${tool.name}`,
     description: `[MCP:${client.name}] ${tool.description ?? tool.name}`,
-    parameters,
-    risky: true,
-    async execute(args) {
+    parameters: schema,
+    // A tool the server declares read-only changes nothing, so it is not asked about; one it declares destructive
+    // is asked about every time, like a delete. Without a declaration it stays risky: asked once, coverable by
+    // "always". (The MCP default for destructiveHint is true, which would make every such tool ask every time.)
+    risky: tool.annotations?.readOnlyHint !== true,
+    ...(tool.annotations?.destructiveHint === true && tool.annotations?.readOnlyHint !== true
+      ? { confirmReason: () => 'the server marks this tool as destructive' }
+      : {}),
+    async execute(args, ctx) {
       try {
-        const res = await client.callTool(tool.name, args);
+        // A server that stopped is started again, a bounded number of times, before its tool is called.
+        if (client.dead) {
+          const reason = client.dead.message;
+          const restarted = await client.restart().catch((err: unknown) => {
+            throw new Error(`${reason}, and starting it again failed: ${err instanceof Error ? err.message : err}`);
+          });
+          if (!restarted) return fail(`${reason}; it was restarted ${McpClient.MAX_RESTARTS} times already, so its tools are unavailable this session`, { code: 'EUNKNOWN' });
+        }
+        const res = await client.callTool(tool.name, args, undefined, ctx?.signal);
         if (res.isError) return fail(res.text || `${name} reported an error`, { code: 'EUNKNOWN' });
         return ok({ kind: 'text', display: res.text, data: { raw: res.text } });
       } catch (err) {
+        // A cancel is the person stopping the turn, not the tool failing: the runtime records it as such.
+        if (isCancel(err)) throw err;
         return fail(err instanceof Error ? err.message : String(err), { code: 'EUNKNOWN' });
       }
     },
@@ -60,33 +106,6 @@ function bridgeTool(client: McpClient, tool: import('./client.ts').McpTool): imp
 }
 
 const LOADER_NAME = 'load_mcp_tools';
-
-const DEEPWIKI_REPO_PATTERN = '^[^/\\s]+/[^/\\s]+(?:/[^/\\s]+)?$';
-
-function prepareMcpSchema(serverName: string, toolName: string, schema: any): any {
-  if (
-    String(serverName).toLowerCase() !== 'deepwiki' ||
-    String(toolName).toLowerCase() !== 'ask_wiki_question' ||
-    !schema.properties?.repoName ||
-    schema.properties.repoName.pattern
-  ) {
-    return schema;
-  }
-
-  return {
-    ...schema,
-    properties: {
-      ...schema.properties,
-      repoName: {
-        ...schema.properties.repoName,
-        pattern: DEEPWIKI_REPO_PATTERN,
-        description:
-          `${schema.properties.repoName.description ?? 'Repository name'} ` +
-          '(use owner/repo, or host/owner/repo for a custom Git host)',
-      },
-    },
-  };
-}
 
 function serverOf(def: import('../types.ts').ToolDef): [string, string] {
   const label = String(def.label ?? def.name);
@@ -151,6 +170,23 @@ export function ensureMcpTools(): Promise<import('../types.ts').ToolDef[]> {
   return loading;
 }
 
+/**
+ * Connect the configured servers without holding up the caller: a server fetching itself with npx can take a minute,
+ * and one that cannot start must not keep the session from starting. `register` gets their tools once they are up.
+ */
+export function startMcpServers(register: (defs: import('../types.ts').ToolDef[]) => void): void {
+  registered ??= ensureMcpTools()
+    .then((defs) => {
+      if (defs.length) register(defs);
+    })
+    .catch((err) => logger.debug(`mcp tool discovery unavailable: ${err instanceof Error ? err.message : err}`));
+}
+
+/** Settles once the servers startMcpServers began have connected or failed, and their tools are registered. */
+export function mcpReady(): Promise<void> {
+  return registered ?? Promise.resolve();
+}
+
 /** Advertise deferred tools for a server explicitly requested by the user. */
 export function loadMcpServers(names: readonly string[]): number {
   const wanted = new Set(names.map((name) => name.toLowerCase()));
@@ -166,13 +202,15 @@ async function connectAll() {
   if (configs.length === 0) return [];
 
   const defs: import('../types.ts').ToolDef[] = [];
+  // Shared by every server, so two servers' tools can never end up with the same name.
+  const taken = new Set<string>();
   await Promise.all(
     configs.map(async (cfg) => {
       const client = new McpClient(cfg);
       try {
         await client.connect();
         const tools = await client.listTools();
-        for (const tool of tools) defs.push(bridgeTool(client, tool));
+        for (const tool of tools) defs.push(bridgeTool(client, tool, taken));
         connected.push(client);
         logger.debug(`mcp[${cfg.name}] connected, ${tools.length} tool(s)`);
       } catch (err) {
@@ -188,6 +226,7 @@ export async function closeMcpServers() {
   const toClose = connected;
   connected = [];
   loading = null;
+  registered = null;
   await Promise.all(toClose.map((c) => c.close().catch(() => {})));
 }
 

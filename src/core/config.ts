@@ -65,6 +65,8 @@ export interface AgentConfig {
   /** Measured generation rate, for sizing what one reply may cost. */
   tokensPerSec?: number;
   memory?: { enabled: boolean; maxChars?: number; };
+  /** Let the agent hand self-contained tasks to subagents (delegate_task). On unless set to false. */
+  subagents?: boolean;
 }
 
 export const DEFAULTS = Object.freeze({
@@ -100,6 +102,7 @@ export const DEFAULTS = Object.freeze({
     // `auto`: think where the model supports it and the backend can afford it.
     thinking: (THINKING_MODE.AUTO as ThinkingMode),
     memory: { enabled: true, maxChars: undefined },
+    subagents: true,
   },
 });
 

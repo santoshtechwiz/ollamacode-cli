@@ -20,6 +20,8 @@ export interface ToolContext {
   agentState?: AgentStateBox;
   onCommandOutput?: (text: string) => void;
   memo?: InvalidCallMemo;
+  /** Starts a subagent; set only in a turn that may (see agent/subagent). */
+  delegate?: import('../../agent/subagent/runner.ts').DelegateFn;
 }
 
 export type ToolContextInput = Omit<ToolContext, 'ws'> & { ws?: ToolContext['ws']; };
