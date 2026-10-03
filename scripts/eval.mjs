@@ -58,6 +58,153 @@ const DEAD_CODE_SRC = {
   'src/index.js': "import { add } from './math.js';\nimport { normalizeOrders } from './orders.js';\nimport { normalizeCarts } from './carts.js';\n\nconsole.log(add(1, 2), normalizeOrders([]), normalizeCarts([]));\n",
 };
 
+// The edit tasks: each is a shape edit_file failed on in a saved session, in a project that needs nothing installed.
+const TODO_APP = {
+  'package.json': JSON.stringify({ name: 'todo-app', private: true }, null, 2),
+  'src/models/todoModel.js': [
+    "const { randomUUID } = require('node:crypto');",
+    '',
+    'class TodoModel {',
+    '    constructor() {',
+    '        this.todos = [];',
+    '    }',
+    '',
+    '    findAll() {',
+    '        return this.todos;',
+    '    }',
+    '',
+    '    findById(id) {',
+    '        return this.todos.find((t) => t.id === id) || null;',
+    '    }',
+    '',
+    '    create(data) {',
+    '        const todo = { id: randomUUID(), title: data.title, completed: false };',
+    '        this.todos.push(todo);',
+    '        return todo;',
+    '    }',
+    '',
+    '    update(id, data) {',
+    '        const todo = this.findById(id);',
+    '        if (!todo) return null;',
+    '        if (data.title !== undefined) todo.title = data.title;',
+    '        if (data.completed !== undefined) todo.completed = data.completed;',
+    '',
+    '        return todo;',
+    '    }',
+    '',
+    '    remove(id) {',
+    '        const i = this.todos.findIndex((t) => t.id === id);',
+    '        if (i === -1) return false;',
+    '        this.todos.splice(i, 1);',
+    '        return true;',
+    '    }',
+    '}',
+    '',
+    'module.exports = new TodoModel();',
+    '',
+  ].join('\n'),
+  'src/service.js': [
+    "const model = require('./models/todoModel');",
+    '',
+    'function addTodo(title) {',
+    "    if (!title) throw new Error('title is required');",
+    '    return model.create({ title });',
+    '}',
+    '',
+    'function complete(id) {',
+    '    return model.update(id, { completed: true });',
+    '}',
+    '',
+    'function openTodos() {',
+    '    return model.findAll().filter((t) => !t.completed);',
+    '}',
+    '',
+    'module.exports = { addTodo, complete, openTodos };',
+    '',
+  ].join('\n'),
+  'test.js': [
+    "const assert = require('node:assert/strict');",
+    "const model = require('./src/models/todoModel');",
+    "const service = require('./src/service');",
+    '',
+    '(async () => {',
+    "    const a = await service.addTodo('write tests');",
+    "    await service.addTodo('ship');",
+    '    await service.complete(a.id);',
+    "    assert.deepEqual((await service.openTodos()).map((t) => t.title), ['ship']);",
+    '    assert.equal(await model.remove(a.id), true);',
+    "    console.log('ok');",
+    '})().catch((err) => { console.error(err); process.exit(1); });',
+    '',
+  ].join('\n'),
+};
+
+const PRICING = {
+  'src/pricing.js': [
+    'function withTax(amount, rate) {',
+    '  return round(amount * (1 + rate));',
+    '}',
+    '',
+    'function taxOnly(amount, rate) {',
+    '  return round(amount * rate);',
+    '}',
+    '',
+    'function lineTotal(qty, price, rate) {',
+    '  return withTax(qty * price, rate);',
+    '}',
+    '',
+    'function round(x) {',
+    '  return Math.round(x * 100) / 100;',
+    '}',
+    '',
+    'module.exports = { withTax, taxOnly, lineTotal, round };',
+    '',
+  ].join('\n'),
+  'test.js': [
+    "const assert = require('node:assert/strict');",
+    "const p = require('./src/pricing');",
+    'assert.equal(p.withTax(100, 0.2), 120);',
+    'assert.equal(p.taxOnly(50, 0.1), 5);',
+    'assert.equal(p.lineTotal(3, 10, 0.5), 45);',
+    "console.log('ok');",
+    '',
+  ].join('\n'),
+};
+
+// Saved by an editor on Windows: CRLF throughout, indented with tabs.
+const CRLF_JS = [
+  'function parsePort(value) {',
+  '\tconst n = Number(value);',
+  '\treturn n;',
+  '}',
+  '',
+  'module.exports = { parsePort };',
+  '',
+].join('\r\n');
+
+const SERVER_APP = {
+  'app.js': [
+    "const http = require('node:http');",
+    '',
+    'const HOST = process.env.HOST || "127.0.0.1";',
+    'const PORT = Number(process.env.PORT) || 3000;',
+    '',
+    'function start() {',
+    "    return http.createServer((req, res) => res.end('ok')).listen(PORT, HOST);",
+    '}',
+    '',
+    'module.exports = { HOST, PORT, start };',
+    '',
+  ].join('\n'),
+  // Run first by the task: it adds lines above everything, so line numbers from before it name other lines after it.
+  'add-license.js': [
+    "const fs = require('node:fs');",
+    "const text = fs.readFileSync('app.js', 'utf8');",
+    "if (!text.startsWith('// SPDX')) fs.writeFileSync('app.js', '// SPDX-License-Identifier: MIT\\n// (c) Example\\n\\n' + text);",
+    '',
+  ].join('\n'),
+};
+
 const SCENARIOS = [
   {
     id: 'node-rename',
@@ -187,6 +334,43 @@ const SCENARIOS = [
     // Nobody asks for a review: this measures whether the model checks its own change before it finishes.
     check: (cwd, run) => !clean(cwd) && sh('npm test', cwd).status === 0 && run.tools.includes('code_review'),
   },
+  // Edit tasks: they pass on the result, and each run's line says how many edit_file calls landed (see editTally).
+  {
+    id: 'edit-async',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, TODO_APP),
+    prompt: 'Convert every method of TodoModel in src/models/todoModel.js to async (async/await), and update src/service.js so its functions are async and await the model. Then run node test.js.',
+    check: (cwd) => sh('node test.js', cwd).status === 0 && /async findAll\(\)/.test(read(join(cwd, 'src/models/todoModel.js'))) && /await model\./.test(read(join(cwd, 'src/service.js'))),
+  },
+  {
+    id: 'edit-rename-param',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, PRICING),
+    prompt: 'In src/pricing.js rename the parameter rate to taxRate in every function that takes it, without changing behaviour. Then run node test.js.',
+    check: (cwd) => sh('node test.js', cwd).status === 0 && !/\brate\b/.test(read(join(cwd, 'src/pricing.js'))) && /taxRate/.test(read(join(cwd, 'src/pricing.js'))),
+  },
+  {
+    id: 'edit-crlf-tabs',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, { 'src/port.js': CRLF_JS }),
+    prompt: 'Make parsePort in src/port.js throw an Error when the value is not an integer between 1 and 65535. Keep the file\'s style.',
+    check: (cwd) => {
+      const text = read(join(cwd, 'src/port.js'));
+      // Still CRLF throughout and still tab-indented: an edit that mixed in LF or spaces fails.
+      const style = !/(?<!\r)\n/.test(text) && !/^ +\S/m.test(text);
+      return style && script(cwd, "import { createRequire } from 'node:module'; const { parsePort } = createRequire(import.meta.url)('./src/port.js'); const bad = ['x', '0', '70000', '1.5']; process.exit(parsePort('8080') === 8080 && bad.every((v) => { try { parsePort(v); return false; } catch { return true; } }) ? 0 : 1);");
+    },
+  },
+  {
+    id: 'edit-after-shell',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, SERVER_APP),
+    inputs: ['Read app.js and tell me which line sets the default port.', 'Run node add-license.js, then change the default port in app.js to 8080. Do not change anything else.'],
+    check: (cwd) => {
+      const text = read(join(cwd, 'app.js'));
+      return /Number\(process\.env\.PORT\) \|\| 8080;/.test(text) && text.startsWith('// SPDX') && /HOST \|\| "127\.0\.0\.1"/.test(text) && (text.match(/SPDX/g) ?? []).length === 1;
+    },
+  },
 ];
 
 // The newest saved session under a workspace; each eval workspace holds exactly one.
@@ -229,6 +413,16 @@ function homeFor(base, scenario) {
   writeFileSync(join(home, 'config.json'), JSON.stringify({ ...config, ...scenario.config }, null, 2));
   if (existsSync(join(real, 'providers'))) cpSync(join(real, 'providers'), join(home, 'providers'), { recursive: true });
   return home;
+}
+
+// How edit_file fared: calls made, and how many of them landed. A reused or refused repeat counts as a call that did not.
+function editTally(session) {
+  const messages = [...(session?.explored ?? []).flat(), ...(session?.messages ?? [])];
+  const edits = new Set();
+  for (const m of messages) for (const c of m.tool_calls ?? []) if (c.function?.name === 'edit_file') edits.add(c.id);
+  let landed = 0;
+  for (const m of messages) if (m.role === 'tool' && edits.has(m.tool_call_id) && /^OK edit_file/.test(String(m.content ?? ''))) landed += 1;
+  return { calls: edits.size, landed };
 }
 
 // What the model did, read from the calls and results it actually made.
@@ -290,6 +484,7 @@ function runScenario(model, scenario, base, timeoutMs) {
     stopReason: stopReasonOf(cwd),
     providerError: /Ollama error|usage limit|ECONNREFUSED/i.test(out),
   };
+  result.edits = editTally(sessionOf(cwd));
   result.stuck = result.stopReason === 'guard_stuck';
   result.limit = result.stopReason === 'max_iterations' || result.stopReason === 'output_truncated';
   result.pass = !result.timedOut && !result.providerError && Boolean(scenario.check(cwd, result));
@@ -311,11 +506,13 @@ function evaluate() {
     process.stdout.write(`  ${scenario.id} … `);
     const r = runScenario(model, scenario, base, timeoutMs);
     results.push(r);
-    console.log(r.error ?? `${r.pass ? 'PASS' : 'FAIL'} · ${r.seconds}s · ${r.toolCalls} calls · ${r.errors.length} errors${r.stuck ? ' · stuck' : ''}${r.limit ? ` · stopped (${r.stopReason})` : ''}${r.timedOut ? ' · timed out' : ''}${r.providerError ? ' · provider error' : ''}${r.answer ? '' : ' · no answer'}`);
+    console.log(r.error ?? `${r.pass ? 'PASS' : 'FAIL'} · ${r.seconds}s · ${r.toolCalls} calls${r.edits?.calls ? ` · edits ${r.edits.landed}/${r.edits.calls} landed` : ''} · ${r.errors.length} errors${r.stuck ? ' · stuck' : ''}${r.limit ? ` · stopped (${r.stopReason})` : ''}${r.timedOut ? ' · timed out' : ''}${r.providerError ? ' · provider error' : ''}${r.answer ? '' : ' · no answer'}`);
   }
 
   const passed = results.filter((r) => r.pass).length;
   const errors = results.flatMap((r) => r.errors ?? []);
+  const edits = results.reduce((t, r) => ({ calls: t.calls + (r.edits?.calls ?? 0), landed: t.landed + (r.edits?.landed ?? 0) }), { calls: 0, landed: 0 });
+  if (edits.calls) console.log(`\nedit_file: ${edits.landed}/${edits.calls} calls landed (${Math.round((100 * edits.landed) / edits.calls)}%)`);
   console.log(`\n${passed}/${results.length} passed · ${errors.length} tool error(s) · ${results.filter((r) => r.stuck).length} stuck · ${results.filter((r) => !r.answer && !r.error).length} without an answer`);
   if (errors.length) {
     console.log('\ntool errors:');
