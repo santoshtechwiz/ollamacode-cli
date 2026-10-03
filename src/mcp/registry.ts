@@ -6,6 +6,7 @@ import { logger } from '../core/logger';
 import { isCancel } from '../core/errors';
 import { defaultRegistry } from '../tool/execution/registry';
 import { McpClient } from './client';
+import { createHash } from 'node:crypto';
 
 let connected: McpClient[] = [];
 let loading: Promise<import('../types.ts').ToolDef[]> | null = null;
@@ -30,14 +31,41 @@ export function mcpServerStatus(): McpServerStatus[] {
   }));
 }
 
-function qualify(serverName: string, toolName: string): string {
-  const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^[^a-z]/, 't$&');
-  return `mcp__${clean(serverName)}__${clean(toolName)}`;
+/** Longest tool name ocode sends; some model backends refuse function names past 64 characters. */
+const MAX_TOOL_NAME = 64;
+
+function cleanPart(s: string): string {
+  return String(s).toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^[^a-z]/, 't$&');
+}
+
+/** The prefix every tool of one server carries. */
+export function mcpToolPrefix(serverName: string): string {
+  return `mcp__${cleanPart(serverName)}__`;
+}
+
+/**
+ * The name the model calls a server's tool by: cleaned, at most 64 characters, and unique among the names in `taken`.
+ * Cleaning maps "my-server" and "my_server" to the same text, so a later one gets a numbered suffix; a long one is cut
+ * and ends in a short hash of the original, so it stays stable and distinct.
+ */
+function qualify(serverName: string, toolName: string, taken: Set<string>): string {
+  let base = `${mcpToolPrefix(serverName)}${cleanPart(toolName)}`;
+  if (base.length > MAX_TOOL_NAME) {
+    const hash = createHash('sha1').update(`${serverName}\u0000${toolName}`).digest('hex').slice(0, 8);
+    base = `${base.slice(0, MAX_TOOL_NAME - hash.length - 1)}_${hash}`;
+  }
+  let name = base;
+  for (let n = 2; taken.has(name); n++) {
+    const suffix = `_${n}`;
+    name = `${base.slice(0, MAX_TOOL_NAME - suffix.length)}${suffix}`;
+  }
+  taken.add(name);
+  return name;
 }
 
 /** One server tool as an ocode tool: it calls the server, and its risk is what the server declares about it. */
-export function bridgeTool(client: McpClient, tool: import('./client.ts').McpTool): import('../types.ts').ToolDef {
-  const name = qualify(client.name, tool.name);
+export function bridgeTool(client: McpClient, tool: import('./client.ts').McpTool, taken: Set<string> = new Set()): import('../types.ts').ToolDef {
+  const name = qualify(client.name, tool.name, taken);
   const schema =
     tool.inputSchema && typeof tool.inputSchema === 'object'
       ? { type: 'object', properties: {}, ...tool.inputSchema }
@@ -202,13 +230,15 @@ async function connectAll() {
   if (configs.length === 0) return [];
 
   const defs: import('../types.ts').ToolDef[] = [];
+  // Shared by every server, so two servers' tools can never end up with the same name.
+  const taken = new Set<string>();
   await Promise.all(
     configs.map(async (cfg) => {
       const client = new McpClient(cfg);
       try {
         await client.connect();
         const tools = await client.listTools();
-        for (const tool of tools) defs.push(bridgeTool(client, tool));
+        for (const tool of tools) defs.push(bridgeTool(client, tool, taken));
         connected.push(client);
         logger.debug(`mcp[${cfg.name}] connected, ${tools.length} tool(s)`);
       } catch (err) {
