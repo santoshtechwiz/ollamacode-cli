@@ -1,7 +1,7 @@
 // Assembling the model request, and the bounded recovery when it does not fit the context window.
 
 import { ROLE, AGENT_STATUS } from '../../protocol';
-import type { ContextStore, PreparedContext } from '../../context/contracts';
+import type { ContextBudget, ContextStore, PreparedContext } from '../../context/contracts';
 import type { Message, ToolCall, ToolSchema } from '../../types';
 import {
   buildModelRequest,
@@ -210,10 +210,34 @@ export function createContextRecovery(options: ContextRecoveryOptions): ContextR
     return assemble();
   };
 
+  /**
+   * Compaction only drops unpinned history from before the live turn. With none of that left, a request whose fixed
+   * part (instructions, tool schemas, workspace snapshot) overflows the window on its own cannot be made to fit, and
+   * the conversation is not what is too long: say so instead of compacting nothing three times.
+   */
+  const failIfFixedOverflows = (budget: ContextBudget): void => {
+    const window = budget.contextLimit - budget.outputReserve;
+    const fixed = budget.systemTokens + budget.toolSchemaTokens + budget.trailingTokens;
+    if (window <= 0 || fixed <= window) return;
+    const nothingToDrop = store.messages.slice(0, liveTurnStart(store)).every((_, i) => store.pinnedIndices.has(i));
+    if (!nothingToDrop) return;
+    restore();
+    logger.debug('context: the fixed part of the request is over the window on its own', { fixed, window });
+    const model = options.meta.model ? `${options.meta.model}'s ` : 'This model\'s ';
+    throw new Error(
+      `${model}${budget.contextLimit.toLocaleString('en-US')}-token window can't hold ocode's instructions ` +
+        `(about ${fixed.toLocaleString('en-US')} tokens) even with an empty conversation. ` +
+        'Turn tools off with /tools if they are on, or pick a model with a larger window.',
+    );
+  };
+
   /** The builder assembles the best request it can; when even that spills over the window, compact instead of sending a call the backend is known to reject. */
   const untilItFits = async (request: PreparedContext): Promise<PreparedContext> => {
     let next = request;
-    while (next.budget.overflow > 0) next = await compactOnce('saturated');
+    while (next.budget.overflow > 0) {
+      failIfFixedOverflows(next.budget);
+      next = await compactOnce('saturated');
+    }
     return next;
   };
 
