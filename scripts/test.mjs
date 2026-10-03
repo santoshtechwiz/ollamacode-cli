@@ -15,6 +15,12 @@ const walk = (dir) => {
 };
 walk(join(root, 'tests'));
 
-const args = ['--import', 'tsx', '--import', './tests/setup.ts', '--test', ...process.argv.slice(2), ...found.sort()];
+// A test that waits on something that never comes fails after a deadline instead of holding the run forever, and a
+// file whose tests are done exits even when a process or handle it started lingers (Windows is slow to let go).
+// Older Nodes lack these flags, so each is passed only where this Node accepts it.
+const supported = (flag) => spawnSync(process.execPath, [flag, '-e', ''], { stdio: 'ignore' }).status === 0;
+const guards = ['--test-timeout=120000', '--test-force-exit'].filter(supported);
+
+const args = ['--import', 'tsx', '--import', './tests/setup.ts', '--test', ...guards, ...process.argv.slice(2), ...found.sort()];
 const run = spawnSync(process.execPath, args, { cwd: root, stdio: 'inherit' });
 process.exit(run.status ?? 1);
