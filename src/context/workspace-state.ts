@@ -97,6 +97,8 @@ export interface WorkspaceState {
   note: (op: string, rel: string, type: 'file' | 'dir') => void;
   record: (entry: Execution) => void;
   grant: (dir: string) => void;
+  /** Something outside the file tools (code that ran) may have changed the disk: the world moves, nothing is recorded. */
+  touch: () => void;
   startTurn: () => void;
   reset: () => void;
 }
@@ -156,6 +158,10 @@ const state: WorkspaceState = {
     grant(dir) {
       const abs = path.resolve(dir);
       if (!state.grantedRoots.includes(abs)) state.grantedRoots.push(abs);
+    },
+
+    touch() {
+      state.mutationCount += 1;
     },
 
     startTurn() {
