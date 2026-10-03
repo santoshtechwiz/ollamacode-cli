@@ -1,7 +1,7 @@
 // `npm run eval -- --model <name>`: drive real ocode chat turns through fixed tasks and score how the model behaved.
 // `npm run eval -- --mine <dir...>`: group the tool errors in saved sessions, so the next argument fix comes from data.
-import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { cpSync, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -450,7 +450,58 @@ function behaviour(session) {
   return { toolCalls, tools: [...tools], reused, errors, answer: String(last?.content ?? '').trim() };
 }
 
-function runScenario(model, scenario, base, timeoutMs) {
+// One chat run. What it prints goes to `logFile` as it comes, so a long task can be followed while it runs
+// (tail -f the file). At the deadline the whole process tree is stopped: killing only ocode left a test or server it
+// had started holding the pipes open, and on Windows the eval then waited for ever.
+function runChat(args, { cwd, env, input, timeoutMs, logFile }) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [cli, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
+    const log = createWriteStream(logFile);
+    let output = '';
+    const take = (chunk) => {
+      const text = String(chunk);
+      output += text;
+      log.write(text);
+    };
+    child.stdout.on('data', take);
+    child.stderr.on('data', take);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      stopTree(child);
+    }, timeoutMs);
+    let settled = false;
+    const finish = (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      log.end();
+      resolve({ output, code, timedOut });
+    };
+    // 'exit', not 'close': close waits for every holder of the pipes, which a leftover grandchild may never let go.
+    child.on('exit', (code) => setTimeout(() => finish(code), 500));
+    child.on('error', (err) => {
+      take(String(err?.message ?? err));
+      finish(null);
+    });
+    child.stdin.on('error', () => {});
+    child.stdin.end(input);
+  });
+}
+
+function stopTree(child) {
+  if (!child.pid) return;
+  if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
+  else {
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      child.kill('SIGKILL');
+    }
+  }
+}
+
+async function runScenario(model, scenario, base, timeoutMs) {
   const cwd = join(base, scenario.id);
   if (scenario.repo) {
     const cloned = sh(`git clone -q --local "${join(LAB, scenario.repo)}" "${cwd}"`, base);
@@ -463,26 +514,27 @@ function runScenario(model, scenario, base, timeoutMs) {
   const started = Date.now();
   const inputs = scenario.inputs ?? [scenario.prompt];
   const env = scenario.config ? { ...process.env, OLLAMACODE_HOME: homeFor(base, scenario) } : process.env;
-  const run = spawnSync(process.execPath, [cli, '--yes', '--new', ...(scenario.args ?? []), ...(model ? ['--model', model] : [])], {
+  const logFile = join(base, `${scenario.id}.out.txt`);
+  const run = await runChat(['--yes', '--new', ...(scenario.args ?? []), ...(model ? ['--model', model] : [])], {
     cwd,
     env,
     input: `${inputs.join('\n')}\n`,
-    encoding: 'utf8',
-    timeout: timeoutMs * inputs.length,
+    timeoutMs: timeoutMs * inputs.length,
+    logFile,
   });
-  const out = String(run.stdout ?? '') .replace(ANSI, '') + String(run.stderr ?? '').replace(ANSI, '');
-  writeFileSync(join(base, `${scenario.id}.out.txt`), out);
+  const out = run.output.replace(ANSI, '');
+  writeFileSync(logFile, out);
   const seen = behaviour(sessionOf(cwd));
   const modelCalls = Number(/(\d+) model calls?/.exec(out)?.[1] ?? 0);
   const result = {
     id: scenario.id,
     seconds: Math.round((Date.now() - started) / 1000),
-    timedOut: run.error?.code === 'ETIMEDOUT',
-    exit: run.status,
+    timedOut: run.timedOut,
+    exit: run.code,
     modelCalls,
     ...seen,
     stopReason: stopReasonOf(cwd),
-    providerError: /Ollama error|usage limit|ECONNREFUSED/i.test(out),
+    providerError: /Ollama error|usage limit|ECONNREFUSED|No LLM provider is available/i.test(out),
   };
   result.edits = editTally(sessionOf(cwd));
   result.stuck = result.stopReason === 'guard_stuck';
@@ -491,7 +543,7 @@ function runScenario(model, scenario, base, timeoutMs) {
   return result;
 }
 
-function evaluate() {
+async function evaluate() {
   const model = flag('model');
   const only = flag('only')?.split(',');
   const timeoutMs = Number(flag('timeout') ?? 300) * 1000;
@@ -503,8 +555,8 @@ function evaluate() {
   // One live run at a time: the backend cannot take parallel sessions.
   const results = [];
   for (const scenario of picked) {
-    process.stdout.write(`  ${scenario.id} … `);
-    const r = runScenario(model, scenario, base, timeoutMs);
+    process.stdout.write(`  ${scenario.id} … (up to ${Math.round((timeoutMs * (scenario.inputs?.length ?? 1)) / 1000)}s; follow ${join(base, `${scenario.id}.out.txt`)}) `);
+    const r = await runScenario(model, scenario, base, timeoutMs);
     results.push(r);
     console.log(r.error ?? `${r.pass ? 'PASS' : 'FAIL'} · ${r.seconds}s · ${r.toolCalls} calls${r.edits?.calls ? ` · edits ${r.edits.landed}/${r.edits.calls} landed` : ''} · ${r.errors.length} errors${r.stuck ? ' · stuck' : ''}${r.limit ? ` · stopped (${r.stopReason})` : ''}${r.timedOut ? ' · timed out' : ''}${r.providerError ? ' · provider error' : ''}${r.answer ? '' : ' · no answer'}`);
   }
@@ -611,4 +663,4 @@ function mine() {
 }
 
 if (argv.includes('--mine')) mine();
-else evaluate();
+else await evaluate();
