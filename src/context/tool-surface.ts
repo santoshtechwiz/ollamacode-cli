@@ -1,0 +1,41 @@
+import { TOOLS, isDynamicTool, isOfferedTool } from '../tool/index';
+import type { ToolProfileName } from '../types';
+
+// Membership lives on each tool definition (its profiles); these are read from it once, in registration order.
+const inProfile = (profile: ToolProfileName): string[] => TOOLS.filter((t) => t.profiles?.includes(profile)).map((t) => t.name);
+
+const CORE_TOOLS = inProfile('core');
+
+const PLANNING_TOOLS = inProfile('planning');
+
+export interface ToolProfile {
+  compact?: boolean;
+  core?: boolean;
+  native?: boolean;
+  readOnly?: boolean;
+  /** Tools this turn gets on top of what the profile allows (a research subagent's web tools on a read-only set). */
+  include?: readonly string[];
+  /** Tools this turn never gets, whatever else the profile allows (a subagent's, or one with no delegate). */
+  exclude?: readonly string[];
+}
+
+/** The tools a profile makes available, in registration order; the one place a profile becomes a list. */
+export function selectToolDefs({ core = false, readOnly = false, include = [], exclude = [] }: ToolProfile = {}): import('../types.ts').ToolDef[] {
+  const base = readOnly
+    ? TOOLS.filter((t) => PLANNING_TOOLS.includes(t.name))
+    : core
+      ? TOOLS.filter((t) => CORE_TOOLS.includes(t.name) || isDynamicTool(t.name))
+      : TOOLS;
+
+  const selected = [...base, ...TOOLS.filter((t) => include.includes(t.name) && !base.includes(t))];
+  return selected.filter((t) => isOfferedTool(t.name) && !exclude.includes(t.name));
+}
+
+export function coreToolNames() {
+  return [...CORE_TOOLS];
+}
+
+export function readOnlyToolNames() {
+  return [...PLANNING_TOOLS, 'ask_user'];
+}
+

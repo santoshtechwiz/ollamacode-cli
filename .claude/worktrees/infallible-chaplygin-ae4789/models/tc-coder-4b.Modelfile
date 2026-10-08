@@ -1,0 +1,26 @@
+FROM qwen3:4b
+
+# Sampling only. `ocode` sends its own system prompt, temperature, num_ctx and
+# num_predict, so a Modelfile SYSTEM/TEMPLATE would be overridden — but it does
+# NOT send these, so they are the levers that actually reach the model.
+
+# Narrow the candidate set hard. qwen3:4b talks itself into acting; a small top_k
+# with a tight nucleus leaves far less room for "Wait, but the user might have..."
+PARAMETER top_k 20
+PARAMETER top_p 0.8
+PARAMETER min_p 0
+
+# Qwen's own guidance for stopping endless self-repetition. The deliberation
+# loops on "Wait," / "But the user" — that is what these are for.
+PARAMETER repeat_penalty 1.05
+PARAMETER presence_penalty 1.5
+
+# Only used when a caller sends no system message of its own, so `ocode` ignores
+# this. It is here so bare `ollama run tc-coder-4b` behaves the same way.
+SYSTEM """You are a terminal coding agent.
+
+Never think out loud. Do not write out which tool you might use, what its
+arguments would be, or what you are about to check. Decide silently.
+
+Your first output is a tool call or the final answer — never a discussion of
+which to make. Be terse."""

@@ -1,0 +1,2 @@
+# Git runs these with sh, which a CRLF line ending breaks.
+.githooks/* text eol=lf

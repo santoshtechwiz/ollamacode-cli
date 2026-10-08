@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ocode Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; each diagram is a wide figure that scrolls on its own at phone width. */
+:root {
+  --bg: #f5f6f4;
+  --panel: #ffffff;
+  --fg: #1d2421;
+  --muted: #5d6863;
+  --line: #c7cec9;
+  --accent: #0f766e;      /* the hinge of each diagram */
+  --accent-soft: #dff1ee;
+  --warn: #a15c07;        /* partial / waiting */
+  --warn-soft: #fbefdc;
+  --code-bg: #eceeeb;
+  --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121715; --panel: #1a211e; --fg: #e3e8e5; --muted: #98a39e; --line: #36413c;
+    --accent: #4fd1c0; --accent-soft: #15302c; --warn: #f0b45c; --warn-soft: #33270f; --code-bg: #212a26;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121715; --panel: #1a211e; --fg: #e3e8e5; --muted: #98a39e; --line: #36413c;
+  --accent: #4fd1c0; --accent-soft: #15302c; --warn: #f0b45c; --warn-soft: #33270f; --code-bg: #212a26;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 400 15.5px/1.6 var(--body); padding-inline: 16px; padding-block: 0 64px; }
+main { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 56px; }
+header { padding-block: 48px 8px; display: flex; flex-direction: column; gap: 12px; max-width: 70ch; }
+.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1 { font: 700 clamp(30px, 5vw, 46px)/1.05 var(--display); margin: 0; text-wrap: balance; letter-spacing: -.01em; }
+h2 { font: 600 24px/1.2 var(--display); margin: 0; text-wrap: balance; }
+h3 { font: 600 15px/1.3 var(--body); margin: 0; }
+p { margin: 0; max-width: 68ch; }
+.lede { font-size: 17px; color: var(--muted); }
+section { display: flex; flex-direction: column; gap: 16px; }
+.num { font: 500 13px/1 var(--mono); color: var(--muted); }
+code, .mono { font-family: var(--mono); font-size: .9em; }
+p code, li code, td code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+nav { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 14px; }
+nav a { color: var(--fg); text-decoration: none; border-bottom: 1px solid var(--line); }
+nav a:hover, nav a:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
+figure { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.canvas { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+.canvas svg { display: block; width: 100%; min-width: 760px; height: auto; color: var(--fg); }
+figcaption { font-size: 14px; color: var(--muted); max-width: 75ch; }
+ul.notes { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; max-width: 72ch; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 620px; }
+th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 500 12px/1.3 var(--mono); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+tr:last-child td { border-bottom: 0; }
+td.n { font-variant-numeric: tabular-nums; text-align: right; color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.sw { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--line); display: inline-block; }
+
+/* SVG vocabulary, shared by every diagram */
+svg .b { fill: var(--panel); stroke: var(--line); stroke-width: 1.2; }
+svg .hl { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.6; }
+svg .wn { fill: var(--warn-soft); stroke: var(--warn); stroke-width: 1.4; }
+svg .ext { fill: var(--bg); stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 5 4; }
+svg .t { fill: var(--fg); font: 600 14px var(--body); }
+svg .tc { fill: var(--fg); font: 500 12.5px var(--body); }
+svg .s { fill: var(--muted); font: 400 12px var(--body); }
+svg .m { fill: var(--muted); font: 400 11.5px var(--mono); }
+svg .lbl { fill: var(--muted); font: 500 11.5px var(--mono); }
+svg .acc { fill: var(--accent); }
+svg .wtx { fill: var(--warn); }
+svg .a { stroke: currentColor; stroke-width: 1.4; fill: none; }
+svg .aa { stroke: var(--accent); stroke-width: 1.8; fill: none; }
+svg .ad { stroke: currentColor; stroke-width: 1.3; fill: none; stroke-dasharray: 5 4; }
+svg .bar-sys { fill: var(--accent); }
+svg .bar-tools { fill: var(--accent); opacity: .55; }
+svg .bar-hist { fill: var(--warn); }
+svg .bar-res { fill: var(--line); }
+svg .bar-free { fill: var(--bg); stroke: var(--line); }
+@media (prefers-reduced-motion: no-preference) { nav a { transition: color .15s, border-color .15s; } }
+</style>
+</head>
+<body>
+
+<main>
+<header>
+  <span class="eyebrow">ollamacode-cli</span>
+  <h1>How ocode works</h1>
+  <p class="lede">A terminal coding agent that runs on your own Ollama models. This page follows one request from your keyboard to the model, through the tools, and back.</p>
+  <nav aria-label="Sections">
+    <a href="#overview">System overview</a>
+    <a href="#turn">One turn</a>
+    <a href="#tools">A tool call</a>
+    <a href="#context">What the model reads</a>
+    <a href="#subagents">Subagents</a>
+    <a href="#background">Background jobs</a>
+    <a href="#modules">Module map</a>
+    <a href="#disk">On disk</a>
+  </nav>
+</header>
+
+<section id="overview">
+  <span class="num">1</span>
+  <h2>System overview</h2>
+  <p>Everything runs in one Node process started by <code>bin/cli.js</code>. The chat UI hands each request to the agent core, which loops between the model and the tools until the model answers in plain text.</p>
+  <figure>
+    <div class="canvas">
+      <svg viewBox="0 0 960 600" role="img" aria-label="Layered overview: you talk to the chat UI, which runs the agent core; the core builds context, calls the model gateway and runs tools; tools reach your files, the shell and MCP servers; the gateway reaches Ollama or HuggingFace.">
+        <defs>
+          <marker id="ah1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="currentColor"/></marker>
+          <marker id="ah1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" class="acc"/></marker>
+        </defs>
+        <!-- row 1 -->
+        <rect class="ext" x="380" y="16" width="200" height="44" rx="8"/>
+        <text class="t" x="480" y="43" text-anchor="middle">You, in a terminal</text>
+        <rect class="ext" x="640" y="16" width="200" height="44" rx="8"/>
+        <text class="tc" x="740" y="35" text-anchor="middle">.ollamacode/</text>
+        <text class="m" x="740" y="51" text-anchor="middle">sessions · checkpoints</text>
+
+        <!-- row 2: CLI -->
+        <rect class="b" x="120" y="104" width="720" height="64" rx="8"/>
+        <text class="t" x="140" y="129">Chat UI</text>
+        <text class="m" x="210" y="129">src/cli · src/ui</text>
+        <text class="s" x="140" y="152">REPL and prompt · session picker · approval prompts · turn reporter · background handoff</text>
+
+        <!-- row 3: core -->
+        <rect class="hl" x="120" y="212" width="720" height="84" rx="8"/>
+        <text class="t" x="140" y="237">Agent core</text>
+        <text class="m" x="232" y="237">src/agent</text>
+        <text class="s" x="140" y="260">executeTurn: mode (agent / plan / review), task scope, replan → runTurn loop</text>
+        <text class="s" x="140" y="280">ask model → run tool calls → stop guards → answer · subagent runner · plan &amp; todo list</text>
+
+        <!-- row 4 -->
+        <rect class="b" x="120" y="352" width="224" height="104" rx="8"/>
+        <text class="t" x="136" y="376">Tools</text><text class="m" x="184" y="376">src/tool</text>
+        <text class="s" x="136" y="398">prepare → decide → approve</text>
+        <text class="s" x="136" y="416">executor: time limits</text>
+        <text class="s" x="136" y="434">37 built-in tools</text>
+        <text class="s" x="136" y="452">+ MCP tools on demand</text>
+
+        <rect class="b" x="368" y="352" width="224" height="104" rx="8"/>
+        <text class="t" x="384" y="376">Context</text><text class="m" x="448" y="376">src/context</text>
+        <text class="s" x="384" y="398">request builder, token budget</text>
+        <text class="s" x="384" y="416">history store, compaction</text>
+        <text class="s" x="384" y="434">memory · auto-context</text>
+        <text class="s" x="384" y="452">workspace index (SQLite)</text>
+
+        <rect class="b" x="616" y="352" width="224" height="104" rx="8"/>
+        <text class="t" x="632" y="376">Model gateway</text><text class="m" x="742" y="376">src/model</text>
+        <text class="s" x="632" y="398">streaming, retries</text>
+        <text class="s" x="632" y="416">thinking budget per call</text>
+        <text class="s" x="632" y="434">WASM stream line splitter</text>
+        <text class="s" x="632" y="452">provider registry</text>
+
+        <!-- row 5 external -->
+        <rect class="ext" x="120" y="508" width="224" height="56" rx="8"/>
+        <text class="tc" x="232" y="532" text-anchor="middle">MCP servers</text>
+        <text class="m" x="232" y="550" text-anchor="middle">playwright, context7 …</text>
+        <rect class="ext" x="368" y="508" width="224" height="56" rx="8"/>
+        <text class="tc" x="480" y="532" text-anchor="middle">Your files &amp; shell</text>
+        <text class="m" x="480" y="550" text-anchor="middle">pwsh · bash · git</text>
+        <rect class="ext" x="616" y="508" width="224" height="56" rx="8"/>
+        <text class="tc" x="728" y="532" text-anchor="middle">Ollama · Ollama Cloud</text>
+        <text class="m" x="728" y="550" text-anchor="middle">HuggingFace Inference</text>
+
+        <!-- arrows -->
+        <line class="a" x1="480" y1="60" x2="480" y2="102" marker-end="url(#ah1)"/>
+        <text class="lbl" x="490" y="86">request, answers</text>
+        <line class="a" x1="760" y1="104" x2="760" y2="62" marker-end="url(#ah1)"/>
+        <text class="lbl" x="770" y="86">saves session</text>
+        <line class="aa" x1="480" y1="168" x2="480" y2="210" marker-end="url(#ah1a)"/>
+        <text class="lbl" x="490" y="194">executeTurn(input)</text>
+
+        <line class="a" x1="232" y1="296" x2="232" y2="350" marker-end="url(#ah1)"/>
+        <text class="lbl" x="242" y="328">tool calls</text>
+        <line class="a" x1="480" y1="296" x2="480" y2="350" marker-end="url(#ah1)"/>
+        <text class="lbl" x="490" y="328">build request</text>
+        <line class="a" x1="728" y1="296" x2="728" y2="350" marker-end="url(#ah1)"/>
+        <text class="lbl" x="738" y="328">stream(messages, tools)</text>
+
+        <line class="a" x1="232" y1="456" x2="232" y2="506" marker-end="url(#ah1)"/>
+        <text class="lbl" x="242" y="486">stdio</text>
+        <line class="a" x1="320" y1="456" x2="400" y2="506" marker-end="url(#ah1)"/>
+        <text class="lbl" x="352" y="476">read · write · run</text>
+        <line class="a" x1="480" y1="506" x2="480" y2="458" marker-end="url(#ah1)"/>
+        <text class="lbl" x="490" y="486">index · snapshot</text>
+        <line class="a" x1="728" y1="456" x2="728" y2="506" marker-end="url(#ah1)"/>
+        <text class="lbl" x="738" y="486">HTTP /api/chat</text>
+
+        <!-- approval path: tools back up to the chat UI -->
+        <polyline class="ad" points="120,404 84,404 84,136 118,136" marker-end="url(#ah1)"/>
+        <text class="lbl" transform="translate(74 300) rotate(-90)" text-anchor="middle">approval prompt</text>
+      </svg>
+    </div>
+    <figcaption>The core is the only part that talks to both the model and the tools. Approvals are the one path where a tool reaches back up to you (dashed): the executor stops its clocks while the prompt is open.</figcaption>
+  </figure>
+</section>
+
+<section id="turn">
+  <span class="num">2</span>
+  <h2>One turn</h2>
+  <p>A turn is a loop in <code>src/agent/turn/turn.ts</code>. Each step asks the model once. A reply with only text is the answer and ends the turn; a reply with tool calls runs them and goes round again, unless a guard stops it.</p>
+  <figure>
+    <div class="canvas">
+      <svg viewBox="0 0 960 420" role="img" aria-label="Turn loop: build the request, ask the model; text ends the turn with an answer; tool calls run, then guards either loop back to the next step or stop with a closing answer; both endings go to the turn reporter.">
+        <defs>
+          <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="currentColor"/></marker>
+          <marker id="ah2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" class="acc"/></marker>
+        </defs>
+        <rect class="b" x="20" y="40" width="170" height="64" rx="8"/>
+        <text class="t" x="105" y="66" text-anchor="middle">Build request</text>
+        <text class="s" x="105" y="86" text-anchor="middle">history + context + tools</text>
+
+        <rect class="b" x="230" y="40" width="170" height="64" rx="8"/>
+        <text class="t" x="315" y="66" text-anchor="middle">Ask the model</text>
+        <text class="s" x="315" y="86" text-anchor="middle">gateway.stream()</text>
+
+        <polygon class="hl" points="525,32 610,72 525,112 440,72"/>
+        <text class="tc" x="525" y="68" text-anchor="middle">tool calls</text>
+        <text class="tc" x="525" y="84" text-anchor="middle">in reply?</text>
+
+        <rect class="b" x="660" y="40" width="150" height="64" rx="8"/>
+        <text class="t" x="735" y="66" text-anchor="middle">Answer</text>
+        <text class="s" x="735" y="86" text-anchor="middle">text reply ends turn</text>
+
+        <rect class="b" x="430" y="160" width="190" height="80" rx="8"/>
+        <text class="t" x="525" y="186" text-anchor="middle">Run each call</text>
+        <text class="s" x="525" y="206" text-anchor="middle">see section 3</text>
+        <text class="s" x="525" y="224" text-anchor="middle">reply text kept with 1st call</text>
+
+        <rect class="b" x="430" y="292" width="190" height="96" rx="8"/>
+        <text class="t" x="525" y="318" text-anchor="middle">Stop guards</text>
+        <text class="s" x="525" y="338" text-anchor="middle">same calls again?</text>
+        <text class="s" x="525" y="356" text-anchor="middle">every call refused?</text>
+        <text class="s" x="525" y="374" text-anchor="middle">step limit (25 default)</text>
+
+        <rect class="b" x="660" y="308" width="150" height="64" rx="8"/>
+        <text class="t" x="735" y="334" text-anchor="middle">Closing answer</text>
+        <text class="s" x="735" y="354" text-anchor="middle">one tool-free request</text>
+
+        <rect class="hl" x="840" y="176" width="104" height="80" rx="8"/>
+        <text class="t" x="892" y="204" text-anchor="middle">Reporter</text>
+        <text class="s" x="892" y="224" text-anchor="middle">answer +</text>
+        <text class="s" x="892" y="241" text-anchor="middle">one status</text>
+
+        <line class="a" x1="190" y1="72" x2="228" y2="72" marker-end="url(#ah2)"/>
+        <line class="a" x1="400" y1="72" x2="438" y2="72" marker-end="url(#ah2)"/>
+        <line class="a" x1="610" y1="72" x2="658" y2="72" marker-end="url(#ah2)"/>
+        <text class="lbl" x="634" y="62" text-anchor="middle">no</text>
+        <line class="a" x1="525" y1="112" x2="525" y2="158" marker-end="url(#ah2)"/>
+        <text class="lbl" x="535" y="140">yes</text>
+        <line class="a" x1="525" y1="240" x2="525" y2="290" marker-end="url(#ah2)"/>
+        <polyline class="aa" points="430,340 105,340 105,106" marker-end="url(#ah2a)"/>
+        <text class="lbl" x="268" y="332" text-anchor="middle">continue: next step</text>
+        <line class="a" x1="620" y1="340" x2="658" y2="340" marker-end="url(#ah2)"/>
+        <text class="lbl" x="639" y="330" text-anchor="middle">stop</text>
+        <polyline class="a" points="810,72 892,72 892,174" marker-end="url(#ah2)"/>
+        <polyline class="a" points="810,340 892,340 892,258" marker-end="url(#ah2)"/>
+      </svg>
+    </div>
+    <figcaption>The loop only ends on a text reply, a guard, or the step limit. Nothing is added behind your back: the turn never injects its own user messages to push the model on.</figcaption>
+  </figure>
+  <ul class="notes">
+    <li><strong>Before the loop</strong>, <code>executeTurn</code> settles the mode (agent, plan or review), narrows the task scope, and decides whether this is a replan. Plan mode explores read-only in its own context and presents a plan for you to approve.</li>
+    <li><strong>The closing answer</strong> asks once more with no tools so a stopped turn still says what it did. Some small models answer with a tool call anyway; then the turn ends without text and the reporter says what ran.</li>
+    <li><strong>The reporter</strong> (<code>src/cli/chat/turn/turn-reporter.ts</code>) shows the answer and at most one status line: done, paused, out of steps, or waiting on a background job.</li>
+  </ul>
+</section>
+
+<section id="tools">
+  <span class="num">3</span>
+  <h2>A tool call, step by step</h2>
+  <p>Every call settles in one place, <code>settleCall</code> in <code>src/agent/turn/tool-calls.ts</code>. From there it is written into history for the model and shown to you as a tool line.</p>
+  <figure>
+    <div class="canvas">
+      <svg viewBox="0 0 960 300" role="img" aria-label="Tool call pipeline: prepare the call, the decider picks execute, reuse or reject, approval, the executor runs the tool under time limits, and the result becomes one record that feeds both what the model reads and what you see.">
+        <defs>
+          <marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="currentColor"/></marker>
+        </defs>
+        <rect class="b" x="20" y="40" width="140" height="72" rx="8"/>
+        <text class="t" x="90" y="66" text-anchor="middle">Prepare</text>
+        <text class="s" x="90" y="86" text-anchor="middle">parse · normalize</text>
+        <text class="s" x="90" y="102" text-anchor="middle">validate args</text>
+
+        <rect class="hl" x="182" y="40" width="140" height="72" rx="8"/>
+        <text class="t" x="252" y="66" text-anchor="middle">Decide</text>
+        <text class="s" x="252" y="86" text-anchor="middle">EXECUTE · REUSE</text>
+        <text class="s" x="252" y="102" text-anchor="middle">REJECT · STOP</text>
+
+        <rect class="b" x="344" y="40" width="140" height="72" rx="8"/>
+        <text class="t" x="414" y="66" text-anchor="middle">Approve</text>
+        <text class="s" x="414" y="86" text-anchor="middle">permission policy</text>
+        <text class="s" x="414" y="102" text-anchor="middle">asks you if needed</text>
+
+        <rect class="b" x="506" y="40" width="140" height="72" rx="8"/>
+        <text class="t" x="576" y="66" text-anchor="middle">Execute</text>
+        <text class="s" x="576" y="86" text-anchor="middle">10 min limit</text>
+        <text class="s" x="576" y="102" text-anchor="middle">"still running?" 2 min</text>
+
+        <rect class="b" x="668" y="40" width="140" height="72" rx="8"/>
+        <text class="t" x="738" y="66" text-anchor="middle">ToolResult</text>
+        <text class="s" x="738" y="86" text-anchor="middle">ok · error · hint</text>
+        <text class="s" x="738" y="102" text-anchor="middle">status · data</text>
+
+        <rect class="b" x="560" y="200" width="180" height="64" rx="8"/>
+        <text class="t" x="650" y="226" text-anchor="middle">What the model reads</text>
+        <text class="m" x="650" y="246" text-anchor="middle">OK|ERROR tool — … Hint:</text>
+
+        <rect class="b" x="764" y="200" width="180" height="64" rx="8"/>
+        <text class="t" x="854" y="226" text-anchor="middle">What you see</text>
+        <text class="m" x="854" y="246" text-anchor="middle">✔ / ⚠ / ✖ tool line</text>
+
+        <rect class="wn" x="182" y="200" width="300" height="64" rx="8"/>
+        <text class="t" x="332" y="226" text-anchor="middle">Not run</text>
+        <text class="s" x="332" y="246" text-anchor="middle">earlier result, marked reused · or a refusal with its reason</text>
+
+        <line class="a" x1="160" y1="76" x2="180" y2="76" marker-end="url(#ah3)"/>
+        <line class="a" x1="322" y1="76" x2="342" y2="76" marker-end="url(#ah3)"/>
+        <line class="a" x1="484" y1="76" x2="504" y2="76" marker-end="url(#ah3)"/>
+        <line class="a" x1="646" y1="76" x2="666" y2="76" marker-end="url(#ah3)"/>
+        <line class="a" x1="252" y1="112" x2="252" y2="198" marker-end="url(#ah3)"/>
+        <text class="lbl" x="262" y="160">REUSE / REJECT</text>
+        <polyline class="a" points="738,112 738,156 650,156 650,198" marker-end="url(#ah3)"/>
+        <polyline class="a" points="738,156 854,156 854,198" marker-end="url(#ah3)"/>
+        <text class="lbl" x="748" y="146">settleCall</text>
+        <line class="a" x1="482" y1="232" x2="558" y2="232" marker-end="url(#ah3)"/>
+      </svg>
+    </div>
+    <figcaption>A repeat never runs twice: the decider hands back the earlier result, marked as reused. A tool reports its own failure in its result; the turn does not reinterpret it.</figcaption>
+  </figure>
+  <ul class="notes">
+    <li><strong>Discovery.</strong> Only a few cheap tools have their full schema on every request. The rest are listed by name; the model calls <code>load_tools</code> to get a schema before first use. MCP tools join the same way.</li>
+    <li><strong>Severity on screen.</strong> A result with status <code>PARTIAL</code> (work that went part of the way, such as a subagent that ran out of steps) shows as a yellow ⚠ line, not a red error. The model still reads it as unfinished.</li>
+  </ul>
+</section>
+
+<section id="context">
+  <span class="num">4</span>
+  <h2>What the model reads</h2>
+  <p>Each request is rebuilt from parts by <code>buildModelRequest</code> and held to a token budget. The bar below is a typical request for a model with a 131,072-token window, drawn to scale.</p>
+  <figure>
+    <div class="canvas">
+      <svg viewBox="0 0 960 190" role="img" aria-label="A typical request to scale: system prompt about 4,400 tokens, tool schemas about 4,400, history up to 16,000, workspace snapshot about 300, up to 32,768 kept free for the reply, and the rest of the 131,072-token window unused.">
+        <!-- scale: 900px = 131072 tokens, x0 = 30 -->
+        <rect class="bar-free" x="30" y="60" width="900" height="40" rx="4"/>
+        <rect class="bar-sys" x="30" y="60" width="30.1" height="40"/>
+        <rect class="bar-tools" x="60.1" y="60" width="30.1" height="40"/>
+        <rect class="bar-hist" x="90.2" y="60" width="109.9" height="40"/>
+        <rect class="bar-sys" x="200.1" y="60" width="2.3" height="40"/>
+        <rect class="bar-res" x="202.4" y="60" width="225" height="40"/>
+        <!-- ticks -->
+        <line class="a" x1="30" y1="108" x2="30" y2="116"/>
+        <text class="m" x="30" y="132" text-anchor="start">0</text>
+        <line class="a" x1="373.3" y1="108" x2="373.3" y2="116"/>
+        <text class="m" x="373.3" y="132" text-anchor="middle">50k</text>
+        <line class="a" x1="716.6" y1="108" x2="716.6" y2="116"/>
+        <text class="m" x="716.6" y="132" text-anchor="middle">100k</text>
+        <line class="a" x1="930" y1="108" x2="930" y2="116"/>
+        <text class="m" x="930" y="132" text-anchor="end">131k</text>
+        <!-- callouts -->
+        <line class="a" x1="45" y1="58" x2="45" y2="36"/>
+        <text class="lbl" x="45" y="28" text-anchor="middle">system 4.4k</text>
+        <line class="a" x1="75" y1="102" x2="75" y2="150"/>
+        <text class="lbl" x="75" y="166" text-anchor="middle">tools 4.4k</text>
+        <text class="lbl" x="145" y="28" text-anchor="middle">history ≤16k</text>
+        <line class="a" x1="145" y1="58" x2="145" y2="36"/>
+        <text class="lbl" x="315" y="28" text-anchor="middle">kept free for the reply ≤32.8k</text>
+        <line class="a" x1="315" y1="58" x2="315" y2="36"/>
+        <text class="lbl" x="776" y="85" text-anchor="middle">unused window</text>
+        <line class="a" x1="201" y1="102" x2="201" y2="150"/>
+        <text class="lbl" x="201" y="166" text-anchor="middle">workspace snapshot 0.3k</text>
+      </svg>
+    </div>
+    <figcaption>Old conversation is usually the largest part. It is capped at 16,000 tokens by default (<code>agent.contextBudget</code>); past that the oldest messages are trimmed and the chat says so. <code>/compact</code> trims sooner, <code>/clear</code> starts over.</figcaption>
+  </figure>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Part</th><th>Where it comes from</th><th>How it is kept small</th></tr></thead>
+      <tbody>
+        <tr><td>System prompt</td><td><code>src/prompts</code>: environment, rules, detected stacks and commands</td><td>Built once per session</td></tr>
+        <tr><td>Auto-context</td><td><code>OLLAMACODE.md</code> or <code>CLAUDE.md</code>, project memory, conventions</td><td>Character cap from config</td></tr>
+        <tr><td>Tool schemas</td><td>Always-tools in full; the rest as an index for <code>load_tools</code></td><td>Discovery on demand</td></tr>
+        <tr><td>History</td><td><code>ContextStore</code>: your messages, replies, tool calls and results</td><td>Finished turns' tool output cleared to one line; compaction when full</td></tr>
+        <tr><td>Workspace snapshot</td><td>Project tree, changed files, background jobs that ended</td><td>Reference block at the end of the request</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="subagents">
+  <span class="num">5</span>
+  <h2>Subagents</h2>
+  <p>The <code>delegate_task</code> tool hands a self-contained task to a child turn. The child is the same <code>runTurn</code> loop with its own empty history and a narrower set of tools. It cannot see the parent's conversation, so everything it needs goes in the task.</p>
+  <figure>
+    <div class="canvas">
+      <svg viewBox="0 0 960 330" role="img" aria-label="Subagent flow: the parent turn calls delegate_task; the runner checks the request, picks the role's tools, gives the child its own history and a time limit, runs the child turn, and returns its report, the files it changed and the paths it read.">
+        <defs>
+          <marker id="ah5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="currentColor"/></marker>
+          <marker id="ah5a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" class="acc"/></marker>
+        </defs>
+        <rect class="b" x="20" y="30" width="200" height="270" rx="8"/>
+        <text class="t" x="40" y="58">Parent turn</text>
+        <text class="s" x="40" y="86">asks the model</text>
+        <text class="s" x="40" y="106">model calls delegate_task</text>
+        <text class="m" x="40" y="126">role · task · context</text>
+        <text class="s" x="40" y="236">reads the report and</text>
+        <text class="s" x="40" y="256">carries on; never redoes</text>
+        <text class="s" x="40" y="276">the child's file changes</text>
+
+        <rect class="hl" x="330" y="30" width="290" height="270" rx="8"/>
+        <text class="t" x="350" y="58">Runner</text>
+        <text class="m" x="414" y="58">src/agent/subagent</text>
+        <text class="s" x="350" y="88">refuses an unknown role, an empty task,</text>
+        <text class="s" x="350" y="106">or a 4th child in one turn</text>
+        <text class="s" x="350" y="134">tools = role's set − delegate_task,</text>
+        <text class="s" x="350" y="152">ask_user, todo_write, present_plan</text>
+        <text class="s" x="350" y="180">own history · same gateway &amp; workspace</text>
+        <text class="s" x="350" y="208">time limit, paused while you approve</text>
+        <text class="s" x="350" y="236">collects files changed and paths read</text>
+        <text class="s" x="350" y="264">parent stopping stops the child</text>
+
+        <rect class="b" x="700" y="30" width="240" height="270" rx="8"/>
+        <text class="t" x="720" y="58">Child turn</text>
+        <text class="s" x="720" y="86">runTurn with depth 1:</text>
+        <text class="s" x="720" y="104">cannot start its own children</text>
+        <text class="s" x="720" y="132">its tool lines show in your</text>
+        <text class="s" x="720" y="150">chat between start / finish notes</text>
+        <text class="s" x="720" y="178">ends on a text report, or its</text>
+        <text class="s" x="720" y="196">step or time limit</text>
+        <text class="s" x="720" y="224">its conversation is saved in</text>
+        <text class="s" x="720" y="242">the session for diagnosis</text>
+
+        <line class="a" x1="220" y1="110" x2="328" y2="110" marker-end="url(#ah5)"/>
+        <text class="lbl" x="274" y="100" text-anchor="middle">delegate</text>
+        <line class="aa" x1="620" y1="110" x2="698" y2="110" marker-end="url(#ah5a)"/>
+        <text class="lbl" x="659" y="100" text-anchor="middle">runTurn</text>
+        <line class="a" x1="698" y1="250" x2="622" y2="250" marker-end="url(#ah5)"/>
+        <text class="lbl" x="660" y="240" text-anchor="middle">report</text>
+        <line class="a" x1="328" y1="250" x2="222" y2="250" marker-end="url(#ah5)"/>
+        <text class="lbl" x="274" y="240" text-anchor="middle">ok | PARTIAL</text>
+      </svg>
+    </div>
+    <figcaption>A child that runs out of steps or time comes back as PARTIAL: one yellow line for you, and for the parent whatever it reported, or else the list of paths it had looked at.</figcaption>
+  </figure>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Role</th><th>Tools</th><th class="n">Steps</th><th class="n">Time</th><th>Told to</th></tr></thead>
+      <tbody>
+        <tr><td><code>research</code></td><td>read-only + web_search, web_fetch</td><td class="n">20</td><td class="n">5 min</td><td>Answer with sources; change nothing</td></tr>
+        <tr><td><code>review</code></td><td>read-only</td><td class="n">20</td><td class="n">5 min</td><td>Report problems with file and line</td></tr>
+        <tr><td><code>coding</code></td><td>all its parent has</td><td class="n">25</td><td class="n">8 min</td><td>Make the change, then build or test</td></tr>
+        <tr><td><code>test</code></td><td>all its parent has</td><td class="n">15</td><td class="n">8 min</td><td>Run or write tests; touch only test files</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Subagents are on by default; <code>"subagents": false</code> in the agent config turns them off.</p>
+</section>
+
+<section id="background">
+  <span class="num">6</span>
+  <h2>Background jobs</h2>
+  <p>A command that keeps going (a dev server, or a slow first build) would hold the turn hostage. ocode starts it, waits a few seconds, and moves it to the background if it has not finished. When it ends, the result is shown to you and handed to the agent in a new turn.</p>
+  <figure>
+    <div class="canvas">
+      <svg viewBox="0 0 960 300" role="img" aria-label="Background job states: start, then wait; if it exits the result comes back at once; if it goes quiet or keeps starting it moves to the background, the turn says it is waiting, and when it ends the result is shown and passed to the agent.">
+        <defs>
+          <marker id="ah6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="currentColor"/></marker>
+        </defs>
+        <rect class="b" x="20" y="110" width="150" height="72" rx="8"/>
+        <text class="t" x="95" y="138" text-anchor="middle">Start</text>
+        <text class="s" x="95" y="158" text-anchor="middle">server command or</text>
+        <text class="s" x="95" y="174" text-anchor="middle">start_subprocess</text>
+
+        <rect class="hl" x="220" y="110" width="170" height="72" rx="8"/>
+        <text class="t" x="305" y="138" text-anchor="middle">Wait for startup</text>
+        <text class="s" x="305" y="158" text-anchor="middle">quiet 2 s after output,</text>
+        <text class="s" x="305" y="174" text-anchor="middle">5 s silent, 20 s at most</text>
+
+        <rect class="b" x="450" y="20" width="200" height="64" rx="8"/>
+        <text class="t" x="550" y="46" text-anchor="middle">Finished in time</text>
+        <text class="s" x="550" y="66" text-anchor="middle">result returned at once</text>
+
+        <rect class="wn" x="450" y="200" width="200" height="72" rx="8"/>
+        <text class="t" x="550" y="226" text-anchor="middle">In the background</text>
+        <text class="s" x="550" y="246" text-anchor="middle">"is still running, so it</text>
+        <text class="s" x="550" y="262" text-anchor="middle">carries on in the background"</text>
+
+        <rect class="b" x="710" y="200" width="230" height="72" rx="8"/>
+        <text class="t" x="825" y="226" text-anchor="middle">Turn ends waiting</text>
+        <text class="s" x="825" y="246" text-anchor="middle">"Waiting for … its result</text>
+        <text class="s" x="825" y="262" text-anchor="middle">will show here when it ends"</text>
+
+        <rect class="b" x="710" y="60" width="230" height="72" rx="8"/>
+        <text class="t" x="825" y="86" text-anchor="middle">It ends</text>
+        <text class="s" x="825" y="106" text-anchor="middle">shown to you, then a new</text>
+        <text class="s" x="825" y="122" text-anchor="middle">turn passes it to the agent</text>
+
+        <line class="a" x1="170" y1="146" x2="218" y2="146" marker-end="url(#ah6)"/>
+        <polyline class="a" points="390,130 420,130 420,52 448,52" marker-end="url(#ah6)"/>
+        <text class="lbl" x="428" y="96">exited</text>
+        <polyline class="a" points="390,162 420,162 420,236 448,236" marker-end="url(#ah6)"/>
+        <text class="lbl" x="428" y="196">still going</text>
+        <line class="a" x1="650" y1="236" x2="708" y2="236" marker-end="url(#ah6)"/>
+        <line class="ad" x1="825" y1="200" x2="825" y2="134" marker-end="url(#ah6)"/>
+        <text class="lbl" x="835" y="172">later, on its own</text>
+      </svg>
+    </div>
+    <figcaption>The background inbox keeps which jobs are still running. While one the turn started is running, the turn ends with a single waiting line instead of "paused". The result arrives without you typing anything.</figcaption>
+  </figure>
+</section>
+
+<section id="modules">
+  <span class="num">7</span>
+  <h2>Module map</h2>
+  <p>File counts are TypeScript files under each folder of <code>src/</code>.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Folder</th><th>Owns</th><th class="n">Files</th></tr></thead>
+      <tbody>
+        <tr><td><code>cli/</code></td><td>Entry, commands (<code>init</code>, <code>chat</code>), REPL, session picker, approval and plan prompts, turn reporter, background handoff</td><td class="n">67</td></tr>
+        <tr><td><code>agent/</code></td><td>executeTurn, runTurn loop, decider, progress tracker, stop guards, closing answer, plan mode, todo list, subagents, argument router</td><td class="n">44</td></tr>
+        <tr><td><code>tool/</code></td><td>37 built-in tools (files, search, process, git, web, documents, review), executor, permission policy, discovery</td><td class="n">117</td></tr>
+        <tr><td><code>context/</code></td><td>Request builder, history store, compaction, memory, auto-context, mentions, workspace index (SQLite)</td><td class="n">14</td></tr>
+        <tr><td><code>model/</code></td><td>Gateway, providers (Ollama, Ollama Cloud, HuggingFace), stream reader, tool-call accumulator, model catalog</td><td class="n">16</td></tr>
+        <tr><td><code>ui/</code></td><td>Ink rendering, tool lines, markdown, diffs, highlighting</td><td class="n">23</td></tr>
+        <tr><td><code>env/</code></td><td>Stack and runtime detection, Ollama tuning, process listing</td><td class="n">19</td></tr>
+        <tr><td><code>core/</code></td><td>Config, logger, errors, sessions, usage, WASM line engine</td><td class="n">12</td></tr>
+        <tr><td><code>mcp/</code></td><td>MCP client, server registry, tool registration</td><td class="n">5</td></tr>
+        <tr><td><code>prompts/</code></td><td>System prompt, planning, recovery and text-mode tool instructions</td><td class="n">5</td></tr>
+        <tr><td><code>protocol.ts</code></td><td>Shared constants: tool names, error codes, result statuses, stop reasons, storage paths</td><td class="n">1</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="disk">
+  <span class="num">8</span>
+  <h2>On disk</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Path</th><th>Holds</th><th>Read when</th></tr></thead>
+      <tbody>
+        <tr><td><code>.ollamacode/sessions/&lt;id&gt;.json</code></td><td>Conversation, plan explorations, subagent conversations, permissions, usage</td><td>"Continue last session", diagnosis</td></tr>
+        <tr><td><code>.ollamacode/checkpoints/&lt;id&gt;.json</code></td><td>An unfinished turn and why it stopped</td><td>Resuming after a crash or stop</td></tr>
+        <tr><td><code>.ollamacode/</code> plan, memory and conventions files</td><td>Approved plan, project memory, conventions</td><td>Every turn (auto-context)</td></tr>
+        <tr><td><code>.ollamacode/index/workspace.db</code></td><td>SQLite index of projects, files and symbols</td><td>Search, symbols, workspace snapshot</td></tr>
+        <tr><td><code>~/.ollamacode/logs/ocode-&lt;date&gt;.log</code></td><td>Debug trail: requests, rounds, stop decisions</td><td>With <code>--log debug</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+</main>
+</body>
+</html>

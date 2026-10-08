@@ -1,0 +1,25 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+  "plugins": ["import"],
+  "env": { "node": true, "es2023": true },
+  "rules": {
+    "no-unused-vars": "warn",
+    "no-console": "off",
+    "eqeqeq": ["warn", "smart"],
+    "no-var": "error",
+    "prefer-const": "warn",
+    "no-throw-literal": "error",
+    "require-await": "off",
+    "no-async-promise-executor": "error",
+    "no-await-in-loop": "off",
+    "import/no-cycle": "error"
+  },
+  "overrides": [
+    {
+      "files": ["test/**/*.js"],
+      "rules": {
+        "no-unused-vars": "error"
+      }
+    }
+  ]
+}

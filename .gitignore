@@ -1,0 +1,97 @@
+# Dependencies
+node_modules/
+yarn.lock
+pnpm-lock.yaml
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# CLI state (agent home dir only - NOT src/providers or src/core/sessions)
+.ollamacode/
+/sessions/
+
+# Per-workspace SQLite index
+.agent/
+
+# Build / output
+/dist/
+/build/
+/out/
+/coverage/
+.playwright-mcp/
+.next/
+.nuxt/
+.output/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+*.whl
+.venv/
+venv/
+myenv/
+downloader/.venv/
+downloader/__pycache__/
+downloader/*.egg-info/
+.Python
+# Anchored to the repo root on purpose. Unanchored, `env/` matches a directory
+# called `env` at ANY depth — which silently excluded the whole of `src/env/`
+# (toolchain detection, installers, diagnostics, subprocess handling) from the
+# repository. A fresh clone got a tree that could not import its own agent.
+/env/
+/ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+htmlcov/
+*.cover
+.hypothesis/
+
+# Logs & temp
+*.log
+*.tmp
+*.temp
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# OS junk
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# WASM build artifacts - keep built for users without AS, ignore only if you want
+# src/core/wasm/engine.wasm
+# src/core/wasm/engine.wat
+
+# Misc junk
+*.bak
+*.orig
+.vercel

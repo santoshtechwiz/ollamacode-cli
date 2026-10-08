@@ -1,0 +1,156 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+import type { ProcessInfo } from './attribution';
+
+export type { ProcessInfo } from './attribution';
+export { isProtectedPid } from './attribution';
+
+/** Process discovery via OS queries (netstat/ss/lsof, tasklist/ps). */
+
+const execFileAsync = promisify(execFile);
+
+function netstatListeningPids(text: string, port: number): number[] {
+  const out: number[] = [];
+  for (const line of String(text ?? '').split('\n')) {
+    const cols = line.trim().split(/\s+/);
+    if (cols.length < 4) continue;
+    if (!/^tcp/i.test(cols[0] ?? '')) continue;
+    if (!/listening/i.test(cols[3] ?? '')) continue;
+    const local = cols[1] ?? '';
+    if (!local.endsWith(`:${port}`)) continue;
+    const pid = Number(cols[cols.length - 1]);
+    if (Number.isInteger(pid) && pid > 0 && !out.includes(pid)) out.push(pid);
+  }
+  return out;
+}
+
+function ssListeningPids(text: string, port: number): number[] {
+  const out: number[] = [];
+  for (const line of String(text ?? '').split('\n')) {
+    if (!/\blisten\b/i.test(line)) continue;
+    if (!new RegExp(`:${port}\\b`).test(line)) continue;
+    for (const m of line.matchAll(/pid=(\d+)/g)) {
+      const pid = Number(m[1]);
+      if (Number.isInteger(pid) && pid > 0 && !out.includes(pid)) out.push(pid);
+    }
+  }
+  return out;
+}
+
+export async function listeningPids(port: number): Promise<number[]> {
+  if (process.platform === 'win32') {
+    const { stdout } = await execFileAsync('netstat', ['-ano']);
+    return netstatListeningPids(stdout, port);
+  }
+  try {
+    const { stdout } = await execFileAsync('ss', ['-ltnp']);
+    return ssListeningPids(stdout, port);
+  } catch {
+    const { stdout } = await execFileAsync('lsof', [`-iTCP:${port}`, '-sTCP:LISTEN', '-t']);
+    return String(stdout ?? '')
+      .split('\n')
+      .map((l) => Number(l.trim()))
+      .filter((n) => Number.isInteger(n) && n > 0);
+  }
+}
+
+/** The program a pid runs, for naming it to the person; null when there is no such process. */
+export async function describeProcess(pid: number): Promise<{ image: string } | null> {
+  try {
+    if (process.platform === 'win32') {
+      const { stdout } = await execFileAsync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH']);
+      const first = String(stdout ?? '').split('\n').find((l) => l.includes(`"${pid}"`));
+      if (!first) return null;
+      return { image: (first.match(/^"([^"]+)"/) ?? [])[1] ?? `PID ${pid}` };
+    }
+    const { stdout } = await execFileAsync('ps', ['-o', 'comm=', '-p', String(pid)]);
+    const image = String(stdout ?? '').trim();
+    return image ? { image } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Windows: the fields asked for, tab-separated, one process a line. */
+function windowsProcessQuery(properties: string[]): string {
+  const fields = properties.map((p) => `$($_.${p})`).join('`t');
+  return `$ProgressPreference='SilentlyContinue'; Get-CimInstance -ClassName Win32_Process -Property ${properties.join(',')} | ForEach-Object { "${fields}" }`;
+}
+
+/** Process listings can be long: every command line, on a machine running many. */
+const PROCESS_LIST_MAX_BUFFER = 64 * 1024 * 1024;
+
+/**
+ * Reading every command line makes Windows open each process, which on a busy machine outlasts any short timeout;
+ * a listing that timed out came back empty, and ocode could no longer see its own lineage. When the full listing
+ * fails, the ids, parents and names alone are fetched: they are quick, and they are what the lineage needs.
+ */
+async function listWindowsProcesses(): Promise<ProcessInfo[]> {
+  const run = async (properties: string[], timeout: number) =>
+    (await execFileAsync('powershell', ['-NoProfile', '-NonInteractive', '-Command', windowsProcessQuery(properties)], {
+      timeout,
+      maxBuffer: PROCESS_LIST_MAX_BUFFER,
+      windowsHide: true,
+    })).stdout;
+  let stdout: string;
+  try {
+    stdout = String(await run(['ProcessId', 'ParentProcessId', 'Name', 'ExecutablePath', 'CommandLine'], 30_000));
+  } catch {
+    stdout = String(await run(['ProcessId', 'ParentProcessId', 'Name'], 30_000));
+  }
+  return parseWindowsProcesses(stdout);
+}
+
+/** Parse the tab-separated listing: pid, parent pid, name, then (when asked for) the executable and the command line. */
+export function parseWindowsProcesses(stdout: string): ProcessInfo[] {
+  const out: ProcessInfo[] = [];
+  for (const line of String(stdout ?? '').split('\n')) {
+    const parts = line.replace(/\r$/, '').split('\t');
+    if (parts.length < 3) continue;
+    const pid = Number((parts[0] ?? '').trim());
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    const parentPid = Number((parts[1] ?? '').trim());
+    out.push({
+      pid,
+      ...(Number.isInteger(parentPid) && parentPid > 0 ? { parentPid } : {}),
+      image: (parts[2] ?? '').trim() || `PID ${pid}`,
+      exePath: (parts[3] ?? '').trim() || undefined,
+      command: (parts.slice(4).join('\t') ?? '').trim().slice(0, 512),
+    });
+  }
+  return out;
+}
+
+/** Every visible process, best-effort. */
+export async function listProcesses(): Promise<ProcessInfo[]> {
+  try {
+    if (process.platform === 'win32') return await listWindowsProcesses();
+    const { stdout } = await execFileAsync('ps', ['-eo', 'pid,ppid,comm,args']);
+    const out: ProcessInfo[] = [];
+    for (const line of String(stdout ?? '').split('\n').slice(1)) {
+      const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/.exec(line);
+      if (!m) continue;
+      const pid = Number(m[1]);
+      if (!Number.isInteger(pid) || pid <= 0) continue;
+      const parentPid = Number(m[2]);
+      out.push({
+        pid,
+        ...(parentPid > 0 ? { parentPid } : {}),
+        image: m[3] ?? `PID ${pid}`,
+        command: (m[4] ?? '').slice(0, 512),
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** The pid and every process above it, as far as the list knows them. */
+export function lineageOf(pid: number, processes: readonly ProcessInfo[]): Set<number> {
+  const parentOf = new Map(processes.map((p) => [p.pid, p.parentPid]));
+  const lineage = new Set<number>();
+  for (let at: number | undefined = pid; at && !lineage.has(at); at = parentOf.get(at)) lineage.add(at);
+  return lineage;
+}
