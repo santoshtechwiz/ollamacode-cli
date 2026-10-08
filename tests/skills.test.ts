@@ -12,6 +12,7 @@ import { runTurn } from '../src/agent/turn/turn';
 import { ContextStore } from '../src/context/store';
 import { findSkill, loadSkills, parseSkill, skillDirs } from '../src/skills/loader';
 import { skillNote } from '../src/skills/notes';
+import { buildSystemPrompt } from '../src/prompts/system';
 
 const SKILL = (name: string, extra = '') => `---\nname: ${name}\ndescription: does ${name} things\n${extra}---\nStep one.\n`;
 
@@ -73,6 +74,18 @@ describe('the ui-ux skill', () => {
     assert.ok(skill, 'built in');
     for (const rel of ['index.html', 'src/App.tsx', 'styles/site.scss', 'web/Card.vue', 'tailwind.config.js']) assert.equal(skill.matches(rel), true, rel);
     for (const rel of ['main.go', 'src/server.ts', 'README.md']) assert.equal(skill.matches(rel), false, rel);
+  });
+});
+
+describe('the system prompt', () => {
+  it('lists the skills and says to load one before the work it covers', () => {
+    const prompt = buildSystemPrompt({ cwd: '/work' });
+    assert.match(prompt, /\nSKILLS\nBefore starting work a skill covers, call use_skill with its name and follow its steps/);
+    assert.match(prompt, /\n- ui-ux: load before creating or changing any web page/);
+  });
+
+  it('leaves them out when tools are off, since nothing could load one', () => {
+    assert.doesNotMatch(buildSystemPrompt({ cwd: '/work', toolsEnabled: false }), /SKILLS/);
   });
 });
 

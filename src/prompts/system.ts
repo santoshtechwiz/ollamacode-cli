@@ -5,6 +5,7 @@ import { ROLE } from '../protocol';
 
 import { resolveShell } from '../tool/process/shell/runtime';
 import { LANGUAGES } from '../env/languages';
+import { skills } from '../skills/loader';
 
 export function buildSystemPrompt({
   cwd,
@@ -24,6 +25,7 @@ export function buildSystemPrompt({
     toolsEnabled ? workflowSection(brief) : null,
     toolsEnabled ? toolUseSection() : null,
     toolsEnabled ? lookItUpSection(brief) : null,
+    toolsEnabled ? skillsSection() : null,
   ].filter(Boolean);
 
   return sections.join('\n\n');
@@ -335,6 +337,20 @@ When the user asks for an action and a matching tool exists, CALL THE TOOL throu
 - Native tools for simple steps; when answering would take many reads or searches (find files matching a condition, analyse JSON/config, dependencies, duplicates, logs), write one short run_script instead and print the result.`;
 }
 
+
+/**
+ * The skills there are, one line each, and when to load one. Here rather than only in use_skill's description: models
+ * follow the system prompt more closely than a tool's description or a note on a tool result.
+ */
+function skillsSection(): string | null {
+  const list = skills();
+  if (list.length === 0) return null;
+  return [
+    'SKILLS',
+    'Before starting work a skill covers, call use_skill with its name and follow its steps; load it once per task.',
+    ...list.map((s) => `- ${s.name}: ${s.description}`),
+  ].join('\n');
+}
 
 function lookItUpSection(brief: boolean = false): string {
   return brief
