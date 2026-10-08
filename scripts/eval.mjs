@@ -568,6 +568,21 @@ const SCENARIOS = [
     setup: (cwd) => writeAll(cwd, PRICING),
     prompt: 'Delegate this to a coding subagent with delegate_task: in src/pricing.js rename the parameter rate to taxRate everywhere, without changing behaviour, and run node test.js. Then tell me what it changed.',
     check: (cwd, run) => run.tools.includes('delegate_task') && sh('node test.js', cwd).status === 0 && !/\brate\b/.test(read(join(cwd, 'src/pricing.js'))),
+  },  // Web UI from nothing: passes when check_page finds no errors (overflow, WCAG A/AA, script errors, failed loads) and
+  // the asked-for parts are there. Whether the model loaded the ui-ux skill shows in the run's tools, not in the score.
+  {
+    id: 'web-landing-page',
+    repo: null,
+    setup: () => {},
+    prompt:
+      'Build a responsive landing page for a coffee shop as index.html with its styles in styles.css: a header with navigation, ' +
+      'a hero with one main call to action, three feature cards, and a newsletter signup form with an email field. ' +
+      'No frameworks or build step. Check it works on mobile and desktop before you finish.',
+    check: (cwd) => {
+      const html = read(join(cwd, 'index.html'));
+      return /<form\b/i.test(html) && /type=["']?email/i.test(html) && existsSync(join(cwd, 'styles.css')) &&
+        sh(`node "${join(root, 'scripts', 'check-page.mjs')}" index.html`, cwd, 120_000).status === 0;
+    },
   },
 ];
 

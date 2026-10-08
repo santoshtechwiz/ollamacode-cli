@@ -141,6 +141,51 @@ steps and 5 minutes unless it says otherwise (at most 8 minutes). `also` adds
 tools on top of the read-only set, for example `["web_search", "web_fetch"]`.
 A role with a built-in's name replaces it. New roles apply from the next start.
 
+### Skills
+
+A skill is a set of step-by-step instructions for one kind of work. The agent
+sees the list of skills (name and one line each) and loads one when the work
+calls for it. You don't need to ask for it by name:
+
+```text
+make a landing page for my bakery
+the settings page looks cramped on phones, fix it
+```
+
+ocode ships with one skill:
+
+| Skill | For | What it does |
+| --- | --- | --- |
+| `ui-ux` | building, reviewing or fixing a web UI | uses your project's theme (or Tailwind, or its starter `tokens.css`) instead of one-off values; checks layout, spacing, type, color, forms, loading/empty/error states and accessibility; then verifies with the build and `check_page` |
+
+When the agent reads or edits a file a skill covers (`.html`, `.css`, `.tsx`,
+`.vue` … for `ui-ux`), it is reminded once per turn that the skill exists. The
+reminder points at the skill; loading it is the agent's call, because a `.tsx`
+file can be plain logic.
+
+**Skills of your own.** A skill is a folder with a `SKILL.md`:
+
+```markdown
+---
+name: api-design
+description: designing or changing an HTTP API
+paths: ["src/routes/**", "openapi.yaml"]
+---
+1. Read the existing routes and follow their naming, status codes and error shape.
+2. ...
+```
+
+`paths` is optional. Other files in the folder (templates, references) can be
+read through the skill. Skills are read from, in order (a later one replaces an
+earlier one with the same name):
+
+1. the skills that ship with ocode;
+2. `~/.ollamacode/skills/<name>/SKILL.md`, yours in every project;
+3. `.ocode/skills/<name>/SKILL.md` in the project, which you can commit and share.
+
+Skills are read when ocode starts, so a new or changed skill applies from the
+next start.
+
 ### Web search and web pages
 
 The agent can look things up and read pages:
@@ -197,7 +242,9 @@ mobile (375px), tablet (768px) and desktop (1280px) widths and reports:
 - uncaught script errors;
 - images, scripts, styles or data that failed to load.
 
-The same problem at several widths is reported once, naming the widths. It
+The same problem at several widths is reported once, naming the widths. From
+the shell: `node scripts/check-page.mjs index.html` (exit 1 when it finds
+errors). It
 uses the optional `playwright-core` and `axe-core` packages and a Chromium
 browser: run `npx playwright install chromium` once, or have Chrome or Edge
 installed. Without them ocode runs as usual and only page checks say they are
