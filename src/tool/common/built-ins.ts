@@ -11,6 +11,7 @@ import run_script from '../process/run-script.tool';
 import gitTool from '../git/git.tool';
 import web_search from '../web/web-search.tool';
 import web_fetch from '../web/web-fetch.tool';
+import check_page from '../browser/check-page.tool';
 import read_document from '../document/read-document.tool';
 import write_document from '../document/write-document.tool';
 import ask_user from '../agent/interaction/ask-user.tool';
@@ -44,6 +45,7 @@ export const BUILT_IN_TOOLS: ToolDef[] = [
   gitTool,
   web_search,
   web_fetch,
+  check_page,
   read_document,
   write_document,
   ask_user,

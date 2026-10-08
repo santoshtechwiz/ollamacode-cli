@@ -88,6 +88,8 @@
     "yaml": "^2.9.1"
   },
   "optionalDependencies": {
+    "axe-core": "^4.10.3",
+    "playwright-core": "^1.56.1",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   }
 }

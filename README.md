@@ -178,6 +178,31 @@ Excel support uses the optional `xlsx` package, downloaded from
 `cdn.sheetjs.com`. If your network blocks that site, ocode still installs and
 runs, PDFs still work, and spreadsheet requests say the package is missing.
 
+### Checking web pages
+
+The agent can open a page in a headless browser and see what is wrong with it,
+so a web UI change is checked rather than guessed at:
+
+```text
+start the dev server and check the settings page on mobile
+check index.html for accessibility problems
+```
+
+`check_page` opens a URL (a running dev server) or a static `.html` file at
+mobile (375px), tablet (768px) and desktop (1280px) widths and reports:
+
+- sideways scrolling, and the elements that stick out past the screen edge;
+- accessibility problems from [axe-core](https://github.com/dequelabs/axe-core)
+  (WCAG 2.2 A/AA): contrast, missing labels and alt text, small tap targets;
+- uncaught script errors;
+- images, scripts, styles or data that failed to load.
+
+The same problem at several widths is reported once, naming the widths. It
+uses the optional `playwright-core` and `axe-core` packages and a Chromium
+browser: run `npx playwright install chromium` once, or have Chrome or Edge
+installed. Without them ocode runs as usual and only page checks say they are
+unavailable.
+
 ### Running programs and servers
 
 Ask it to run things the way you would type them:
