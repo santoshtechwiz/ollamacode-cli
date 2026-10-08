@@ -10,6 +10,7 @@ Follow these steps in order. Change only what makes the UI more consistent or ea
    - Building something new, and the request does not name the stack or the folder: ask once with ask_user before creating any file. Offer plain HTML and CSS (recommended for a page or a small site), React with Vite, and whatever else fits, plus the folder (for example "./coffee-site"). Build with the answer; do not pick React on your own.
    - Look at the folder first with list_directory. Put every file of a new site inside its own folder, never scattered in the workspace root next to other projects.
    - A scaffolder (npm create vite@latest my-app …) makes a new folder: pass that folder as cwd to every later command and write files under it. Each command starts in a fresh shell, so `cd` does not carry over. After scaffolding, list_directory that folder to see where the files really are.
+   - Keep the files that are already there, generated ones included (App.css, index.css, assets). Change them with edit_file; do not delete them or rewrite them whole. A file you no longer need stays: name it in your report, and delete it only when the user asks.
 
 1. Find the design system before writing any style.
    - Look for theme files, CSS variables (`:root { --… }`), `tailwind.config.*`, a component library (shadcn/ui, MUI, Chakra…) or shared components.
