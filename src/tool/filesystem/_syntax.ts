@@ -149,12 +149,35 @@ function yamlErrors(text: string): number[] {
   return [...new Set(rows)].sort((a, b) => a - b);
 }
 
-/** Formats with no tree-sitter grammar here, checked by a parser of their own. */
-function textCheckFor(rel: string): ((text: string) => number[]) | undefined {
+// JavaScript and TypeScript are checked by the TypeScript compiler's own parser, which accepts exactly what tsc, Vite and
+// esbuild accept. tree-sitter's grammars are stricter in places: a bare `&` in JSX text ("Bean & Brew") is valid React
+// and was refused as a syntax error until the model gave up. tree-sitter still reads these files for symbol names.
+const TS_SCRIPT_KIND: Record<string, 'TS' | 'TSX' | 'JS' | 'JSX'> = {
+  '.ts': 'TS', '.mts': 'TS', '.cts': 'TS', '.tsx': 'TSX',
+  '.js': 'JS', '.mjs': 'JS', '.cjs': 'JS', '.jsx': 'JSX',
+};
+
+let typescript: Promise<typeof import('typescript')> | undefined;
+
+/** Start rows of every syntax error the TypeScript parser reports; the compiler loads on first use. */
+async function typescriptCheck(rel: string, kind: 'TS' | 'TSX' | 'JS' | 'JSX'): Promise<(text: string) => number[]> {
+  const ts = await (typescript ??= import('typescript').then((m: any) => m.default ?? m));
+  return (text) => {
+    if (!text) return [];
+    const file = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, false, ts.ScriptKind[kind]);
+    // parseDiagnostics: the parser's own errors, without type checking (not in the public typings, stable since TS 2).
+    const diagnostics: Array<{ start?: number }> = (file as any).parseDiagnostics ?? [];
+    return [...new Set(diagnostics.map((d) => file.getLineAndCharacterOfPosition(d.start ?? 0).line))].sort((a, b) => a - b);
+  };
+}
+
+/** Formats checked by a parser of their own rather than a tree-sitter grammar. */
+async function textCheckFor(rel: string): Promise<((text: string) => number[]) | undefined> {
   const ext = path.extname(rel).toLowerCase();
   if (XML_EXTS.has(ext)) return xmlErrors;
   if (ext === '.yml' || ext === '.yaml') return yamlErrors;
-  return undefined;
+  const kind = TS_SCRIPT_KIND[ext];
+  return kind ? typescriptCheck(rel, kind) : undefined;
 }
 
 /** Lines of the would-be file shown before and after the first new error: enough to see what was left behind. */
@@ -168,10 +191,10 @@ const CONTEXT_AFTER = 2;
  */
 export async function syntaxBreak(rel: string, before: string, after: string): Promise<{ why: string; context: string } | null> {
   if (after === before) return null;
-  const textCheck = textCheckFor(rel);
-  const grammar = textCheck ? undefined : grammarFor(rel, after);
-  if (!textCheck && !grammar) return null;
   try {
+    const textCheck = await textCheckFor(rel);
+    const grammar = textCheck ? undefined : grammarFor(rel, after);
+    if (!textCheck && !grammar) return null;
     const parser = grammar ? await parserFor(grammar) : null;
     const errors = parser ? (text: string) => parseErrors(parser, text) : textCheck!;
     const was = errors(before);
