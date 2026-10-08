@@ -1,14 +1,20 @@
 ---
 name: ui-ux
-description: building, reviewing or fixing a web page or UI — layout, spacing, type, color, responsive design, accessibility, forms and states
+description: load before creating or changing any web page, site or UI — stack and folder choice, layout, spacing, type, color, responsive, accessibility, forms, states
 paths: ["**/*.html", "**/*.css", "**/*.scss", "**/*.sass", "**/*.less", "**/*.jsx", "**/*.tsx", "**/*.vue", "**/*.svelte", "**/*.astro", "**/tailwind.config.*"]
 ---
 Follow these steps in order. Change only what makes the UI more consistent or easier to use. Leave business logic alone unless the UI cannot work without the change.
 
+0. Settle the stack and the folder before creating anything.
+   - Working in an existing project: use its framework, its folders and its styling. Do not add a framework it does not use.
+   - Building something new, and the request does not name the stack or the folder: ask once with ask_user before creating any file. Offer plain HTML and CSS (recommended for a page or a small site), React with Vite, and whatever else fits, plus the folder (for example "./coffee-site"). Build with the answer; do not pick React on your own.
+   - Look at the folder first with list_directory. Put every file of a new site inside its own folder, never scattered in the workspace root next to other projects.
+   - A scaffolder (npm create vite@latest my-app …) makes a new folder: pass that folder as cwd to every later command and write files under it. Each command starts in a fresh shell, so `cd` does not carry over. After scaffolding, list_directory that folder to see where the files really are.
+
 1. Find the design system before writing any style.
    - Look for theme files, CSS variables (`:root { --… }`), `tailwind.config.*`, a component library (shadcn/ui, MUI, Chakra…) or shared components.
    - Use what is there. Add no one-off colors, font sizes, spacing or shadows.
-   - Nothing there? With a Node build, use Tailwind and its default scale. Without a build step, copy `tokens.css` from this skill (use_skill file "tokens.css") and use only its variables.
+   - Nothing there: plain HTML and CSS copy `tokens.css` from this skill (use_skill file "tokens.css") and use only its variables; a project that already uses Tailwind uses its scale.
 
 2. Layout.
    - Semantic HTML: `header`, `nav`, `main`, `section`, `footer`, real `button` and `a` elements, one `h1`, headings in order.

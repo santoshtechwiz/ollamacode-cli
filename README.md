@@ -156,7 +156,7 @@ ocode ships with one skill:
 
 | Skill | For | What it does |
 | --- | --- | --- |
-| `ui-ux` | building, reviewing or fixing a web UI | uses your project's theme (or Tailwind, or its starter `tokens.css`) instead of one-off values; checks layout, spacing, type, color, forms, loading/empty/error states and accessibility; then verifies with the build and `check_page` |
+| `ui-ux` | building, reviewing or fixing a web UI | asks which stack and folder for a new site instead of assuming React; uses your project's theme (or its starter `tokens.css`) instead of one-off values; checks layout, spacing, type, color, forms, loading/empty/error states and accessibility; then verifies with the build and `check_page` |
 
 When the agent reads or edits a file a skill covers (`.html`, `.css`, `.tsx`,
 `.vue` … for `ui-ux`), it is reminded once per turn that the skill exists. The
