@@ -18,6 +18,7 @@ import type { ApproveFn } from '../../tool/policy/permission-policy';
 import { compressToolOutput } from '../../context/result-compression';
 import { renderToolResult } from '../router/render';
 import { activityForTool } from '../status';
+import { skillNote } from '../../skills/notes';
 import { SAME_CALL_LIMIT, signatureOf, unchangedRepeats, type TurnState, type ToolCallRecord } from './turn-state';
 import type { TurnCallbacks } from './turn';
 
@@ -153,20 +154,25 @@ function worldOf(workspaceState: any): number {
   return Number(workspaceState?.changeSeq ?? 0) + Number(workspaceState?.mutationCount ?? 0);
 }
 
+/** The workspace-relative paths a call names in its path arguments (schema properties marked `pathArg`). */
+function pathArgs(name: string, args: Record<string, unknown>, root: string): string[] {
+  const props = (defaultRegistry.find(name)?.parameters as any)?.properties ?? {};
+  return Object.entries(props)
+    .filter(([key, schema]) => (schema as any)?.pathArg && typeof args?.[key] === 'string' && String(args[key]).trim())
+    .map(([key]) => path.relative(root, path.resolve(root, String(args[key]))));
+}
+
 /**
- * The modification time of every path argument (a schema property marked `pathArg`) of a read-only call; -1 for a path
- * that is not there. A file the person edited in their own editor changes its time without the session recording it.
+ * The modification time of every path argument of a read-only call; -1 for a path that is not there. A file the
+ * person edited in their own editor changes its time without the session recording it.
  * Undefined when there is no path, or one is a folder, whose time does not change when a file inside it does.
  */
 function pathStamps(name: string, args: Record<string, unknown>, workspaceState: any): Record<string, number> | undefined {
-  const def = defaultRegistry.find(name);
-  if (def?.readOnly !== true) return undefined;
+  if (defaultRegistry.find(name)?.readOnly !== true) return undefined;
   const root = String(workspaceState?.root ?? process.cwd());
   const stamps: Record<string, number> = {};
-  for (const [key, schema] of Object.entries((def.parameters as any)?.properties ?? {})) {
-    const value = args?.[key];
-    if (!(schema as any)?.pathArg || typeof value !== 'string' || !value.trim()) continue;
-    const abs = path.resolve(root, value);
+  for (const rel of pathArgs(name, args, root)) {
+    const abs = path.resolve(root, rel);
     try {
       const stat = fs.statSync(abs);
       if (stat.isDirectory()) return undefined;
@@ -176,6 +182,14 @@ function pathStamps(name: string, args: Record<string, unknown>, workspaceState:
     }
   }
   return Object.keys(stamps).length ? stamps : undefined;
+}
+
+/** A result that worked on a file a skill covers carries a pointer to that skill, for the model alone. */
+function withSkillNote(result: ToolResult, name: string, args: Record<string, unknown>, batch: ToolCallBatch): ToolResult {
+  if (!result.ok) return result;
+  const root = String(batch.workspaceState?.root ?? process.cwd());
+  const note = skillNote(pathArgs(name, args, root), (batch.turnState.skillsNoted ??= new Set()));
+  return note ? { ...result, modelNote: [result.modelNote, note].filter(Boolean).join('\n') } : result;
 }
 
 function sameStamps(before: Record<string, number> | undefined, now: Record<string, number> | undefined): boolean {
@@ -225,7 +239,7 @@ async function resultForDecision(
 function settleCall(
   batch: ToolCallBatch,
   prepared: PreparedToolCall,
-  { result, ran }: { result: ToolResult; ran: boolean },
+  outcome: { result: ToolResult; ran: boolean },
   outputLimit: number,
   narration = '',
   reasoning = '',
@@ -234,6 +248,8 @@ function settleCall(
   const { call } = prepared;
   const name = call.function.name;
   const args = call.function.arguments;
+  const { ran } = outcome;
+  const result = withSkillNote(outcome.result, name, args, batch);
 
   const entry: ToolCallRecord = {
     callId: call.id,

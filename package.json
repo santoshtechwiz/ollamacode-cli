@@ -9,6 +9,7 @@
   "files": [
     "bin",
     "src",
+    "skills",
     "ollama.md"
   ],
   "publishConfig": {

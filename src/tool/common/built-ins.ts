@@ -24,6 +24,7 @@ import stop_process from '../process/stop-process.tool';
 import subprocess_status from '../process/subprocess-status.tool';
 import undo from '../filesystem/undo.tool';
 import delegate_task from '../../agent/subagent/delegate.tool';
+import use_skill from '../../skills/use-skill.tool';
 
 type ToolDef = import('../../types.ts').ToolDef;
 
@@ -58,4 +59,5 @@ export const BUILT_IN_TOOLS: ToolDef[] = [
   subprocess_status,
   undo,
   delegate_task,
+  use_skill,
 ];
