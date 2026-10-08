@@ -31,7 +31,7 @@ const GOOD = `<!doctype html><html lang="en"><head><title>Fine</title><meta name
 const BAD = `<!doctype html><html lang="en"><head><title>Broken</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body><main><h1>Hi</h1><div class="hero" style="width:900px">wide</div>
 <p style="color:#bbb;background:#fff">faint text</p>
-<input type="text"><img src="missing.png">
+<input type="text"><img src="missing.png"><img src="gone.png" alt=""><img src="lost.png" alt="">
 <script>throw new Error('boom')</script></main></body></html>`;
 
 describe('check_page report', () => {
@@ -80,7 +80,7 @@ describe('check_page in a browser', { skip: browserAvailable ? false : 'no brows
       assert.match(r.display, /\[layout\] The page is wider than the screen, so it scrolls sideways; .* — mobile, tablet\n {4}div\.hero \(\d+px\)/);
       assert.match(r.display, /\[scripts\] Uncaught script error: boom — all widths/);
       assert.doesNotMatch(r.display, /Failed to load resource/, 'a failed load is reported once, by the requests check');
-      assert.match(r.display, /\[requests\] Resources failed to load .*\n {4}file:.*missing\.png/);
+      assert.match(r.display, /\[requests\] Resources failed to load .* — all widths\n {4}file:.*gone\.png.*\n {4}file:.*lost\.png.*\n {4}file:.*missing\.png/);
       assert.match(r.display, /\[accessibility\] .*\(color-contrast, serious\)/);
       assert.match(r.display, /\[accessibility\] .*\(label, critical\)/);
     } finally {

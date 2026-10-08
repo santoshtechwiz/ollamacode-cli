@@ -43,13 +43,14 @@ const scriptErrors: PageCheck = {
 const failedRequests: PageCheck = {
   id: 'requests',
   start(page) {
+    // Sorted when reported: loads finish in a different order at each width, and the same failures must read the same.
     const failed: string[] = [];
     page.on('requestfailed', (req) => failed.push(`${req.url()} (${req.failure()?.errorText ?? 'failed'})`));
     page.on('response', (res) => {
       if (res.status() >= 400) failed.push(`${res.url()} (HTTP ${res.status()})`);
     });
     return async () =>
-      failed.length === 0 ? [] : [{ check: 'requests', severity: 'error' as const, message: 'Resources failed to load (images, scripts, styles or data)', where: capped(failed) }];
+      failed.length === 0 ? [] : [{ check: 'requests', severity: 'error' as const, message: 'Resources failed to load (images, scripts, styles or data)', where: capped([...failed].sort()) }];
   },
 };
 
