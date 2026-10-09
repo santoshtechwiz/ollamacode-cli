@@ -227,7 +227,7 @@ describe('present-plan-agent', () => {
       assert.match(renderToolResult(result, 'present_plan'), /cannot change files.*Give the plan as your answer/);
     });
 
-    it('an approved folder is made, and becomes where commands with no folder run once something is in it', async () => {
+    it('an approved folder is made and becomes the working project once something is in it; a command with no folder still starts at the root', async () => {
       const fs = await import('node:fs');
       const os = await import('node:os');
       const path = await import('node:path');
@@ -241,6 +241,11 @@ describe('present-plan-agent', () => {
         assert.equal(workingProject(state), null);
         fs.writeFileSync(path.join(root, 'e-hailing-service', 'package.json'), '{}');
         assert.equal(workingProject(state), path.join(root, 'e-hailing-service'));
+        // The paths the model writes start at the root, as file paths do: `ls e-hailing-service` must find the folder, not
+        // look for e-hailing-service/e-hailing-service. Seen with `ls ./notes-app` and `dotnet run --project todo-app/…`.
+        const ran: any = (await createExecutor({ root, state: Object.assign(state, { autoFixAuthorized: true }) }).run('exec_shell', { command: 'node -e "console.log(require(\'fs\').existsSync(\'e-hailing-service/package.json\'))"' })).result;
+        assert.equal(ran.ok, true, ran.error);
+        assert.match(String(ran.display), /\btrue\b/);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

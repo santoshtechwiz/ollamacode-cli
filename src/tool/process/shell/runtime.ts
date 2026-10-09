@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import { workingProject } from '../../../context/workspace-state';
 import path from 'node:path';
 
 import { TOOL_ERROR_CODE } from '../../../protocol';
@@ -177,9 +176,10 @@ export async function resolveCallCwd(
   args: { cwd?: unknown },
   ctx: { cwd: string; root?: string; state?: any }
 ): Promise<CallCwd> {
-  // With no cwd: the working project (the one named, or the one this conversation changed files in) when the workspace
-  // root is no project itself, else the workspace root.
-  const cwd = args.cwd ? String(args.cwd) : workingProject(ctx.state) ?? ctx.root ?? ctx.cwd;
+  // With no cwd: the workspace root, where every path the model writes starts, file tools' and commands' alike. Running
+  // in the working project instead read `ls ./notes-app` from inside notes-app/, and a scaffolder given the project's
+  // name built a second copy inside it: the model writes paths from the root, so the command starts there.
+  const cwd = args.cwd ? String(args.cwd) : ctx.root ?? ctx.cwd;
   const found = await statType(cwd);
   if (!found || found.type !== 'dir') {
     if (!args.cwd) {
@@ -193,7 +193,7 @@ export async function resolveCallCwd(
     return {
       result: fail(`Working directory does not exist: ${args.cwd}${await missingPart(cwd)}`, {
         code: TOOL_ERROR_CODE.ENOENT,
-        hint: 'cwd must name an existing directory, relative to the workspace or absolute. Omit it to run in the working project, or the workspace root when there is none.',
+        hint: 'cwd must name an existing directory, relative to the workspace or absolute. Omit it to run in the workspace root.',
       }),
     };
   }

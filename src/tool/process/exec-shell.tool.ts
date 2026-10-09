@@ -40,14 +40,14 @@ export default defineTool({
     return classifyRunCommand(String(args?.command ?? ''), where?.cwd, where?.root, where?.cmd) === 'mutating';
   },
   description:
-    'Run a shell command and return its stdout, stderr and exit code. Runs in the working project when the session record names one, else the workspace root; each call is a fresh shell, so "cd" does not carry over. Pass cwd to run somewhere else. ' +
+    'Run a shell command and return its stdout, stderr and exit code. Runs in the workspace root, so paths in the command start there as file paths do; each call is a fresh shell, so "cd" does not carry over. Pass cwd to run inside a project folder. ' +
     'It waits for the command to exit and gives it no stdin. A server, watcher or long job you do not need to wait for runs with background: true: the result says whether it came up, its URL and output so far, and the id for subprocess_status / stop_subprocess; when it ends you are told. ' +
     'To find files or search their contents, use the find_files and grep_content tools, not a recursive shell listing — they skip node_modules, build output and other system folders, while a raw recursive listing drowns the real matches in that noise. To process many files (count, group, compare, transform), use run_script.',
   parameters: {
     type: 'object',
     properties: {
       command: { type: 'string', description: 'Shell command to execute' },
-      cwd: { type: 'string', pathArg: true, description: 'A workspace-relative directory to run in for this call only. Leave it out to run in the working project (see the session record), or the workspace root when there is none.' },
+      cwd: { type: 'string', pathArg: true, description: 'A workspace-relative directory to run in for this call only. Leave it out to run in the workspace root.' },
       timeout_ms: { type: 'number', description: 'Time limit in ms. Leave it out in a chat: after 2 minutes the user is asked whether to keep waiting. With nobody to ask, the default is 120000.' },
       background: { type: 'boolean', description: 'Run it in the background and return once it has started (a server, watcher or long job).' },
     },

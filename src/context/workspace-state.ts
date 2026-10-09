@@ -355,7 +355,7 @@ export function describeSession(state: WorkspaceState, { exits = true }: { exits
   }
   const working = workingProject(state);
   if (working) {
-    lines.push(`Working project: ${path.relative(state.root, working).split(path.sep).join('/')}/ — "this project" means it, and git and commands given no cwd run there.`);
+    lines.push(`Working project: ${path.relative(state.root, working).split(path.sep).join('/')}/ — "this project" means it, and git given no cwd runs there; a command given no cwd runs in the workspace root.`);
   }
 
   if (todos.length > 0) {
