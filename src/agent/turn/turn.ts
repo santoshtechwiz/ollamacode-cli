@@ -13,7 +13,9 @@ import { normalizeToolCall } from '../../core/ids';
 import { recordModelCall, type ModelCallRecord } from '../../core/telemetry';
 import { logger } from '../../core/logger';
 import { estimateTokens } from '../../context/tokens';
-import { changeMark, changedSince } from '../../context/workspace-state';
+import { changeMark, changedSince, passedNow } from '../../context/workspace-state';
+import { todoLines } from '../todos';
+import todoWrite from '../planning/todo-write.tool';
 import type { ApproveFn } from '../../tool/policy/permission-policy';
 import { clearDenials } from '../../tool/policy/permission-policy';
 import { processToolCalls } from './tool-calls';
@@ -137,6 +139,17 @@ function doneCheckNote(runs: Array<{ label: string; passed: boolean; unfinished:
   const unfinished = runs.filter((r) => r.unfinished);
   if (unfinished.length) return [`Checked before finishing: ${names(unfinished)} could not finish, so that part of the answer is unchecked.`, 'warn'];
   return runs.length ? [`Checked before finishing: ${names(runs)} passed.`, 'success'] : null;
+}
+
+/**
+ * What the model reads when it answers over tasks it left open after changing files. A task is completed only on
+ * evidence, and only the model can give it for work no command proves, so the list goes back to it once.
+ */
+function openTasksNote(open: number, passed: string[]): string {
+  return `Your answer leaves ${open} task${open === 1 ? '' : 's'} open (listed above). Settle the list before you finish, with todo_write update: ` +
+    'mark each task you did completed with its evidence (what showed it works' +
+    (passed.length ? `; these checks passed when you answered: ${passed.map((p) => `\`${p}\``).join(', ')}` : '') +
+    '), and remove the ones you did not do or no longer need. Then answer again.';
 }
 
 /** What the model reads with a check of agent.beforeDone that failed. */
@@ -267,6 +280,11 @@ export async function runTurn(
   // A subagent's work is checked with the rest of the turn, when the agent that answers the person says it is done.
   const beforeDone = typeof config.beforeDone === 'string' && !params.subagentDepth ? config.beforeDone.trim() : '';
   let doneMark = changeMark(workspaceState);
+  // The task list this turn started with: one the turn wrote or changed is this turn's to settle before it answers.
+  const listAtStart = workspaceState?.todos;
+  const turnMark = changeMark(workspaceState);
+  let listSettleAsked = false;
+  let passedChecks: string[] = [];
   // How long a configured check may run; unset, each kind keeps its own default.
   const checkTimeoutMs = Number(config.checkTimeoutMs) > 0 ? Number(config.checkTimeoutMs) : undefined;
 
@@ -368,6 +386,7 @@ export async function runTurn(
         }
         // Only a check that ran to the end and failed says the work is not done; one that ran out of time says nothing.
         const failed = runs.filter((r) => !r.passed && !r.unfinished);
+        passedChecks = runs.filter((r) => r.passed).map((r) => r.label);
         // The answer was on screen before the checks ran: say what they found, so it never reads as checked when it is not.
         const told = doneCheckNote(runs, failed.length > 0);
         if (told) callbacks.note?.(...told);
@@ -380,6 +399,21 @@ export async function runTurn(
           });
           continue;
         }
+      }
+      // Work done this turn, and the list this turn made still has open tasks: once, the list goes back to the model to
+      // settle. With nothing changed (a plan offered, a question answered), the answer stands as it is.
+      const open = ((workspaceState?.todos ?? []) as import('../todos').TodoItem[]).filter((todo) => todo.status !== 'completed');
+      if (
+        !listSettleAsked && open.length > 0 && workspaceState?.todos !== listAtStart && !params.subagentDepth && !readOnly && toolsEnabled &&
+        !workspaceState?.planHeld && reply.finishReason !== 'length' && changedSince(workspaceState, turnMark).length > 0 &&
+        turnState.iteration < turnState.maxIterations
+      ) {
+        listSettleAsked = true;
+        callbacks.note?.(`${open.length} task${open.length === 1 ? ' is' : 's are'} still open after that answer, so the agent settles its task list.`, 'warn');
+        const call = { id: '', type: 'function' as const, function: { name: todoWrite.name, arguments: { update: [] } } };
+        const listed = todoLines(workspaceState!.todos, (command) => passedNow(workspaceState, command)).join('\n');
+        recordExchange(history, call, { ok: true, kind: 'status', display: listed, modelNote: openTasksNote(open.length, passedChecks) }, Number(config.maxToolOutput) || 8000, reply.content);
+        continue;
       }
       if (reply.content.trim() && !halfCall) turnState.answer = reply.content;
       // Cut off at the length limit, with or without text so far: the answer can be picked up where it stopped.

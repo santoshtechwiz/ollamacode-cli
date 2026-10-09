@@ -11,6 +11,8 @@ import { createWorkspaceState, notePassed, passedNow } from '../src/context/work
 import { describeSession } from '../src/context/workspace-state';
 import { ToolExecutor } from '../src/tool/core/tool-runtime';
 import { reportChatTurn } from '../src/cli/chat/turn/index';
+import { runTurn } from '../src/agent/turn/turn';
+import { ContextStore } from '../src/context/store';
 import { STOP_REASONS } from '../src/protocol';
 
 const write = (state: any, args: Record<string, unknown>) => todoWrite.execute(args, { state } as any) as Promise<any>;
@@ -200,5 +202,63 @@ describe('the list follows the work', () => {
     const r = await write(state, { update: [{ task: 'The editor saves', status: 'in_progress' }] });
     assert.equal(r.ok, true, r.error);
     assert.deepEqual(names(state), ['pending: NoteList is accessible', 'in_progress: The editor saves']);
+  });
+});
+
+describe('an answer over open tasks after changing files', () => {
+  const call = (id: string, name: string, args: Record<string, unknown>) => ({ id, type: 'function', function: { name, arguments: args } });
+
+  async function turn(replies: any[]) {
+    const { root, state } = session();
+    const requests: any[] = [];
+    const notes: string[] = [];
+    const history = new ContextStore({ messages: [{ role: 'user', content: 'polish the notes page' }], budgetTokens: 8000 });
+    const result: any = await (runTurn as any)({
+      model: 'test', history, toolsEnabled: true, state, config: { maxIterations: 10 },
+      callbacks: { note: (text: string) => notes.push(text) },
+      gateway: {
+        model: 'test', provider: { id: 'test' },
+        async stream(request: any) {
+          requests.push(request);
+          const next = replies[requests.length - 1] ?? { content: 'Done.' };
+          return { result: { content: next.content ?? '', toolCalls: next.toolCalls ?? [], finishReason: 'stop' }, attempt: 1, retries: 0, startedAt: Date.now() };
+        },
+      },
+      toolRunner: {
+        async run(name: string, args: any) {
+          if (name === 'todo_write') return { result: await todoWrite.execute(args, { state } as any) };
+          state.note('write', String(args.path), 'file');
+          return { result: { ok: true, kind: 'text', display: 'ok' } };
+        },
+      },
+    });
+    fs.rmSync(root, { recursive: true, force: true });
+    return { requests, notes, result, state };
+  }
+
+  const LIST = call('1', 'todo_write', { todos: [{ content: 'The list has dark mode', status: 'in_progress' }, { content: 'Notes fade in', status: 'pending' }] });
+  const EDIT = call('2', 'write_file', { path: 'notes-app/src/NoteList.tsx', content: 'x' });
+
+  it('goes back once with the list, and a settled list lets the answer stand', async () => {
+    const t = await turn([
+      { toolCalls: [LIST] }, { toolCalls: [EDIT] }, { content: 'All done.' },
+      { toolCalls: [call('3', 'todo_write', { update: [
+        { task: 'The list has dark mode', status: 'completed', evidence: 'the page check passed in dark mode' },
+        { task: 'Notes fade in', remove: true },
+      ] })] },
+      { content: 'Dark mode is done; I did not add the fade-in.' },
+    ]);
+    const seen = t.requests[3].messages.filter((m: any) => m.role === 'tool').map((m: any) => String(m.content)).at(-1);
+    assert.match(seen, /Your answer leaves 2 tasks open/);
+    assert.match(seen, /\[~\] The list has dark mode/);
+    assert.equal(t.result.answer, 'Dark mode is done; I did not add the fade-in.');
+    assert.deepEqual(names(t.state), ['completed: The list has dark mode']);
+    assert.ok(t.notes.some((n) => /2 tasks are still open after that answer/.test(n)));
+  });
+
+  it('asks once: a model that answers again over an open list is not sent back again', async () => {
+    const t = await turn([{ toolCalls: [LIST] }, { toolCalls: [EDIT] }, { content: 'All done.' }, { content: 'All done, really.' }]);
+    assert.equal(t.requests.length, 4);
+    assert.equal(t.result.answer, 'All done, really.');
   });
 });
