@@ -28,11 +28,13 @@ async function turn(root: string, replies: any[], config: Record<string, unknown
   const requests: any[] = [];
   const ran: string[] = [];
   const limits: number[] = [];
+  const notes: string[] = [];
   const state: any = { mutationCount: 0, changes: [], root };
   const history = new ContextStore({ messages: [{ role: ROLE.USER, content: 'build the page' }], budgetTokens: 8000 });
   const result: any = await runTurn({
     model: 'test', history, toolsEnabled: true, state,
     config: { maxIterations: 8, ...config },
+    callbacks: { note: (text: string, tone: string) => notes.push(`${tone}: ${text}`) },
     gateway: {
       model: 'test', provider: { id: 'test' },
       async stream(request: any) {
@@ -64,7 +66,7 @@ async function turn(root: string, replies: any[], config: Record<string, unknown
       },
     } as any,
   } as any);
-  return { requests, ran, result, history, limits };
+  return { requests, ran, result, history, limits, notes };
 }
 
 describe('checkCommands', () => {
@@ -143,6 +145,10 @@ describe('agent.beforeDone', () => {
       const said = seen.filter((m: any) => m.role === ROLE.ASSISTANT).at(-1);
       assert.equal(said.content, 'Done: the site is ready.', 'the answer stays, as what the model said before the check');
       assert.equal(t.result.answer, 'Fixed the footer; the build passes.');
+      assert.deepEqual(t.notes, [
+        'warn: Not done yet: `npm run build` failed after that answer, so the agent keeps working on what it reports.',
+        'success: Checked before finishing: `npm run build` passed.',
+      ], 'the screen says the first answer was not final, and that the last one was checked');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

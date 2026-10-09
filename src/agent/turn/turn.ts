@@ -127,6 +127,18 @@ function recordTelemetry(
   }
 }
 
+/** The status while agent.beforeDone runs: the answer is on screen, the turn is not over. */
+const CHECKING_STATUS = 'Checking the work before finishing';
+
+/** What the person reads once agent.beforeDone has run, under the answer it checked. */
+function doneCheckNote(runs: Array<{ args: { command: string }; passed: boolean; unfinished: boolean }>, failed: boolean): [string, 'warn' | 'success'] | null {
+  const names = (list: typeof runs) => list.map((r) => `\`${r.args.command}\``).join(', ');
+  if (failed) return [`Not done yet: ${names(runs.filter((r) => !r.passed && !r.unfinished))} failed after that answer, so the agent keeps working on what it reports.`, 'warn'];
+  const unfinished = runs.filter((r) => r.unfinished);
+  if (unfinished.length) return [`Checked before finishing: ${names(unfinished)} did not finish in time, so that part of the answer is unchecked.`, 'warn'];
+  return runs.length ? [`Checked before finishing: ${names(runs)} passed.`, 'success'] : null;
+}
+
 /** What the model reads with a check of agent.beforeDone that failed. */
 const BEFORE_DONE_FAILED =
   'ocode ran this check (agent.beforeDone) when you answered, and it failed: the work is not done. Fix what it reports, then answer again.';
@@ -347,11 +359,17 @@ export async function runTurn(
         : [];
       if (unchecked.length > 0 && turnState.iteration < turnState.maxIterations) {
         doneMark = changeMark(workspaceState);
-        const failed = await runBeforeDoneCheck({ command: beforeDone, timeoutMs: checkTimeoutMs, memory: workspaceState, root: workspaceState?.root ?? cwd, changed: unchecked, toolRunner, callbacks, signal });
+        callbacks.onStatus?.(CHECKING_STATUS);
+        const runs = await runBeforeDoneCheck({ command: beforeDone, timeoutMs: checkTimeoutMs, memory: workspaceState, root: workspaceState?.root ?? cwd, changed: unchecked, toolRunner, callbacks, signal });
         if (signal?.aborted) {
           turnState.stopReason = STOP_REASONS.CANCELLED;
           break;
         }
+        // Only a check that ran to the end and failed says the work is not done; one that ran out of time says nothing.
+        const failed = runs.filter((r) => !r.passed && !r.unfinished);
+        // The answer was on screen before the checks ran: say what they found, so it never reads as checked when it is not.
+        const told = doneCheckNote(runs, failed.length > 0);
+        if (told) callbacks.note?.(...told);
         if (failed.length > 0) {
           const limit = Number(config.maxToolOutput) || 8000;
           failed.forEach((run, k) => {

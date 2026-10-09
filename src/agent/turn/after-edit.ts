@@ -82,7 +82,7 @@ export interface CheckMemory {
 const AFTER_EDIT_TIMEOUT_MS = 90_000;
 const BEFORE_DONE_TIMEOUT_MS = 300_000;
 
-interface CheckRun {
+export interface CheckRun {
   /** The tool call made, as the model and the person see it. */
   args: { command: string; cwd?: string; timeout_ms: number };
   result: import('../../types.ts').ToolResult;
@@ -193,8 +193,8 @@ export async function runAfterEditCheck({ command, timeoutMs = AFTER_EDIT_TIMEOU
 
 /**
  * agent.beforeDone: run when the model answers after changing files, so "done" is checked the way the person asked
- * (a build that prerenders pages catches what a type check cannot). The checks that failed come back for the turn to
- * record as calls ocode made, so the model reads why the work is not done yet.
+ * (a build that prerenders pages catches what a type check cannot). Every check that ran comes back: the turn records
+ * the failed ones as calls ocode made, so the model reads why the work is not done yet, and tells the person how it went.
  */
 export async function runBeforeDoneCheck({ command, timeoutMs = BEFORE_DONE_TIMEOUT_MS, memory, root, changed, toolRunner, callbacks, signal }: {
   command: string;
@@ -207,6 +207,5 @@ export async function runBeforeDoneCheck({ command, timeoutMs = BEFORE_DONE_TIME
   signal?: AbortSignal;
 }): Promise<CheckRun[]> {
   const { runs } = await runChecks({ command, phase: 'done', memory, setting: 'agent.beforeDone', name: 'Check before answering', timeoutMs, root, changed, toolRunner, callbacks, signal });
-  // Only a check that ran to the end and failed says the work is not done; one that ran out of time says nothing.
-  return runs.filter((r) => !r.passed && !r.unfinished);
+  return runs;
 }
