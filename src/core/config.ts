@@ -67,9 +67,9 @@ interface AgentConfig {
   memory?: { enabled: boolean; maxChars?: number; };
   /** Let the agent hand self-contained tasks to subagents (delegate_task). On unless set to false. */
   subagents?: boolean;
-  /** A command run after any step that changed files (tests, a linter); its result goes to the model. Unset: none. */
+  /** A command run after any step that changed files (tests, a linter), check words ("check lint"), or "auto". Unset: none. */
   afterEdit?: string;
-  /** A command run when the model answers after changing files (a build); a failure goes back to the model. Unset: none. */
+  /** Like afterEdit, run when the model answers after changing files; a failure goes back to the model. "auto" picks the checks. */
   beforeDone?: string;
   /** How long an afterEdit or beforeDone check may run before it is stopped, ms. Unset: 90 s after an edit, 5 min before done. */
   checkTimeoutMs?: number;

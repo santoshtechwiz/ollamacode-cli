@@ -11,18 +11,23 @@ export interface Framework {
   builtOn?: readonly string[];
   /** ESLint plugins that let ESLint read this framework's own files, and the extensions of those files. */
   eslint?: { plugins: readonly string[]; extensions: readonly string[] };
+  /**
+   * Its build checks what a type check cannot: it prerenders pages or compiles templates (a value that changes between
+   * renders, an image host not configured, a template error). agent.beforeDone auto runs the build for such a project.
+   */
+  buildVerifies?: boolean;
 }
 
 export const FRAMEWORKS: readonly Framework[] = [
-  { id: 'next', label: 'Next.js', packages: ['next'], builtOn: ['react'] },
-  { id: 'remix', label: 'Remix', packages: ['@remix-run/react'], builtOn: ['react'] },
+  { id: 'next', label: 'Next.js', packages: ['next'], builtOn: ['react'], buildVerifies: true },
+  { id: 'remix', label: 'Remix', packages: ['@remix-run/react'], builtOn: ['react'], buildVerifies: true },
   { id: 'react', label: 'React', packages: ['react'] },
-  { id: 'nuxt', label: 'Nuxt', packages: ['nuxt'], builtOn: ['vue'] },
+  { id: 'nuxt', label: 'Nuxt', packages: ['nuxt'], builtOn: ['vue'], buildVerifies: true },
   { id: 'vue', label: 'Vue', packages: ['vue'], eslint: { plugins: ['eslint-plugin-vue'], extensions: ['.vue'] } },
-  { id: 'angular', label: 'Angular', packages: ['@angular/core'], eslint: { plugins: ['angular-eslint', '@angular-eslint/eslint-plugin-template'], extensions: ['.html'] } },
-  { id: 'sveltekit', label: 'SvelteKit', packages: ['@sveltejs/kit'], builtOn: ['svelte'] },
+  { id: 'angular', label: 'Angular', packages: ['@angular/core'], eslint: { plugins: ['angular-eslint', '@angular-eslint/eslint-plugin-template'], extensions: ['.html'] }, buildVerifies: true },
+  { id: 'sveltekit', label: 'SvelteKit', packages: ['@sveltejs/kit'], builtOn: ['svelte'], buildVerifies: true },
   { id: 'svelte', label: 'Svelte', packages: ['svelte'], eslint: { plugins: ['eslint-plugin-svelte'], extensions: ['.svelte'] } },
-  { id: 'astro', label: 'Astro', packages: ['astro'], eslint: { plugins: ['eslint-plugin-astro'], extensions: ['.astro'] } },
+  { id: 'astro', label: 'Astro', packages: ['astro'], eslint: { plugins: ['eslint-plugin-astro'], extensions: ['.astro'] }, buildVerifies: true },
 ];
 
 type PackageJson = { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };

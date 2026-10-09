@@ -314,6 +314,27 @@ straight away instead of at the end. It runs without asking because you
 configured it.
 `ocode config unset agent.afterEdit` turns it off.
 
+### Letting ocode choose the checks
+
+The easiest setting is `auto`, for both:
+
+```sh
+ocode config set agent.afterEdit auto
+ocode config set agent.beforeDone auto
+```
+
+ocode then decides from what changed, what the project is, and how long each check took in this project before:
+
+| When | What runs |
+| --- | --- |
+| After an edit | only checks that took under 10 seconds here last time (a fast type check, lint on the changed files); a slow one waits for the end |
+| Before "done" | a framework whose build checks more than types (Next.js, Nuxt, Angular, SvelteKit, Astro, Remix): lint on the changed files, then the build, which includes the type check |
+| | any other project: the type check when code changed, and lint on the changed files |
+| | nothing when only documentation changed, and never a check that already passed on the same files |
+
+The first turn in a session runs everything at the end; once ocode knows what is fast, those checks also run after
+each edit. A dev server is never started as a check: it is for looking at the page with `check_page`.
+
 ### A check before "done"
 
 A type check after each edit cannot see everything: a Next.js page that uses `new Date()` while prerendering, or
