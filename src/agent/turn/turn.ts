@@ -146,7 +146,7 @@ function doneCheckNote(runs: Array<{ label: string; passed: boolean; unfinished:
  * evidence, and only the model can give it for work no command proves, so the list goes back to it once.
  */
 function openTasksNote(open: number, passed: string[]): string {
-  return `Your answer leaves ${open} task${open === 1 ? '' : 's'} open (listed above). Settle the list before you finish, with todo_write update: ` +
+  return `Your answer leaves ${open} task${open === 1 ? '' : 's'} open (listed below). Settle the list before you finish, with todo_write update: ` +
     'mark each task you did completed with its evidence (what showed it works' +
     (passed.length ? `; these checks passed when you answered: ${passed.map((p) => `\`${p}\``).join(', ')}` : '') +
     '), and remove the ones you did not do or no longer need. Then answer again.';
