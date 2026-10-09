@@ -4,7 +4,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROLE, TOOL_NAME } from '../../protocol';
+import { ROLE, TOOL_ERROR_CODE, TOOL_NAME } from '../../protocol';
 import { holdsProjectMarker, projectFolderOf as nearestProjectFolder } from '../../env/project-layout';
 import { CHECK_VERBS, type Verb } from '../../env/languages';
 import { detectStacks } from '../../env/tooling/detector';
@@ -61,11 +61,22 @@ async function projectCommand(command: string, folder: string, files: string[]):
   return argv ? quote(argv) : null;
 }
 
+/**
+ * How long a configured check may run before it is stopped. A check holds the turn while it runs, and in a chat a
+ * command has no limit of its own, so a slow linter (ESLint over a Next.js project on a cold Windows cache) held a turn
+ * past a minute and a half. A check that runs out of time is unfinished, not failed: nothing in the code is wrong yet.
+ * agent.checkTimeoutMs sets both.
+ */
+const AFTER_EDIT_TIMEOUT_MS = 90_000;
+const BEFORE_DONE_TIMEOUT_MS = 300_000;
+
 interface CheckRun {
   /** The tool call made, as the model and the person see it. */
-  args: { command: string; cwd?: string };
+  args: { command: string; cwd?: string; timeout_ms: number };
   result: import('../../types.ts').ToolResult;
   passed: boolean;
+  /** It ran out of time or was moved to the background: its result is not known. */
+  unfinished: boolean;
   note: string;
 }
 
@@ -73,8 +84,9 @@ interface CheckRun {
  * Runs each command the setting names, once per project the changed files belong to, in that project's folder.
  * `setting` names it in what the model reads (agent.afterEdit, agent.beforeDone).
  */
-async function runChecks({ command, setting, name, root, changed, toolRunner, callbacks, signal }: {
+async function runChecks({ command, setting, name, timeoutMs, root, changed, toolRunner, callbacks, signal }: {
   command: string;
+  timeoutMs: number;
   setting: string;
   /** How a note names the check: "After-edit check". */
   name: string;
@@ -104,7 +116,7 @@ async function runChecks({ command, setting, name, root, changed, toolRunner, ca
         notes.push(`${name} (${setting} "${each}")${where} did not run: this project has no ${each} command ocode knows.`);
         continue;
       }
-      const args = folder ? { command: run, cwd: folder } : { command: run };
+      const args = folder ? { command: run, cwd: folder, timeout_ms: timeoutMs } : { command: run, timeout_ms: timeoutMs };
       callbacks.onToolStart?.(TOOL_NAME.EXEC_SHELL, args);
       const { result } = await toolRunner.run(TOOL_NAME.EXEC_SHELL, args, { signal, approve: async () => true });
       callbacks.onToolResult?.(TOOL_NAME.EXEC_SHELL, args, result);
@@ -112,22 +124,27 @@ async function runChecks({ command, setting, name, root, changed, toolRunner, ca
       const exit = data?.execution?.exitCode;
       const output = String(result.display ?? result.error ?? '').split('\n').slice(-FAILURE_TAIL_LINES).join('\n').trim();
       // Passed means it ran to the end and exited 0; a check still running in the background has not passed yet.
-      const passed = !data?.background && result.ok && (exit === undefined || exit === 0);
+      const timedOut = result.code === TOOL_ERROR_CODE.ETIMEDOUT;
+      const unfinished = Boolean(data?.background) || timedOut;
+      const passed = !unfinished && result.ok && (exit === undefined || exit === 0);
       const note = data?.background
         ? `${name} \`${run}\`${where} (${setting}) did not finish: it kept running, so it was moved to the background${data.id ? ` as ${data.id}` : ''}; its result is not known.`
-        : passed
+        : timedOut
+          ? `${name} \`${run}\`${where} (${setting}) did not finish within ${Math.round(timeoutMs / 1000)}s and was stopped; its result is not known. agent.checkTimeoutMs gives it longer.`
+          : passed
           ? `${name} \`${run}\`${where} (${setting}) passed.`
           : `${name} \`${run}\`${where} (${setting}) failed${exit !== undefined ? ` with exit ${exit}` : ''}:\n${output}`;
       notes.push(note);
-      runs.push({ args, result, passed, note });
+      runs.push({ args, result, passed, unfinished, note });
     }
   }
   return { notes, runs };
 }
 
 /** agent.afterEdit: run after a step that changed files; the outcome rides on that step's last tool result. */
-export async function runAfterEditCheck({ command, root, changed, history, toolRunner, callbacks, signal }: {
+export async function runAfterEditCheck({ command, timeoutMs = AFTER_EDIT_TIMEOUT_MS, root, changed, history, toolRunner, callbacks, signal }: {
   command: string;
+  timeoutMs?: number;
   /** The workspace root, and the files the step changed, workspace-relative. */
   root: string;
   changed: string[];
@@ -136,7 +153,7 @@ export async function runAfterEditCheck({ command, root, changed, history, toolR
   callbacks: TurnCallbacks;
   signal?: AbortSignal;
 }): Promise<void> {
-  const { notes } = await runChecks({ command, setting: 'agent.afterEdit', name: 'After-edit check', root, changed, toolRunner, callbacks, signal });
+  const { notes } = await runChecks({ command, setting: 'agent.afterEdit', name: 'After-edit check', timeoutMs, root, changed, toolRunner, callbacks, signal });
   if (notes.length === 0) return;
   // The step's last result carries it: the model reads what its edits caused next to what they did.
   const messages = history.messages as Message[];
@@ -149,14 +166,16 @@ export async function runAfterEditCheck({ command, root, changed, history, toolR
  * (a build that prerenders pages catches what a type check cannot). The checks that failed come back for the turn to
  * record as calls ocode made, so the model reads why the work is not done yet.
  */
-export async function runBeforeDoneCheck({ command, root, changed, toolRunner, callbacks, signal }: {
+export async function runBeforeDoneCheck({ command, timeoutMs = BEFORE_DONE_TIMEOUT_MS, root, changed, toolRunner, callbacks, signal }: {
   command: string;
+  timeoutMs?: number;
   root: string;
   changed: string[];
   toolRunner: ToolExecutor;
   callbacks: TurnCallbacks;
   signal?: AbortSignal;
 }): Promise<CheckRun[]> {
-  const { runs } = await runChecks({ command, setting: 'agent.beforeDone', name: 'Check before answering', root, changed, toolRunner, callbacks, signal });
-  return runs.filter((r) => !r.passed);
+  const { runs } = await runChecks({ command, setting: 'agent.beforeDone', name: 'Check before answering', timeoutMs, root, changed, toolRunner, callbacks, signal });
+  // Only a check that ran to the end and failed says the work is not done; one that ran out of time says nothing.
+  return runs.filter((r) => !r.passed && !r.unfinished);
 }

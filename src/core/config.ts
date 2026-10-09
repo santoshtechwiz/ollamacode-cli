@@ -71,6 +71,8 @@ interface AgentConfig {
   afterEdit?: string;
   /** A command run when the model answers after changing files (a build); a failure goes back to the model. Unset: none. */
   beforeDone?: string;
+  /** How long an afterEdit or beforeDone check may run before it is stopped, ms. Unset: 90 s after an edit, 5 min before done. */
+  checkTimeoutMs?: number;
   /** Subagent roles of the person's own, by name; see agent/subagent/roles.ts. */
   subagentRoles?: Record<string, import('../agent/subagent/roles.ts').CustomRoleConfig>;
 }
@@ -122,7 +124,7 @@ export function configFile() {
 }
 
 /** Settings that live under "agent" in config.json. */
-const AGENT_KEYS: ReadonlySet<string> = new Set([...Object.keys(DEFAULTS.agent), 'contextBudget', 'afterEdit', 'beforeDone', 'subagentRoles']);
+const AGENT_KEYS: ReadonlySet<string> = new Set([...Object.keys(DEFAULTS.agent), 'contextBudget', 'afterEdit', 'beforeDone', 'checkTimeoutMs', 'subagentRoles']);
 
 /**
  * An agent setting written at the top level of config.json (a snippet pasted without its "agent": { } wrapper) is read

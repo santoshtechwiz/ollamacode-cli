@@ -254,6 +254,8 @@ export async function runTurn(
   // agent.beforeDone runs when the model answers, on the files changed since it last ran (from the turn's start).
   const beforeDone = typeof config.beforeDone === 'string' ? config.beforeDone.trim() : '';
   let doneMark = changeMark(workspaceState);
+  // How long a configured check may run; unset, each kind keeps its own default.
+  const checkTimeoutMs = Number(config.checkTimeoutMs) > 0 ? Number(config.checkTimeoutMs) : undefined;
 
   while (
     turnState.iteration <
@@ -345,7 +347,7 @@ export async function runTurn(
         : [];
       if (unchecked.length > 0 && turnState.iteration < turnState.maxIterations) {
         doneMark = changeMark(workspaceState);
-        const failed = await runBeforeDoneCheck({ command: beforeDone, root: workspaceState?.root ?? cwd, changed: unchecked, toolRunner, callbacks, signal });
+        const failed = await runBeforeDoneCheck({ command: beforeDone, timeoutMs: checkTimeoutMs, root: workspaceState?.root ?? cwd, changed: unchecked, toolRunner, callbacks, signal });
         if (signal?.aborted) {
           turnState.stopReason = STOP_REASONS.CANCELLED;
           break;
@@ -395,7 +397,7 @@ export async function runTurn(
     const changed = changedSince(workspaceState, changesBefore);
     // Not while a plan shown this turn is held: nothing may run, and a refused check is no failed one.
     if (afterEdit && !readOnly && toolsEnabled && changed.length > 0 && !workspaceState?.planHeld) {
-      await runAfterEditCheck({ command: afterEdit, root: workspaceState?.root ?? cwd, changed, history, toolRunner, callbacks, signal });
+      await runAfterEditCheck({ command: afterEdit, timeoutMs: checkTimeoutMs, root: workspaceState?.root ?? cwd, changed, history, toolRunner, callbacks, signal });
     }
 
     // The one loop stop besides the step limit: the same call, nothing else between, too many times in a row.

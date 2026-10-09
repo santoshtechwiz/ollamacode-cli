@@ -24,9 +24,10 @@ function project(): string {
   return root;
 }
 
-async function turn(root: string, replies: any[], config: Record<string, unknown>, buildResults: boolean[]) {
+async function turn(root: string, replies: any[], config: Record<string, unknown>, buildResults: Array<boolean | 'timeout'>) {
   const requests: any[] = [];
   const ran: string[] = [];
+  const limits: number[] = [];
   const state: any = { mutationCount: 0, changes: [], root };
   const history = new ContextStore({ messages: [{ role: ROLE.USER, content: 'build the page' }], budgetTokens: 8000 });
   const result: any = await runTurn({
@@ -49,8 +50,12 @@ async function turn(root: string, replies: any[], config: Record<string, unknown
           state.mutationCount += 1;
           state.changes = [...state.changes.filter((c: any) => c.path !== args.path), { path: args.path }];
         }
+        if (name === 'exec_shell') limits.push(args.timeout_ms);
         if (name === 'exec_shell' && /build/.test(args.command)) {
           const passes = buildResults.shift() ?? true;
+          if (passes === 'timeout') {
+            return { result: { ok: false, kind: 'none', code: 'ETIMEDOUT', error: `Command timed out after ${args.timeout_ms}ms`, data: {} } };
+          }
           return { result: passes
             ? { ok: true, kind: 'command', display: 'Compiled successfully', data: { execution: { exitCode: 0 } } }
             : { ok: false, kind: 'command', error: 'Command exited with code 1', display: 'Error: Route "/" used `new Date()` while prerendering', data: { execution: { exitCode: 1 } } } };
@@ -59,7 +64,7 @@ async function turn(root: string, replies: any[], config: Record<string, unknown
       },
     } as any,
   } as any);
-  return { requests, ran, result, history };
+  return { requests, ran, result, history, limits };
 }
 
 describe('checkCommands', () => {
@@ -138,6 +143,31 @@ describe('agent.beforeDone', () => {
       const said = seen.filter((m: any) => m.role === ROLE.ASSISTANT).at(-1);
       assert.equal(said.content, 'Done: the site is ready.', 'the answer stays, as what the model said before the check');
       assert.equal(t.result.answer, 'Fixed the footer; the build passes.');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('gives every check a time limit, and a check that runs out of time is unfinished, not a failure to fix', async () => {
+    const root = project();
+    try {
+      const t = await turn(root, [
+        { toolCalls: [call('1', 'write_file', { path: 'site/src/Footer.tsx', content: 'x' })] },
+        { content: 'Done.' },
+      ], { afterEdit: 'check', beforeDone: 'build', checkTimeoutMs: 45_000 }, ['timeout']);
+      assert.deepEqual(t.limits, [45_000, 45_000], 'agent.checkTimeoutMs reaches both checks');
+      assert.equal(t.result.answer, 'Done.', 'a build that ran out of time does not send the model back');
+      assert.equal(t.requests.length, 2);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('without agent.checkTimeoutMs, a check after an edit gets 90 s and the one before done 5 min', async () => {
+    const root = project();
+    try {
+      const t = await turn(root, [{ toolCalls: [call('1', 'write_file', { path: 'site/src/Footer.tsx', content: 'x' })] }, { content: 'Done.' }], { afterEdit: 'check', beforeDone: 'build' }, [true]);
+      assert.deepEqual(t.limits, [90_000, 300_000]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

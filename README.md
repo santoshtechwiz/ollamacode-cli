@@ -329,6 +329,16 @@ It runs only when files changed since it last ran, in each changed project's fol
 failure and keeps working instead of saying "done"; when it can't fix it and changes nothing more, its answer
 stands, so a failure it can't fix never loops. `ocode config unset agent.beforeDone` turns it off.
 
+Each check has a time limit: 90 seconds after an edit, 5 minutes before "done". A check that runs out of time is
+stopped and reported as unfinished, not as a failure the agent must fix. `ocode config set agent.checkTimeoutMs
+180000` changes both. A linter or type check can be slow on a large project (a first ESLint run over a Next.js app
+on Windows can take minutes), so keep the fast check after each edit and the slow ones for the end:
+
+```sh
+ocode config set agent.afterEdit check
+ocode config set agent.beforeDone "lint build"
+```
+
 ### Git
 
 ```text
