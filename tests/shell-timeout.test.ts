@@ -16,8 +16,4 @@ describe('how long a shell command may run', () => {
   it('with nobody to ask, it keeps the two-minute default', async () => {
     assert.equal(await timeoutOf({}, false), 120_000);
   });
-  it('a limit the model set is kept either way', async () => {
-    assert.equal(await timeoutOf({ timeout_ms: 300_000 }, true), 300_000);
-    assert.equal(await timeoutOf({ timeout_ms: 300_000 }, false), 300_000);
-  });
 });

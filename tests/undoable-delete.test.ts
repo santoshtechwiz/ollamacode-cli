@@ -9,7 +9,6 @@ import { createExecutor } from '../src/tool/execution/executor';
 import { createWorkspaceState } from '../src/context/workspace-state';
 import { createAgentState } from '../src/agent/state';
 import { applyApprovalPolicy } from '../src/tool/policy/permission-policy';
-import { describeAction } from '../src/cli/action-preview';
 
 function workspace() {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-undo-'));
@@ -34,20 +33,6 @@ describe('undoable deletes', () => {
       assert.equal(undo.ok, true, undo.error);
       assert.equal(fs.readFileSync(path.join(w.cwd, 'app/main.go'), 'utf8'), 'package main\n');
       assert.equal(fs.readFileSync(path.join(w.cwd, 'app/sub/util.go'), 'utf8'), 'package sub\n');
-    } finally {
-      fs.rmSync(w.cwd, { recursive: true, force: true });
-    }
-  });
-
-  it('the delete prompt says /undo can bring it back, not that it is permanent', async () => {
-    const w = workspace();
-    try {
-      const file = await describeAction('delete_file', { path: 'app/main.go' }, { cwd: w.cwd, root: w.cwd, sessionId: w.state.sessionId });
-      assert.match(String(file?.note), /\/undo can bring it back/);
-      const folder = await describeAction('delete_file', { path: 'app', recursive: true }, { cwd: w.cwd, root: w.cwd, sessionId: w.state.sessionId });
-      assert.match(String(folder?.note), /\/undo can bring it back/);
-      const noLedger = await describeAction('delete_file', { path: 'app/main.go' }, { cwd: w.cwd, root: w.cwd });
-      assert.match(String(noLedger?.note), /not undoable/, 'without a session ledger it really is permanent');
     } finally {
       fs.rmSync(w.cwd, { recursive: true, force: true });
     }

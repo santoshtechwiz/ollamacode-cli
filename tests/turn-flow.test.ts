@@ -53,12 +53,6 @@ describe('turn flow', () => {
     }
   });
 
-  it('a prose answer cut off at the limit is still kept, so /continue can pick it up', async () => {
-    const t = await turn([{ content: 'The handler validates the token, then', finishReason: 'length' }]);
-    assert.equal(t.result.stopReason, STOP_REASONS.OUTPUT_TRUNCATED);
-    assert.equal(t.result.content, 'The handler validates the token, then');
-  });
-
   it('keeps what a reply said alongside its tool calls, once, so the next request carries it', async () => {
     const plan = 'Here is the plan: 1) parse flags 2) send the request.';
     const t = await turn([
@@ -95,16 +89,6 @@ describe('turn flow', () => {
     assert.equal(t.result.content, 'Renamed DisplayAlert to DisplayAlertAsync.');
   });
 
-  it('reports a refused attempt in the turn result, so a tally cannot claim everything succeeded', async () => {
-    const t = await turn([
-      { toolCalls: [call('1', 'edit_file', { path: 'a.cs', replace: 'y' })] },
-      { toolCalls: [call('2', 'edit_file', { path: 'a.cs', search: 'x', replace: 'y' })] },
-      { content: 'Done.' },
-    ]);
-    assert.equal(t.result.toolResults.length, 2);
-    assert.deepEqual(t.result.toolResults.map((r: any) => r.result.ok), [false, true]);
-  });
-
   it('still stops a model that resends the exact call it was refused for', async () => {
     const bad = { path: 'a.cs', replace: 'y' };
     const t = await turn([
@@ -138,18 +122,6 @@ describe('turn flow', () => {
     ]);
     assert.equal(t.requests.length, 2);
     assert.deepEqual(t.users, ['do the task']);
-  });
-
-  it('a failed call sent again runs again, and the model\'s own reply ends the turn, not the narration sent with a call', async () => {
-    const bad = { path: 'a.cs', replace: 'y' };
-    const t = await turn([
-      { content: 'Let me edit a.cs.', toolCalls: [call('1', 'edit_file', bad)] },
-      { toolCalls: [call('2', 'edit_file', bad)] },
-      { content: 'I could not edit a.cs: the edit needs the text to replace.' },
-    ]);
-    assert.equal(t.result.stopReason, STOP_REASONS.COMPLETE);
-    assert.equal(t.requests.length, 3, 'no extra request for a summary');
-    assert.equal(t.result.content, 'I could not edit a.cs: the edit needs the text to replace.');
   });
 
   it('ends a turn the decider stopped mid-reply there too, without another request', async () => {

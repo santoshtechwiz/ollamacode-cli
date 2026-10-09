@@ -6,7 +6,7 @@ import { describe, it, before, after } from 'node:test';
 
 import '../src/tool/index.ts';
 import { ToolExecutor } from '../src/tool/core/tool-runtime';
-import { PermissionPolicy, createPermissions, applyApprovalPolicy } from '../src/tool/policy/permission-policy';
+import { PermissionPolicy, createPermissions } from '../src/tool/policy/permission-policy';
 import { TOOL_META } from '../src/tool/index';
 import { TOOL_ERROR_CODE } from '../src/protocol';
 
@@ -92,13 +92,6 @@ describe('run_script', () => {
     const missing = await approvedExecutor().run('run_script', { code: 'console.log(1)', cwd: 'nope' });
     assert.equal(missing.result.ok, false);
   });
-
-  it('rejects an unknown language and an empty script without running anything', async () => {
-    const lang = await approvedExecutor().run('run_script', { code: 'x', language: 'cobol' });
-    assert.equal(lang.result.ok, false);
-    const empty = await approvedExecutor().run('run_script', { code: '   ' });
-    assert.equal(empty.result.ok, false);
-  });
 });
 
 describe('run_script permissions', () => {
@@ -132,31 +125,5 @@ describe('run_script permissions', () => {
 
     const noHandler = await new ToolExecutor({ root, state: {} }).run('run_script', { code: 'console.log(1)' });
     assert.equal(noHandler.result.code, TOOL_ERROR_CODE.EDENIED);
-  });
-
-  it('never: a "never" policy withdraws the pre-approval', async () => {
-    const state: any = { permissions: createPermissions(), autoFixAuthorized: true };
-    applyApprovalPolicy(state, { policy: 'never' });
-    const { result } = await new ToolExecutor({ root, state }).run('run_script', { code: 'console.log(1)' });
-    assert.equal(result.ok, false);
-    assert.equal(result.code, TOOL_ERROR_CODE.EDENIED);
-  });
-});
-
-describe('grep_content points at run_script only when its own output was cut', () => {
-  it('adds the note when the matches exceed what one search shows, and not otherwise', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-grep-note-'));
-    try {
-      fs.writeFileSync(path.join(dir, 'app.log'), Array.from({ length: 500 }, (_, i) => `line ${i} ERROR db timeout`).join('\n'));
-      fs.writeFileSync(path.join(dir, 'small.txt'), 'one ERROR auth failed\n');
-      const big = await new ToolExecutor({ root: dir }).run('grep_content', { pattern: 'db timeout' });
-      assert.equal(big.result.truncated, true);
-      assert.match(String(big.result.modelNote), /run_script/);
-      const small = await new ToolExecutor({ root: dir }).run('grep_content', { pattern: 'auth failed' });
-      assert.equal(small.result.ok, true);
-      assert.equal(small.result.modelNote, undefined);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
   });
 });

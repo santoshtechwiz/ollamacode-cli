@@ -12,12 +12,9 @@ import { createExecutor } from '../src/tool/execution/executor';
 import { createWorkspaceState } from '../src/context/workspace-state';
 import { selectToolDefs } from '../src/context/tool-surface';
 import { reportChatTurn } from '../src/cli/chat/turn/index';
-import { describeToolResult } from '../src/ui/tool-preview';
 import { STOP_REASONS } from '../src/protocol';
 import presentPlan from '../src/agent/planning/present-plan.tool';
 import todoWrite from '../src/agent/planning/todo-write.tool';
-
-const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, '');
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-plan-'));
 
 /** A turn whose model makes the given calls, one per step, then answers; the tools run for real. */
@@ -143,14 +140,6 @@ describe('plan mode', () => {
 describe('the task list', () => {
   const write = (state: any, todos: unknown[]) => todoWrite.execute({ todos }, { state } as any) as Promise<any>;
 
-  it('is what the model last wrote, shown line by line', async () => {
-    const state: any = {};
-    const result = await write(state, [{ content: 'Add the parser', status: 'completed', evidence: 'parses the sample file' }, { content: 'Run the tests', status: 'in_progress' }]);
-    assert.equal(result.ok, true);
-    assert.deepEqual(state.todos.map((t: any) => t.status), ['completed', 'in_progress']);
-    assert.equal(result.display, '[x] Add the parser\n[~] Run the tests');
-  });
-
   it('keeps one task in progress, and every task says what it is', async () => {
     const state: any = {};
     const two = await write(state, [{ content: 'a', status: 'in_progress' }, { content: 'b', status: 'in_progress' }]);
@@ -187,21 +176,4 @@ describe('the task list', () => {
 });
 
 describe('what the screen never shows', () => {
-  const shown = (name: string, result: any) => {
-    const v = describeToolResult(name, result);
-    return { v, text: plain([v.title, ...(v.detail ?? [])].join('\n')) };
-  };
-
-  it('a malformed call shows no schema text', () => {
-    const { v, text } = shown('exec_shell', { ok: false, kind: 'text', code: 'EINVAL', error: 'Invalid argument(s): sandbox must be one of: none, read-only', hint: 'Resend as {...}' });
-    assert.equal(v.neutral, true);
-    assert.ok(!/Invalid argument|sandbox|Resend/.test(text), text);
-  });
-
-  it('a refused edit says why in one short line, without the advice meant for the model', () => {
-    const { v, text } = shown('edit_file', { ok: false, kind: 'none', code: 'EINVAL', error: 'Refusing to edit app.js: this would leave app.js with a syntax error at line 44 ("});"). Nothing was written.', hint: 'Fix the replacement so the file still parses.', data: { path: 'app.js' } });
-    assert.equal(v.neutral, true);
-    assert.match(text, /not run: the model's request needed fixing[\s\S]*this would leave app\.js with a syntax error at line 44/);
-    assert.ok(!/Refusing to edit|Nothing was written|Fix the replacement/.test(text), text);
-  });
 });

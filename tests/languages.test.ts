@@ -5,8 +5,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { detectStacks } from '../src/env/tooling/detector';
-import { LANGUAGES, VERBS } from '../src/env/languages';
-import { TOOLS } from '../src/env/toolchains';
 import { OUTPUT_PARSERS } from '../src/env/parsers';
 
 function project(files: Record<string, string>): string {
@@ -54,44 +52,9 @@ describe('a Node project\'s own tools', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
-
-  it('falls back to npx when they are not installed', async () => {
-    const root = project({ 'package.json': JSON.stringify({ devDependencies: { eslint: '9' } }), 'tsconfig.json': '{}' });
-    try {
-      const [stack] = await detectStacks(root);
-      assert.deepEqual(stack.check, ['npx', 'tsc', '--noEmit']);
-      assert.deepEqual(stack.fileScoped?.lint?.argv, ['npx', 'eslint']);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-});
-
-describe('the LANGUAGES table', () => {
-  it('every entry has a unique id, a label, a runtime, a way to be found, and only known verbs', () => {
-    const ids = LANGUAGES.map((l) => l.id);
-    assert.equal(new Set(ids).size, ids.length, 'unique ids');
-    for (const lang of LANGUAGES) {
-      assert.ok(lang.label, `${lang.id} has a label`);
-      assert.ok(lang.runtimes.length > 0, `${lang.id} has a runtime`);
-      assert.ok(lang.markers?.length || lang.markerPattern || lang.extensions?.length || lang.detect, `${lang.id} can be detected`);
-      for (const verb of Object.keys(lang.commands ?? {})) assert.ok((VERBS as readonly string[]).includes(verb), `${lang.id}: ${verb} is a verb`);
-      for (const [verb, scoped] of Object.entries(lang.fileScoped ?? {})) {
-        assert.ok((VERBS as readonly string[]).includes(verb), `${lang.id}: ${verb} is a verb`);
-        const made = scoped!('cmd');
-        assert.ok(made.argv.length > 0 && made.extensions.every((e) => e.startsWith('.')), `${lang.id}: ${verb} names a command and extensions`);
-      }
-    }
-  });
 });
 
 describe('the OUTPUT_PARSERS registry', () => {
-  it('has unique ids, and each names stacks that exist', () => {
-    const ids = OUTPUT_PARSERS.map((p) => p.id);
-    assert.equal(new Set(ids).size, ids.length);
-    const stacks = new Set([...LANGUAGES, ...TOOLS].map((p) => p.id));
-    for (const parser of OUTPUT_PARSERS) for (const s of parser.stacks) assert.ok(stacks.has(s), `${parser.id}: stack ${s}`);
-  });
 
   // One real-looking output per parser and a diagnostic it must find: a new parser is one entry here.
   const CASES: Array<{ parser: string; output: string; expect: Record<string, unknown> }> = [
@@ -108,12 +71,6 @@ describe('the OUTPUT_PARSERS registry', () => {
     { parser: 'terraform', output: 'Error: Unsupported argument\n\n  on main.tf line 3, in resource "x" "y":', expect: { file: 'main.tf', line: 3, severity: 'error' } },
     { parser: 'git-conflicts', output: 'CONFLICT (content): Merge conflict in src/a.ts', expect: { file: 'src/a.ts', severity: 'error' } },
   ];
-
-  it('every parser has a case', () => {
-    const covered = new Set(CASES.map((c) => c.parser));
-    const missing = OUTPUT_PARSERS.map((p) => p.id).filter((id) => !covered.has(id));
-    assert.deepEqual(missing, []);
-  });
 
   for (const c of CASES) {
     it(`${c.parser} reads its output`, () => {

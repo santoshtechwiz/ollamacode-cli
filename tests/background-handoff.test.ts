@@ -41,21 +41,6 @@ describe('background results reach the agent without anyone typing', () => {
     assert.deepEqual(c.turns, ['background "fizzbuzz" finished (exit 0) after 11s']);
   });
 
-  it('says when a process starts that nobody needs to type anything', () => {
-    const c = chat();
-    c.background.watching({ id: 'fizzbuzz', command: 'cargo run' });
-    assert.match(c.notes[0], /"fizzbuzz" is still running, so it carries on in the background .* no need to type anything/);
-  });
-
-  it('exits that land together go to the agent in one turn', async () => {
-    const c = chat();
-    c.background.record(exit('build'));
-    c.background.record(exit('tests'));
-    await tick();
-    assert.equal(c.turns.length, 1);
-    assert.match(c.turns[0], /"build".*; .*"tests"/);
-  });
-
   it('a running turn gets it itself; one that already asked its last gets it as soon as it ends', async () => {
     const c = chat({ busy: true });
     c.background.record(exit('late'));

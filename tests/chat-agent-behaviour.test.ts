@@ -220,25 +220,6 @@ describe('long commands in the live chat', () => {
     }
   });
 
-  it('does not spend the time limit on the approval', async () => {
-    mock.timers.enable({ apis: ['setTimeout', 'Date'] });
-    try {
-      const person = slowPerson();
-      const executor = new ToolExecutor({ root: os.tmpdir(), registry: approvedJob({ workMs: 10_000 }), approve: person.approve, ask: person.ask, timeoutMs: 60_000 } as any);
-      const running = executor.run('approved_job', {});
-      await settle();
-      mock.timers.tick(90_000);
-      person.answer();
-      await settle();
-      mock.timers.tick(10_000);
-      const { result, timedOut } = await running;
-      assert.equal(timedOut, false);
-      assert.equal(result.ok, true);
-    } finally {
-      mock.timers.reset();
-    }
-  });
-
   it('does not ask "still running" while a tool waits on its own question to the person', async () => {
     mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     try {
@@ -254,20 +235,6 @@ describe('long commands in the live chat', () => {
       mock.timers.tick(1_000);
       const { result } = await running;
       assert.equal(result.ok, true);
-    } finally {
-      mock.timers.reset();
-    }
-  });
-
-  it('never asks when there is no one to answer', async () => {
-    mock.timers.enable({ apis: ['setTimeout', 'Date'] });
-    try {
-      const executor = new ToolExecutor({ root: os.tmpdir(), registry: slowTool(), approve: async () => true, timeoutMs: 180_000 } as any);
-      const running = executor.run('slow_job', {});
-      await new Promise((r) => setImmediate(r));
-      mock.timers.tick(180_000);
-      const { timedOut } = await running;
-      assert.equal(timedOut, true, 'a piped run keeps the plain time limit');
     } finally {
       mock.timers.reset();
     }

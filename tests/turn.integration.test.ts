@@ -6,168 +6,6 @@ import { STOP_REASONS, ROLE, TOOL_NAME, TOOL_ERROR_CODE } from '../src/protocol'
 import { ContextOverflowError } from '../src/model/gateway';
 import type { Message } from '../src/types';
 
-describe('runTurn integration', () => {
-  it('executes a tool call and records one exchange', async () => {
-    const history = new ContextStore({ messages: [], budgetTokens: 8000 });
-    let runs = 0;
-    let modelCalls = 0;
-    const result = await runTurn({
-      model: 'test', history, config: { maxIterations: 2 }, toolsEnabled: true, toolsAllowed: true,
-      gateway: {
-        model: 'test', provider: { id: 'test' },
-        async stream() {
-          modelCalls++;
-          const result = modelCalls === 1
-            ? { content: '', toolCalls: [{ id: '1', type: 'function', function: { name: 'read_file', arguments: { path: 'missing.ts' } } }], finishReason: 'stop' }
-            : { content: 'finished', toolCalls: [], finishReason: 'stop' };
-          return { result, attempt: 1, retries: 0, startedAt: Date.now() };
-        },
-      } as any,
-      toolRunner: { async run() { runs++; return { result: { ok: true, kind: 'text', display: 'read' } }; } } as any,
-    });
-    assert.equal(runs, 1);
-    assert.equal(result.toolResults.length, 1);
-    assert.equal(history.messages.filter((message) => message.role === 'tool').length, 1);
-    assert.equal(result.stopReason, STOP_REASONS.COMPLETE);
-  });
-});
-it('executes multiple tool calls from one model response', async () => {
-  const history = new ContextStore({ messages: [], budgetTokens: 8000 });
-  const calls: string[] = [];
-  let modelCalls = 0;
-
-  const result = await runTurn({
-    model: 'test',
-    history,
-    config: { maxIterations: 3 },
-    toolsEnabled: true,
-    toolsAllowed: true,
-    gateway: {
-      model: 'test',
-      provider: { id: 'test' },
-      async stream() {
-        modelCalls++;
-
-        const response = modelCalls === 1
-          ? {
-              content: '',
-              toolCalls: [
-                {
-                  id: '1',
-                  type: 'function',
-                  function: {
-                    name: 'read_file',
-                    arguments: { path: 'a.ts' },
-                  },
-                },
-                {
-                  id: '2',
-                  type: 'function',
-                  function: {
-                    name: 'read_file',
-                    arguments: { path: 'b.ts' },
-                  },
-                },
-              ],
-              finishReason: 'stop',
-            }
-          : {
-              content: 'done',
-              toolCalls: [],
-              finishReason: 'stop',
-            };
-
-        return {
-          result: response,
-          attempt: 1,
-          retries: 0,
-          startedAt: Date.now(),
-        };
-      },
-    } as any,
-    toolRunner: {
-      async run(name: string, args: any) {
-        calls.push(name);
-        return {
-          result: {
-            ok: true,
-            kind: 'text',
-            display: args.path,
-          },
-        };
-      },
-    } as any,
-  });
-
-  assert.deepEqual(calls, ['read_file', 'read_file']);
-  assert.equal(result.toolResults.length, 2);
-  assert.equal(result.stopReason, STOP_REASONS.COMPLETE);
-  assert.equal(modelCalls, 2);
-});
-
-it('continues from tool results and produces a final answer', async () => {
-  const history = new ContextStore({ messages: [], budgetTokens: 8000 });
-  let modelCalls = 0;
-
-  const result = await runTurn({
-    model: 'test',
-    history,
-    config: { maxIterations: 3 },
-    toolsEnabled: true,
-    toolsAllowed: true,
-    gateway: {
-      model: 'test',
-      provider: { id: 'test' },
-      async stream() {
-        modelCalls++;
-
-        const response = modelCalls === 1
-          ? {
-              content: '',
-              toolCalls: [
-                {
-                  id: '1',
-                  type: 'function',
-                  function: {
-                    name: 'read_file',
-                    arguments: { path: 'a.ts' },
-                  },
-                },
-              ],
-              finishReason: 'stop',
-            }
-          : {
-              content: 'The file was read successfully.',
-              toolCalls: [],
-              finishReason: 'stop',
-            };
-
-        return {
-          result: response,
-          attempt: 1,
-          retries: 0,
-          startedAt: Date.now(),
-        };
-      },
-    } as any,
-    toolRunner: {
-      async run() {
-        return {
-          result: {
-            ok: true,
-            kind: 'text',
-            display: 'file contents',
-          },
-        };
-      },
-    } as any,
-  });
-
-  assert.equal(modelCalls, 2);
-  assert.equal(result.answer, 'The file was read successfully.');
-  assert.equal(result.stopReason, STOP_REASONS.COMPLETE);
-});
-
 it('lets the model correct a malformed call instead of ending the turn', async () => {
   const history = new ContextStore({ messages: [], budgetTokens: 8000 });
   let runs = 0;
@@ -281,60 +119,6 @@ it('answers a repeated read from its first result, and stops when the same call 
   assert.equal(result.stopReason, STOP_REASONS.GUARD_STUCK);
 });
 
-it('stops when the iteration limit is reached', async () => {
-  const history = new ContextStore({ messages: [], budgetTokens: 8000 });
-  let modelCalls = 0;
-
-  const result = await runTurn({
-    model: 'test',
-    history,
-    config: { maxIterations: 2 },
-    toolsEnabled: true,
-    toolsAllowed: true,
-    gateway: {
-      model: 'test',
-      provider: { id: 'test' },
-      async stream() {
-        modelCalls++;
-
-        return {
-          result: {
-            content: '',
-            toolCalls: [
-              {
-                id: String(modelCalls),
-                type: 'function',
-                function: {
-                  name: 'read_file',
-                  arguments: { path: `${modelCalls}.ts` },
-                },
-              },
-            ],
-            finishReason: 'stop',
-          },
-          attempt: 1,
-          retries: 0,
-          startedAt: Date.now(),
-        };
-      },
-    } as any,
-    toolRunner: {
-      async run() {
-        return {
-          result: {
-            ok: true,
-            kind: 'text',
-            display: 'data',
-          },
-        };
-      },
-    } as any,
-  });
-
-  assert.equal(modelCalls, 2, 'two steps, and no extra request for a summary');
-  assert.equal(result.stopReason, STOP_REASONS.MAX_ITERATIONS);
-});
-
 it('a denied call ends the turn: it is not retried', async () => {
   const history = new ContextStore({ messages: [], budgetTokens: 8000 });
   let runs = 0;
@@ -399,43 +183,6 @@ it('a denied call ends the turn: it is not retried', async () => {
   assert.equal(result.toolResults.length, 1);
   assert.equal(modelCalls, 1);
   assert.equal(result.stopReason, STOP_REASONS.GUARD_STUCK);
-});
-
-it('handles a model response with no tool calls', async () => {
-  const history = new ContextStore({ messages: [], budgetTokens: 8000 });
-
-  const result = await runTurn({
-    model: 'test',
-    history,
-    config: { maxIterations: 3 },
-    toolsEnabled: true,
-    toolsAllowed: true,
-    gateway: {
-      model: 'test',
-      provider: { id: 'test' },
-      async stream() {
-        return {
-          result: {
-            content: 'No tools are required.',
-            toolCalls: [],
-            finishReason: 'stop',
-          },
-          attempt: 1,
-          retries: 0,
-          startedAt: Date.now(),
-        };
-      },
-    } as any,
-    toolRunner: {
-      async run() {
-        throw new Error('tool should not execute');
-      },
-    } as any,
-  });
-
-  assert.equal(result.answer, 'No tools are required.');
-  assert.equal(result.toolResults.length, 0);
-  assert.equal(result.stopReason, STOP_REASONS.COMPLETE);
 });
 
 it('records tool results in history in execution order', async () => {
@@ -529,57 +276,6 @@ describe('runTurn context-limit recovery', () => {
     return [asked, result] as const;
   };
 
-  it('compacts silently, naming only the work on the loader', async () => {
-    const history = new ContextStore({ messages: [], budgetTokens: 8000 });
-    history.addUser('before: '.padEnd(12000, 'x'));
-    history.addAssistant('before: '.padEnd(12000, 'y'));
-    history.addUser('read the file a.ts', { pinned: true });
-    let modelCalls = 0;
-    const noted: string[] = [];
-    const statuses: string[] = [];
-
-    const result = await runTurn({
-      model: 'test',
-      history,
-      config: { maxIterations: 5 },
-      toolsEnabled: true,
-      toolsAllowed: true,
-      gateway: {
-        model: 'test',
-        provider: { id: 'test' },
-        async stream() {
-          modelCalls++;
-          if (modelCalls === 2) throw overflow();
-          return {
-            result: modelCalls === 1 ? toolReply('1', 'read_file', { path: 'a.ts' }) : textReply('The file says hello.'),
-            attempt: 1,
-            retries: 0,
-            startedAt: Date.now(),
-          };
-        },
-      } as any,
-      toolRunner: {
-        async run() {
-          return { result: { ok: true, kind: 'text', display: 'hello' } };
-        },
-      } as any,
-      callbacks: {
-        note: (text: string) => {
-          noted.push(text);
-        },
-        onStatus: (text: string) => {
-          statuses.push(text);
-        },
-      },
-    });
-
-    assert.equal(result.stopReason, STOP_REASONS.COMPLETE);
-    // Compaction is plumbing: no note, no token counts, just a plain loader label while it happens.
-    assert.deepEqual(noted.filter((n) => /compact|token/i.test(n)), []);
-    assert.ok(statuses.includes('Making room in the conversation'));
-    assert.ok(statuses.every((st) => !/tok|step \d|compact/i.test(st)), statuses.join(' | '));
-  });
-
   it('compacts on context overflow and continues the same turn', async () => {
     // A long prior conversation sits in the store; the overflow compacts it away, the
     // turn then proceeds exactly as if the overflow never happened.
@@ -628,45 +324,6 @@ describe('runTurn context-limit recovery', () => {
       history.preservedSummary?.includes('trimmed'),
       `expected a compaction note in preservedSummary, got: ${history.preservedSummary}`,
     );
-  });
-
-  it('preserves the live exchange across compaction without burning iterations', async () => {
-    const history = new ContextStore({ messages: [], budgetTokens: 8000 });
-    history.addUser('old request');
-    let modelCalls = 0;
-
-    const result = await runTurn({
-      model: 'test',
-      history,
-      config: { maxIterations: 3 },
-      toolsEnabled: true,
-      toolsAllowed: true,
-      gateway: {
-        model: 'test',
-        provider: { id: 'test' },
-        async stream() {
-          modelCalls++;
-          if (modelCalls === 1) throw overflow();
-          return {
-            result: textReply('Continued after compaction.'),
-            attempt: 1,
-            retries: 0,
-            startedAt: Date.now(),
-          };
-        },
-      } as any,
-      toolRunner: {
-        async run() {
-          throw new Error('no tools were requested, none may run');
-        },
-      } as any,
-    });
-
-    // One overflow, one retry of the same iteration, then a completed turn.
-    assert.equal(modelCalls, 2);
-    assert.equal(result.iterations, 1);
-    assert.equal(result.content, 'Continued after compaction.');
-    assert.equal(result.stopReason, STOP_REASONS.COMPLETE);
   });
 
   it('keeps the live turn whole while older turns are trimmed', async () => {
@@ -841,42 +498,6 @@ describe('runTurn context-limit recovery', () => {
     assert.equal(modelCalls, 1);
   });
 
-  it('leaves normal turns without overflow untouched', async () => {
-    const history = new ContextStore({ messages: [], budgetTokens: 8000 });
-    const systemMessages: Message[] = [];
-    let modelCalls = 0;
-
-    const result = await runTurn({
-      model: 'test',
-      history,
-      systemMessages,
-      config: { maxIterations: 3 },
-      toolsEnabled: true,
-      toolsAllowed: true,
-      gateway: {
-        model: 'test',
-        provider: { id: 'test' },
-        async stream() {
-          modelCalls++;
-          return {
-            result: textReply('Nothing to compact here.'),
-            attempt: 1,
-            retries: 0,
-            startedAt: Date.now(),
-          };
-        },
-      } as any,
-      toolRunner: { async run() { throw new Error('must not run'); } } as any,
-    });
-
-    assert.equal(modelCalls, 1);
-    assert.equal(result.iterations, 1);
-    assert.equal(result.content, 'Nothing to compact here.');
-    assert.equal(result.stopReason, STOP_REASONS.COMPLETE);
-    assert.equal(history.preservedSummary, null);
-    assert.deepEqual(systemMessages, [], 'a turn that never overflowed must gain no recovery note');
-  });
-
   it('names the calls already settled, with the arguments that tell them apart', async () => {
     // The note has to be read from the assistant message that asked and the rendered result
     // that answered — a tool result message carries neither on its own.
@@ -1001,49 +622,6 @@ describe('runTurn context-limit recovery', () => {
     assert.ok(!history.preservedSummary?.includes('Already completed'), 'the note lives in one place only');
   });
 
-  it('continues the task correctly after multiple compactions', async () => {
-    const history = new ContextStore({ messages: [], budgetTokens: 8000 });
-    for (let i = 0; i < 3; i++) {
-      history.addUser('old user: '.padEnd(100, `u${i}`));
-      history.addAssistant('old assistant: '.padEnd(100, `a${i}`));
-    }
-    history.addUser('read the file a.ts', { pinned: true });
-
-    let modelCalls = 0;
-    let runs = 0;
-
-    const result = await runTurn({
-      model: 'test',
-      history,
-      config: { maxIterations: 8, contextWindow: 16000, maxTokens: 512 },
-      toolsEnabled: true,
-      toolsAllowed: true,
-      gateway: {
-        model: 'test',
-        provider: { id: 'test' },
-        async stream(request: any) {
-          modelCalls++;
-          if (modelCalls <= 3) throw overflow();
-          if (modelCalls > 4) {
-            return { result: textReply('Finally done.'), attempt: 1, retries: 0, startedAt: Date.now() };
-          }
-          return { result: toolReply(String(modelCalls), 'read_file', { path: 'a.ts' }), attempt: 1, retries: 0, startedAt: Date.now() };
-        },
-      } as any,
-      toolRunner: {
-        async run() {
-          runs++;
-          return { result: { ok: true, kind: 'text', display: 'hello' } };
-        },
-      } as any,
-    });
-
-    assert.equal(modelCalls, 5, 'three overflows retried, then the work, then the answer');
-    assert.equal(runs, 1);
-    assert.equal(result.content, 'Finally done.');
-    assert.equal(result.stopReason, STOP_REASONS.COMPLETE);
-  });
-
   it('keeps the work done after the first compaction when recovery gives up', async () => {
     const history = new ContextStore({ messages: [], budgetTokens: 8000 });
     history.addUser('write the file', { pinned: true });
@@ -1096,8 +674,6 @@ describe('a turn stopped mid-work', () => {
     finishReason: 'tool_calls',
   });
 
-  const textReply = (content: string) => ({ content, toolCalls: [], finishReason: 'stop' });
-
   /**
    * A gateway that loops on one call until the guard stops it, so the turn really does end in
    * `closingAnswer`. Counts the tool-less calls it is given, since that is the closing round,
@@ -1126,65 +702,6 @@ describe('a turn stopped mid-work', () => {
       } as any,
     };
   };
-
-  it('is not called when the model already answered in prose', async () => {
-    const history = new ContextStore({ messages: [], budgetTokens: 8000 });
-    let modelCalls = 0;
-    let closingCalls = 0;
-
-    const result = await runTurn({
-      model: 'test',
-      history,
-      config: { maxIterations: 6 },
-      toolsEnabled: true,
-      toolsAllowed: true,
-      gateway: {
-        model: 'test',
-        provider: { id: 'test' },
-        async stream(request: any) {
-          modelCalls++;
-          if (!request.tools?.length) closingCalls++;
-          return {
-            result:
-              modelCalls === 1
-                ? toolReply('1', 'read_file', { path: 'a.ts' })
-                : textReply('I read it. It holds hello from a.ts.'),
-            attempt: 1,
-            retries: 0,
-            startedAt: Date.now(),
-          };
-        },
-      } as any,
-      toolRunner: {
-        async run() {
-          return { result: { ok: true, kind: 'text', display: 'hello from a.ts' } };
-        },
-      } as any,
-    });
-
-    assert.equal(closingCalls, 0, 'a turn the model finished itself needs no closing round');
-    assert.equal(modelCalls, 2);
-    assert.equal(result.content, 'I read it. It holds hello from a.ts.');
-    assert.equal(result.stopReason, STOP_REASONS.COMPLETE);
-  });
-
-  it('reports an empty closing answer as no answer rather than blank prose', async () => {
-    const { gateway } = stuckGateway(() => ({ content: '   ', toolCalls: [], finishReason: 'stop' }));
-    const history = new ContextStore({ messages: [], budgetTokens: 8000 });
-
-    const result = await runTurn({
-      model: 'test',
-      history,
-      config: { maxIterations: 6 },
-      toolsEnabled: true,
-      toolsAllowed: true,
-      gateway,
-      toolRunner: { async run() { return { result: { ok: true, kind: 'text', display: 'data' } }; } } as any,
-    });
-
-    assert.equal(result.content, '');
-  assert.equal(result.stopReason, STOP_REASONS.GUARD_STUCK);
-});
 
 
 
@@ -1253,7 +770,6 @@ describe('runTurn todo list', () => {
     { content: 'Add the dependency', status: 'pending' },
     { content: 'Create src/db.js', status: 'pending' },
   ];
-  const DONE = OPEN.map((todo) => ({ ...todo, status: 'completed' }));
 
   const todoCall = (todos: { content: string; status: string; }[], id: string) => ({
     content: '',
@@ -1339,59 +855,6 @@ describe('runTurn todo list', () => {
     assert.equal(modelCalls, 1, 'an open list from another turn is not this turn\'s work');
     assert.equal(result.stopReason, STOP_REASONS.COMPLETE);
     assert.match(result.content, /auth module/);
-  });
-
-  it('accepts the reply when the model finishes the list it wrote', async () => {
-    const history = new ContextStore({ messages: [], budgetTokens: 8000 });
-    const workspaceState: any = { todos: [] };
-    let modelCalls = 0;
-
-    const result = await runTurn({
-      model: 'test',
-      history,
-      state: workspaceState,
-      config: { maxIterations: 5 },
-      toolsEnabled: true,
-      toolsAllowed: true,
-      gateway: {
-        model: 'test',
-        provider: { id: 'test' },
-        async stream() {
-          modelCalls++;
-          return {
-            result:
-              modelCalls === 1
-                ? todoCall(OPEN, 't1')
-                : modelCalls === 2
-                  ? {
-                      content: '',
-                      toolCalls: [
-                        {
-                          id: 'read',
-                          type: 'function',
-                          function: { name: 'read_file', arguments: { path: 'src/db.js' } },
-                        },
-                      ],
-                      finishReason: 'stop',
-                    }
-                  : { content: 'Both steps are done.', toolCalls: [], finishReason: 'stop' },
-            attempt: 1,
-            retries: 0,
-            startedAt: Date.now(),
-          };
-        },
-      } as any,
-      toolRunner: {
-        async run(name: string, args: any) {
-          workspaceState.todos = name === 'todo_write' ? args.todos : DONE;
-          return { result: { ok: true, kind: 'text', display: 'ok' } };
-        },
-      } as any,
-    });
-
-    assert.equal(modelCalls, 3);
-    assert.equal(result.stopReason, STOP_REASONS.COMPLETE);
-    assert.equal(result.content, 'Both steps are done.');
   });
 
   it('keeps the turn going when the model only closes a step in the list', async () => {

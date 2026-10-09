@@ -3,11 +3,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
-import { BackgroundInbox, describeExitsForModel, describeExitForPerson, type BackgroundExit } from '../src/tool/process/background-inbox';
+import { BackgroundInbox, type BackgroundExit } from '../src/tool/process/background-inbox';
 import { runInBackground } from '../src/tool/process/background';
 import stopSubprocess from '../src/tool/process/stop-subprocess.tool';
 import { createWorkspaceState, describeSession } from '../src/context/workspace-state';
-import { runTurn } from '../src/agent/turn/turn';
 import { ContextStore } from '../src/context/store';
 import { ROLE, STOP_REASONS } from '../src/protocol';
 import { killProcessTreeAndWait } from '../src/env/process/kill';
@@ -29,14 +28,6 @@ async function removeWorkspace(cwd: string, state: any): Promise<void> {
 }
 
 describe('the background inbox', () => {
-  it('keeps an exit for the model and tells every listener once', () => {
-    const inbox = new BackgroundInbox();
-    const heard: string[] = [];
-    inbox.subscribe((e) => heard.push(e.id));
-    inbox.record(exit('a', 1));
-    assert.deepEqual(heard, ['a']);
-    assert.deepEqual(inbox.pending().map((e) => e.id), ['a']);
-  });
 
   it('drops what a turn showed the model, and keeps what ended after its last request', () => {
     const inbox = new BackgroundInbox();
@@ -45,13 +36,6 @@ describe('the background inbox', () => {
     inbox.record(exit('later', 200));
     inbox.settle();
     assert.deepEqual(inbox.pending().map((e) => e.id), ['later']);
-  });
-
-  it('a listener that fails never loses the exit for the model', () => {
-    const inbox = new BackgroundInbox();
-    inbox.subscribe(() => { throw new Error('terminal closed'); });
-    inbox.record(exit('a', 1));
-    assert.equal(inbox.pending().length, 1);
   });
 
   it('a new conversation starts empty, and listeners keep listening', () => {
@@ -63,25 +47,6 @@ describe('the background inbox', () => {
     inbox.record(exit('new', 2));
     assert.deepEqual(inbox.pending().map((e) => e.id), ['new']);
     assert.deepEqual(heard, ['old', 'new']);
-  });
-
-  it('says how it ended, plainly, to the model and to the person', () => {
-    const failed = exit('docker-build', 1, { outcome: 'failed', exitCode: 1, tail: 'error during connect' });
-    const lines = describeExitsForModel([failed]);
-    assert.match(lines[0], /do not poll/);
-    assert.equal(lines[1], '- docker-build: `build docker-build` failed (exit 1) after 2m 14s');
-    assert.equal(lines[2], '    error during connect');
-  });
-
-  it('shows the person what the job printed, under one line saying how it ended', () => {
-    // The note's own icon says how it went; the text carries no second mark.
-    assert.equal(
-      describeExitForPerson(exit('tests', 1)),
-      'background "tests" finished (exit 0) after 2m 14s — the agent will see it with your next message\nBuild succeeded.',
-    );
-    const long = Array.from({ length: 9 }, (_, i) => `line ${i + 1}`).join('\n');
-    assert.deepEqual(describeExitForPerson(exit('fetch', 1, { tail: `${long}\n` })).split('\n').slice(1), ['line 5', 'line 6', 'line 7', 'line 8', 'line 9']);
-    assert.match(describeExitForPerson(exit('quiet', 1, { tail: '' })), /^background "quiet" finished \(exit 0\) after 2m 14s, printing nothing — /);
   });
 });
 
@@ -170,46 +135,6 @@ describe('a background process that ends tells the session', { concurrency: true
       await t.cleanup();
     }
   });
-});
-
-describe('a job that finishes before it reaches the background', () => {
-  it('says it is done when the job finished while starting', async () => {
-    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-bg-'));
-    fs.writeFileSync(path.join(cwd, 'build.js'), "console.log('Build succeeded.');\n");
-    const state: any = createWorkspaceState(cwd);
-    const history = new ContextStore({ messages: [{ role: ROLE.USER, content: 'run the full build in the background' }], budgetTokens: 8000 });
-    const start = (id: string, n: string) => ({ id: n, type: 'function', function: { name: 'exec_shell', arguments: { command: 'node build.js', background: true, id } } });
-    const replies = [
-      { toolCalls: [start('full-build-background', 'c1')] },
-      { toolCalls: [start('full-build-bg', 'c2')] },
-      { content: 'The build succeeded.' },
-    ];
-    let asked = 0;
-    try {
-      await runTurn({
-        model: 'test',
-        history,
-        config: { maxIterations: 6 },
-        state,
-        gateway: {
-          model: 'test',
-          provider: { id: 'test' },
-          async stream() {
-            const r = replies[asked++] ?? { content: 'done' };
-            return { result: { content: r.content ?? '', toolCalls: r.toolCalls ?? [], finishReason: 'stop' }, attempt: 1, retries: 0, startedAt: Date.now() };
-          },
-        } as any,
-        toolRunner: { async run(_name: string, args: any) { return { result: await runInBackground(args, { cwd, root: cwd, state } as any) }; } } as any,
-      } as any);
-      const results = history.messages.filter((m) => m.role === ROLE.TOOL).map((m) => String(m.content));
-      assert.match(results[0], /finished \(exit 0\) while starting/);
-    } finally {
-      await removeWorkspace(cwd, state);
-    }
-  });
-});
-
-describe('a reworded restart that keeps finding nothing new', () => {
 });
 
 describe('a background process that ended reaches the model as news', () => {

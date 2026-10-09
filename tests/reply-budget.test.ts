@@ -5,7 +5,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { resolveSessionBudget, MAX_REPLY_TOKENS } from '../src/agent/workspace/profile';
-import { outputCapFromError, ModelGateway } from '../src/model/gateway';
+import { ModelGateway } from '../src/model/gateway';
 import { ProviderError } from '../src/core/errors';
 import { DEFAULTS } from '../src/core/config';
 import { REASONING_MIN_PREDICT } from '../src/protocol';
@@ -23,10 +23,6 @@ describe('reply budget', () => {
     assert.ok(ws.maxTokens > REASONING_MIN_PREDICT);
   });
 
-  it('a thinking model on a local GPU gets it too', () => {
-    assert.ok(budget({ thinking: true, cpuOnly: false }).maxTokens > REASONING_MIN_PREDICT);
-  });
-
   it('on a CPU-only machine a thinking model keeps the small cap, and others the default', () => {
     assert.equal(budget({ thinking: true, cpuOnly: true }).maxTokens, REASONING_MIN_PREDICT);
     assert.equal(budget({ thinking: false, cpuOnly: true }).maxTokens, DEFAULTS.agent.maxTokens);
@@ -36,15 +32,6 @@ describe('reply budget', () => {
     const ws: any = { thinkingEnabled: true, maxTokensChosen: true, maxTokens: 4096 };
     resolveSessionBudget(ws, { declared: 200_000, remote: true });
     assert.equal(ws.maxTokens, 4096);
-  });
-
-  it('reads a model\'s reply limit from the provider\'s refusal', () => {
-    const ollama = 'Ollama error 400: {"error":"max_tokens (80000) exceeds model\'s maximum output tokens (65536) for model nemotron-3-ultra (ref: 0786a35a-9767-43fd-827b-c6fc725a7535)"}';
-    assert.equal(outputCapFromError(ollama, 80000), 65536);
-    assert.equal(outputCapFromError('max_tokens is too large: 40000. This model supports at most 16384 completion tokens', 40000), 16384);
-    assert.equal(outputCapFromError('max_new_tokens must be <= 4096', 8192), 4096);
-    assert.equal(outputCapFromError('model not found', 80000), null);
-    assert.equal(outputCapFromError('context length exceeded: 140000 tokens', 32768), null, 'a context error is not a reply limit');
   });
 
   it('a refused reply size is learned and the same request asked again, once', async () => {

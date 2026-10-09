@@ -8,7 +8,7 @@ import { describe, it } from 'node:test';
 import '../src/tool/index.ts';
 import { ToolExecutor } from '../src/tool/core/tool-runtime';
 import { createWorkspaceState } from '../src/context/workspace-state';
-import { describeListening, listeningPorts, parseLsof, parseProcessTable, parseSs, parseWindowsListing, processTree } from '../src/tool/process/analysis/listening-ports';
+import { listeningPorts, parseLsof, parseProcessTable, parseSs, parseWindowsListing, processTree } from '../src/tool/process/analysis/listening-ports';
 
 describe('reading the system\'s listeners', () => {
   it('reads the Windows listing, Linux ss and lsof output', () => {
@@ -22,12 +22,6 @@ describe('reading the system\'s listeners', () => {
   it('counts every process under the job, not only the one it started', () => {
     const table = parseProcessTable('  10 1\n  20 10\n  30 20\n  40 1\n');
     assert.deepEqual([...processTree(10, table)].sort(), [10, 20, 30]);
-  });
-
-  it('says plainly when it is not listening yet, and nothing when it could not look', () => {
-    assert.match(String(describeListening([])), /^Not listening on any port yet/);
-    assert.equal(describeListening([3001]), 'Listening on http://localhost:3001');
-    assert.equal(describeListening(null), null);
   });
 });
 

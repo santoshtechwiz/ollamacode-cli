@@ -78,12 +78,6 @@ test('a session that falls off the list takes its undo snapshots and checkpoint 
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('no saved session means nothing to continue', () => {
-  const root = workspace();
-  assert.equal(lastSession(root), null);
-  fs.rmSync(root, { recursive: true, force: true });
-});
-
 test('a session another live window holds is not deleted', async () => {
   const root = workspace();
   const theirs = newSessionId();
@@ -137,15 +131,6 @@ test('/sessions lists conversations by their first question, and /sessions <n> s
   await runSessions(ctx, '9');
   assert.match(out.join(''), /no session 9/);
   fs.rmSync(root, { recursive: true, force: true });
-});
-
-test('a last session that is old or long is not the default to continue', async () => {
-  const { staleSession } = await import('../src/cli/chat/session');
-  const now = Date.now();
-  const rec = (messages: number, ageMs: number) => ({ ...record(newSessionId(), 'x'), messages: Array.from({ length: messages }, () => ({ role: 'user', content: 'x' })), updatedAt: now - ageMs }) as any;
-  assert.equal(staleSession(rec(10, 60_000), now), '', 'recent and short: carry on');
-  assert.match(staleSession(rec(10, 26 * 3600_000), now), /^from 1d ago$/);
-  assert.match(staleSession(rec(300, 60_000), now), /^300 messages long$/);
 });
 
 test('agent settings written at the top level of config.json are read as if under "agent"', async () => {

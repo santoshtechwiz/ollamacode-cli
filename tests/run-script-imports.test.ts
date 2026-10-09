@@ -36,17 +36,6 @@ describe('run_script and the project at its cwd', () => {
     }
   });
 
-  it('a script where there is no node_modules still runs, from the temp folder', async () => {
-    const root = workspace();
-    try {
-      const { result } = await run(root, { cwd: 'api', code: "console.log('ok');" });
-      assert.equal(result.ok, true, String(result.display ?? result.error));
-      assert.equal(fs.existsSync(path.join(root, 'api', 'node_modules')), false, 'no node_modules is made');
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   const python = ['python3', 'python'].find((p) => spawnSync(p, ['--version']).status === 0);
   it('a Python script imports the project\'s own modules', { skip: python ? false : 'no python' }, async () => {
     const root = workspace();

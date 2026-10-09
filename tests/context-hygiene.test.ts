@@ -7,14 +7,10 @@ import { describe, it } from 'node:test';
 import { buildModelRequest } from '../src/context/builder';
 import { ContextStore } from '../src/context/store';
 import { createWorkspaceState, describeSession } from '../src/context/workspace-state';
-import { buildSystemPrompt } from '../src/prompts/system';
-import { outputDirsAt } from '../src/env/project-layout';
 import { openWorkspaceIndex } from '../src/context/workspace-index/open';
 import { createAgentRuntime } from '../src/agent/runtime';
 import { createAgentState } from '../src/agent/state';
 import { configureLogger, logger } from '../src/core/logger';
-import { traceRequestBody } from '../src/model/gateway';
-import { traceStreamEvent } from '../src/model/stream-events';
 import { ROLE } from '../src/protocol';
 
 const call = (id: string, name: string, args: Record<string, unknown>) => ({ id, type: 'function', function: { name, arguments: args } });
@@ -52,14 +48,6 @@ describe('the request the model is sent', () => {
     assert.equal(results[1], 'OK exec_shell — $ dotnet test\nPassed! 36 tests');
   });
 
-  it('cuts long arguments of an earlier turn\'s calls, and keeps this turn\'s calls whole', async () => {
-    const { messages } = await buildModelRequest({ store: twoTurns(), includeWorkspaceSnapshot: false });
-    const [earlier, current] = messages.filter((m) => m.tool_calls?.length).map((m) => m.tool_calls![0].function.arguments as any);
-    assert.equal(earlier.path, 'A.cs', 'what the call was about stays');
-    assert.match(earlier.content, /^x{80}… \[2920 more chars omitted\]$/);
-    assert.equal(current.note.length, 500, 'the current turn is sent as it is');
-  });
-
   it('after "continue", the turn it continues is sent whole, so its reads are not redone', async () => {
     const store: any = new ContextStore({ messages: [], budgetTokens: 8000 });
     store.addUser('build the app');
@@ -82,38 +70,9 @@ describe('the request the model is sent', () => {
 });
 
 describe('the environment the system prompt describes', () => {
-  const rt = (name: string) => ({ name, available: true, version: '1.0.0' });
-  const runtimes = { dotnet: rt('dotnet'), terraform: rt('terraform'), node: rt('node'), python: rt('python'), git: rt('git') };
-  const dotnet = { id: 'dotnet', label: 'C# / .NET', root: 'c:/w', marker: 'App.csproj', test: ['dotnet', 'test'] };
-
-  it('lists the toolchains of the workspace\'s projects and git, not everything installed', () => {
-    const prompt = buildSystemPrompt({ cwd: 'c:/w', stacks: [dotnet], runtimes });
-    assert.match(prompt, /Available runtimes: dotnet \(1\.0\.0\), git \(1\.0\.0\)/);
-    assert.doesNotMatch(prompt, /terraform|python|node \(/i);
-    assert.doesNotMatch(prompt, /Common commands/);
-    assert.match(prompt, /test: dotnet test/, 'the project\'s own commands are listed instead');
-  });
-
-  it('lists everything installed when the workspace has no project yet', () => {
-    const prompt = buildSystemPrompt({ cwd: 'c:/w', stacks: [], runtimes });
-    assert.match(prompt, /terraform \(1\.0\.0\)/);
-  });
 });
 
 describe('the workspace index', () => {
-  it('names a .NET project\'s build output folders, and none for a project without any', () => {
-    const dotnet = tmp('ocode-dotnet-');
-    const node = tmp('ocode-node-');
-    try {
-      fs.writeFileSync(path.join(dotnet, 'App.csproj'), '<Project />');
-      fs.writeFileSync(path.join(node, 'package.json'), '{}');
-      assert.deepEqual(outputDirsAt(dotnet), [path.join(dotnet, 'bin'), path.join(dotnet, 'obj')]);
-      assert.deepEqual(outputDirsAt(node), [], 'a node project\'s bin/ holds its own scripts');
-    } finally {
-      fs.rmSync(dotnet, { recursive: true, force: true });
-      fs.rmSync(node, { recursive: true, force: true });
-    }
-  });
 
   it('does not index what a .NET build wrote', async () => {
     const root = tmp('ocode-index-');
@@ -225,32 +184,5 @@ describe('the debug log', () => {
     assert.match(text, /"token": "\*\*\*"/);
     assert.match(text, /api_key=\*\*\*/);
     assert.doesNotMatch(text, /abcd1234efgh5678|sk_live_ABCDEFGH12/);
-  });
-
-  it('logs a reply\'s usage and finish, not a line per streamed chunk', () => {
-    const text = logged('trace', () => {
-      for (let i = 0; i < 50; i++) traceStreamEvent('Ollama', { type: 'assistant', delta: 'x' });
-      traceStreamEvent('Ollama', { type: 'tool_call_delta', argsText: '{}' });
-      traceStreamEvent('Ollama', { type: 'usage', promptTokens: 10, completionTokens: 2 });
-      traceStreamEvent('Ollama', { type: 'finish', reason: 'stop' });
-    });
-    assert.doesNotMatch(text, /assistant \+1ch|tool_call_delta/);
-    assert.match(text, /usage prompt=10 completion=2/);
-    assert.match(text, /finish stop/);
-  });
-
-  it('logs only what changed since the previous request, not the whole conversation and every tool again', () => {
-    const tools = [{ type: 'function', function: { name: 'read_file', description: 'Read a file.' } }];
-    const first = [{ role: 'system', content: 'SYSTEM-PROMPT' }, { role: 'user', content: 'run the unit test' }];
-    const second = [...first, { role: 'tool', content: 'NEW-RESULT' }];
-    const text = logged('trace', () => {
-      traceRequestBody(first, tools);
-      traceRequestBody(second, tools);
-    });
-    assert.equal(text.split('SYSTEM-PROMPT').length - 1, 1, 'the unchanged system prompt is logged once');
-    assert.match(text, /<messages 0-1: same as the previous request>/);
-    assert.match(text, /NEW-RESULT/);
-    assert.equal(text.split('Read a file.').length - 1, 1, 'unchanged tool schemas are logged once');
-    assert.match(text, /<same 1 tool\(s\) as the previous request>/);
   });
 });

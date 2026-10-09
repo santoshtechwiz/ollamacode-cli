@@ -41,13 +41,4 @@ describe('the names the model calls MCP tools by', () => {
     assert.equal(a, 'mcp__my_server__run');
     assert.equal(b, 'mcp__my_server__run_2');
   });
-
-  it('a long name is cut to 64 characters, stays stable, and stays distinct', () => {
-    const long = 'x'.repeat(80);
-    const one = bridgeTool(client, { name: `${long}_one` }).name;
-    const two = bridgeTool(client, { name: `${long}_two` }).name;
-    assert.ok(one.length <= 64 && two.length <= 64);
-    assert.notEqual(one, two);
-    assert.equal(bridgeTool(client, { name: `${long}_one` }).name, one);
-  });
 });

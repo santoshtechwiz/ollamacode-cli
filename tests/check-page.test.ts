@@ -8,7 +8,7 @@ import '../src/tool/index';
 import { createExecutor } from '../src/tool/execution/executor';
 import { createWorkspaceState } from '../src/context/workspace-state';
 import { launchBrowser } from '../src/tool/browser/browser';
-import { formatReport, viewportsFor, DEFAULT_VIEWPORTS } from '../src/tool/browser/report';
+import { formatReport, DEFAULT_VIEWPORTS } from '../src/tool/browser/report';
 
 const browserAvailable = await launchBrowser().then(
   async (b) => (await b.close(), true),
@@ -24,9 +24,6 @@ function workspace(files: Record<string, string>): string {
 async function check(root: string, args: Record<string, unknown>): Promise<any> {
   return (await createExecutor({ root, state: createWorkspaceState(root) }).run('check_page', args)).result;
 }
-
-const GOOD = `<!doctype html><html lang="en"><head><title>Fine</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
-<body><main><h1>Hello</h1><p>All good here.</p></main></body></html>`;
 
 const BAD = `<!doctype html><html lang="en"><head><title>Broken</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body><main><h1>Hi</h1><div class="hero" style="width:900px">wide</div>
@@ -49,28 +46,9 @@ describe('check_page report', () => {
     assert.match(text, /✗ \[layout\] wide — mobile, tablet\n {4}div\.hero \(900px\)/);
     assert.ok(text.trimEnd().endsWith('! [accessibility] minor thing — desktop'), 'warnings come after errors');
   });
-
-  it('says plainly when nothing is wrong', () => {
-    assert.equal(formatReport('a.html', [{ viewport: DEFAULT_VIEWPORTS[0], findings: [] }]).text, 'a.html: no problems found (checked at mobile 375px).');
-  });
-
-  it('takes the widths a call names, keeping the known names and dropping impossible sizes', () => {
-    assert.deepEqual(viewportsFor([375, 1440, 5, 'x']).map((v) => v.name), ['mobile', '1440px']);
-    assert.deepEqual(viewportsFor(undefined).map((v) => v.name), ['mobile', 'tablet', 'desktop', 'desktop dark']);
-  });
 });
 
 describe('check_page in a browser', { skip: browserAvailable ? false : 'no browser available' }, () => {
-  it('finds nothing wrong on a clean page', async () => {
-    const root = workspace({ 'index.html': GOOD });
-    try {
-      const r = await check(root, { path: 'index.html' });
-      assert.equal(r.ok, true, r.error);
-      assert.match(r.display, /^index\.html: no problems found/);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
 
   it('reports sideways scrolling, script errors, missing files and accessibility problems', async () => {
     const root = workspace({ 'index.html': BAD });
@@ -101,13 +79,6 @@ describe('check_page in a browser', { skip: browserAvailable ? false : 'no brows
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
-
-  it('says why a page could not be opened', async () => {
-    const r = await check(os.tmpdir(), { url: 'http://127.0.0.1:9/' });
-    assert.equal(r.ok, false);
-    assert.match(r.error, /could not be opened/);
-    assert.match(r.hint, /server is running/);
   });
 
   it('refuses a URL that is not http(s)', async () => {

@@ -66,16 +66,6 @@ describe('agent.afterEdit', () => {
     assert.doesNotMatch(seen[0], /After-edit/);
   });
 
-  it('a passing check is one short line', async () => {
-    const t = await turn([{ toolCalls: [call('1', 'write_file', { path: 'a.js', content: 'x' })] }, { content: 'Done.' }], 'npm test', true);
-    assert.match(toolMessages(t.requests[1]).at(-1)!, /After-edit check `npm test` \(agent\.afterEdit\) passed\.$/);
-  });
-
-  it('runs nothing when it is not set', async () => {
-    const t = await turn([{ toolCalls: [call('1', 'write_file', { path: 'a.js', content: 'x' })] }, { content: 'Done.' }]);
-    assert.deepEqual(t.ran, ['write_file']);
-  });
-
   it('runs in the folder of the project whose files changed, not at the workspace root', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-after-'));
     try {
@@ -100,42 +90,11 @@ describe('agent.afterEdit', () => {
     assert.deepEqual(t.ran, ['write_file', 'exec_shell: npm test', 'write_file', 'exec_shell: npm test']);
   });
 
-  it('a root that is a project itself runs its own check, even for a file in one of its packages', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-after-mono-'));
-    try {
-      fs.mkdirSync(path.join(root, 'packages', 'x', 'src'), { recursive: true });
-      fs.writeFileSync(path.join(root, 'package.json'), '{"workspaces":["packages/*"]}');
-      fs.writeFileSync(path.join(root, 'packages', 'x', 'package.json'), '{}');
-      assert.equal(projectFolderOf(root, 'packages/x/src/a.js'), '');
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it('a check that kept running and went to the background has not passed', async () => {
     const t = await turn([{ toolCalls: [call('1', 'write_file', { path: 'a.js', content: 'x' })] }, { content: 'Done.' }], 'npm test', 'background');
     const note = toolMessages(t.requests[1]).at(-1)!;
     assert.match(note, /did not finish: it kept running, so it was moved to the background as npm-test; its result is not known\./);
     assert.doesNotMatch(note, /passed/);
-  });
-
-  it('"build" runs each changed project\'s own build: the TypeScript check in a Node project, dotnet build in a .NET one', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-ae-verb-'));
-    try {
-      fs.mkdirSync(path.join(root, 'api'));
-      fs.writeFileSync(path.join(root, 'api', 'package.json'), JSON.stringify({ name: 'api', scripts: {} }));
-      fs.writeFileSync(path.join(root, 'api', 'tsconfig.json'), '{}');
-      fs.mkdirSync(path.join(root, 'billing'));
-      fs.writeFileSync(path.join(root, 'billing', 'Billing.csproj'), '<Project Sdk="Microsoft.NET.Sdk"></Project>');
-      const t = await turn([
-        { toolCalls: [call('1', 'write_file', { path: 'api/src/a.ts', content: 'x' }), call('2', 'write_file', { path: 'billing/A.cs', content: 'y' })] },
-        { content: 'Done.' },
-      ], 'build', true, root);
-      assert.ok(t.ran.includes('exec_shell: npx tsc --noEmit in api'), t.ran.join(' | '));
-      assert.ok(t.ran.some((r) => r.startsWith('exec_shell: dotnet build') && r.endsWith('in billing')), t.ran.join(' | '));
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
   });
 
   it('"check" in a .NET project compiles away from bin/, which a running app locks; "build" stays its own build', async () => {

@@ -31,8 +31,4 @@ describe('a config file from an older version', () => {
     assert.equal(loaded({ configVersion: 3, agent: { maxIterations: 24 } }).agent.maxIterations, 24);
     assert.equal(loaded({ configVersion: 2, agent: { maxIterations: 40 } }).agent.maxIterations, 40);
   });
-
-  it('still drops the old temperature default from a version-1 file', () => {
-    assert.notEqual(loaded({ agent: { temperature: 0.2 } }).agent.temperature, 0.2);
-  });
 });

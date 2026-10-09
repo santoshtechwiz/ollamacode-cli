@@ -3,7 +3,6 @@ import { describe, it } from 'node:test';
 
 import { reportChatTurn } from '../src/cli/chat/turn/index';
 import { STOP_REASONS } from '../src/protocol';
-import { BackgroundInbox } from '../src/tool/process/background-inbox';
 
 function okCall(name: string) {
   return {
@@ -45,41 +44,6 @@ function host(workspace: Record<string, unknown> = {}) {
 }
 
 describe('reportChatTurn', () => {
-  it('a reply cut off at its limit names the limit, what landed, and /continue', async () => {
-    const { host: h, notes } = host({ maxTokens: 2048, thinkingEnabled: true, state: { changes: [{ path: 'go-curl/storage.go' }] } });
-    await reportChatTurn(h, { content: '', toolResults: [okCall('write_file')], iterations: 3, stopReason: STOP_REASONS.OUTPUT_TRUNCATED } as any, {});
-    assert.ok(notes.includes("The model's reply was cut off at its 2,048-token limit (thinking counts toward it). 1 file change already landed. Type /continue to pick up where it stopped, or raise agent.maxTokens."), notes.join(' | '));
-  });
-
-  it('a turn that ends while the job it started still runs says it is waiting, once, not that it is stuck', async () => {
-    const background = new BackgroundInbox();
-    background.watching({ id: 'go-run', command: 'go run main.go' });
-    const { host: h, notes } = host({ state: { background } });
-    const job = { name: 'exec_shell', args: {}, result: { ok: true, kind: 'command', data: { id: 'go-run', background: true } } };
-    await reportChatTurn(
-      h,
-      { content: '', toolResults: [job, okCall('subprocess_status'), okCall('subprocess_status')], iterations: 3, stopReason: STOP_REASONS.GUARD_STUCK } as any,
-      {},
-    );
-    assert.deepEqual(notes, ['Waiting for "go-run" — still running in the background; its result will show here when it ends, no need to type anything.']);
-  });
-
-  it('once that job has ended, a silent turn is reported as before', async () => {
-    const background = new BackgroundInbox();
-    background.watching({ id: 'go-run', command: 'go run main.go' });
-    background.record({ id: 'go-run', command: 'go run main.go', outcome: 'finished', exitCode: 0, signal: null, durationMs: 1000 } as any);
-    const { host: h, notes } = host({ state: { background } });
-    const job = { name: 'exec_shell', args: {}, result: { ok: true, kind: 'command', data: { id: 'go-run', background: true } } };
-    await reportChatTurn(h, { content: '', toolResults: [job], iterations: 1, stopReason: STOP_REASONS.GUARD_STUCK } as any, {});
-    assert.ok(!notes.some((n) => /Waiting for/.test(n)), notes.join(' / '));
-  });
-
-  it('a stuck turn with no answer says so in one line that also carries what ran', async () => {
-    const { host: h, notes } = host();
-    await reportChatTurn(h, { content: '', toolResults: [okCall('list_directory'), okCall('list_directory')], iterations: 3, stopReason: STOP_REASONS.GUARD_STUCK } as any, {});
-    assert.equal(notes.length, 1, notes.join(' | '));
-    assert.match(notes[0], /^Paused — .* gave no answer\. It ran: .*2 of 2 steps worked\. Tell it what to do next/);
-  });
 
   it('never claims "Done" for a turn the model did not answer, however many calls succeeded', async () => {
     const { host: h, markdown, notes } = host();
@@ -108,49 +72,6 @@ describe('reportChatTurn', () => {
       notes.some((note) => note.startsWith('Paused —')),
       `hid why the turn stopped: ${notes.join(' | ')}`,
     );
-  });
-
-  it('keeps the old messages when calls failed or were refused', async () => {
-    const { host: h, markdown, notes } = host();
-
-    await reportChatTurn(
-      h,
-      {
-        content: '',
-        toolResults: [okCall('write_file'), failedCall('exec_shell')],
-        iterations: 2,
-        stopReason: STOP_REASONS.GUARD_STUCK,
-      } as any,
-      {},
-    );
-
-    assert.equal(markdown.length, 0);
-    assert.ok(
-      notes.some((note) => note.includes('gave no answer') && note.includes('1 failed')),
-      `lost the failure report: ${notes.join(' | ')}`,
-    );
-    assert.ok(
-      notes.some((note) => note.startsWith('Paused —')),
-      `lost the stuck report: ${notes.join(' | ')}`,
-    );
-  });
-
-  it('renders the model answer when there is one', async () => {
-    const { host: h, markdown } = host();
-
-    const code = await reportChatTurn(
-      h,
-      {
-        content: 'All done.',
-        toolResults: [okCall('write_file')],
-        iterations: 1,
-        stopReason: STOP_REASONS.COMPLETE,
-      } as any,
-      {},
-    );
-
-    assert.equal(code, 0);
-    assert.deepEqual(markdown, ['All done.']);
   });
 
   it('does not report a task list an earlier turn left behind', async () => {

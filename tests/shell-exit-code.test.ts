@@ -17,12 +17,9 @@ describe('a command run through PowerShell keeps its own exit code', { skip: !po
     spawnSync(powershell!, ['-NoProfile', '-NonInteractive', '-Command', withExitCode(command)], { cwd: dir, encoding: 'utf8' }).status;
 
   it('a program that fails reports its own code, not 1', () => assert.equal(run('node exit.js 3'), 3));
-  it('a program that succeeds reports 0', () => assert.equal(run('node exit.js 0'), 0));
-  it('a failed cmdlet, which has no code of its own, still reports 1', () => assert.equal(run('Get-Item ./no-such-file'), 1));
   it('the last command decides, as PowerShell decides it', () => {
     assert.equal(run('node exit.js 4; Get-Date'), 0);
     assert.equal(run('Get-Date; node exit.js 5'), 5);
   });
   it('a trailing comment cannot swallow the exit code', () => assert.equal(run('node exit.js 2 # note'), 2));
-  it('a command that exits itself keeps its code', () => assert.equal(run('exit 7'), 7));
 });

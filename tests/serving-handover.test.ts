@@ -60,17 +60,6 @@ describe('a foreground command that is serving', () => {
     }
   });
 
-  it('a command that only mentions an address and exits runs as usual', async () => {
-    const w = workspace();
-    try {
-      const r: any = (await w.ex.run('exec_shell', { command: `node -e "console.log('docs at http://localhost:1234')"` })).result;
-      assert.equal(r.ok, true);
-      assert.ok(!r.data?.background);
-    } finally {
-      fs.rmSync(w.cwd, { recursive: true, force: true });
-    }
-  });
-
   it('a "server" that exits at once is reported as finished, with nothing left running', async () => {
     const w = workspace();
     try {

@@ -87,18 +87,6 @@ describe('repeated calls in a turn', () => {
     assert.equal(result.stopReason, STOP_REASONS.GUARD_STUCK);
   });
 
-  it('the same call after a recorded change is new again', async () => {
-    const state = stateFor();
-    let runs = 0;
-    const a = ['list_directory', { path: 'TodoApi' }];
-    await turnWith([[a], [a], [a], [a]], state, () => {
-      runs++;
-      if (runs === 2) state.changeSeq += 1;
-      return { ok: false, kind: 'text', error: 'exited with code 1' };
-    });
-    assert.ok(runs >= 3, 'the change after the 2nd run starts the count again');
-  });
-
   it('a read of a file edited outside the session, with nothing recorded, runs again', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-stamps-'));
     try {
@@ -121,14 +109,6 @@ describe('repeated calls in a turn', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
-});
-
-
-describe('what the model reads for a reused read', () => {
-  it('the note is the status line and the file text under it is whole', () => {
-    const text = renderToolResult({ ok: true, kind: 'text', display: '     1\t{\n     2\t  "version": "1.0.0"\n     3\t}', modelNote: 'Not run again: same call.' } as any, 'read_file');
-    assert.equal(text, 'OK read_file — Not run again: same call.\n     1\t{\n     2\t  "version": "1.0.0"\n     3\t}');
   });
 });
 

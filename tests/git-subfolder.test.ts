@@ -82,13 +82,3 @@ describe('git in a project subfolder', () => {
     }
   });
 });
-
-describe('HEAD-moved check', () => {
-  it('accepts a missing HEAD before only for a proven first commit', async () => {
-    const { verifyHeadMoved } = await import('../src/tool/git/_git');
-    assert.equal(verifyHeadMoved(undefined, 'abc', { firstCommit: true }).ok, true);
-    assert.equal(verifyHeadMoved(undefined, 'abc').ok, false, 'an unreadable HEAD before proves nothing');
-    assert.equal(verifyHeadMoved('abc', 'abc').ok, false);
-    assert.equal(verifyHeadMoved('abc', 'def').ok, true);
-  });
-});

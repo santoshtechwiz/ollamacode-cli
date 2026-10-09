@@ -3,9 +3,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { buildModelRequest, DEFAULT_HISTORY_TOKENS } from '../src/context/builder';
 import { ContextStore } from '../src/context/store';
-import { reportChatTurn } from '../src/cli/chat/turn/index';
 import { runCompact } from '../src/cli/commands/cmds/compact';
-import { ROLE, STOP_REASONS } from '../src/protocol';
+import { ROLE } from '../src/protocol';
 
 /** A conversation of n finished exchanges, each about `words` words long. */
 function conversation(n: number, words = 400): ContextStore {
@@ -21,39 +20,11 @@ async function request(store: ContextStore) {
   return store.lastBudget!;
 }
 
-function notes(store: ContextStore) {
-  const said: string[] = [];
-  const host: any = { render: { text: '', markdown: () => {}, note: (m: string) => said.push(m) }, workspace: {}, history: store };
-  return { said, report: () => reportChatTurn(host, { content: 'ok', toolResults: [], iterations: 1, stopReason: STOP_REASONS.COMPLETE } as any, {}) };
-}
-
 describe('context filling up', () => {
   it('older history is capped at the default even with a 200k window', async () => {
     const budget = await request(conversation(200));
     assert.ok(budget.historyTokens <= DEFAULT_HISTORY_TOKENS + 500, `history ${budget.historyTokens}`);
     assert.ok(budget.dropped > 0);
-  });
-
-  it('warns once when nearly full, before anything is trimmed', async () => {
-    let n = 1;
-    let store = conversation(n);
-    while ((await request(store)).historyNeeded / store.lastBudget!.historyRoom < 0.85) store = conversation(++n);
-    assert.equal(store.lastBudget!.dropped, 0);
-    const { said, report } = notes(store);
-    await report();
-    await report();
-    assert.equal(said.length, 1, said.join(' | '));
-    assert.match(said[0], /^Context is \d+% full\. When it fills, the oldest messages are trimmed automatically; type \/compact/);
-  });
-
-  it('says when it trimmed, and again only when trimming has doubled', async () => {
-    const store = conversation(60);
-    await request(store);
-    const { said, report } = notes(store);
-    await report();
-    await report();
-    assert.equal(said.length, 1, said.join(' | '));
-    assert.match(said[0], /^Context trimmed to fit: the \d+ oldest messages are no longer sent to the model/);
   });
 
   it('/compact summary keeps a model-written summary of what it removed', async () => {

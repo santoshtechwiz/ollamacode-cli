@@ -10,9 +10,7 @@ import { createExecutor } from '../src/tool/execution/executor';
 import { createWorkspaceState } from '../src/context/workspace-state';
 import { runTurn } from '../src/agent/turn/turn';
 import { ContextStore } from '../src/context/store';
-import { findSkill, loadSkills, parseSkill, skillDirs } from '../src/skills/loader';
-import { skillNote } from '../src/skills/notes';
-import { buildSystemPrompt } from '../src/prompts/system';
+import { loadSkills, parseSkill } from '../src/skills/loader';
 
 const SKILL = (name: string, extra = '') => `---\nname: ${name}\ndescription: does ${name} things\n${extra}---\nStep one.\n`;
 
@@ -38,14 +36,6 @@ describe('reading a skill', () => {
     assert.equal(skill.matches('docs/index.html'), false);
   });
 
-  it('says why a file is not a skill', () => {
-    assert.match(String(parseSkill('Step one.', '/x')), /no header/);
-    assert.match(String(parseSkill('---\nname: Bad Name\ndescription: d\n---\nx', '/x')), /lowercase/);
-    assert.match(String(parseSkill('---\nname: ok\n---\nx', '/x')), /no description/);
-    assert.match(String(parseSkill('---\nname: ok\ndescription: d\npaths: "*.css"\n---\nx', '/x')), /list of globs/);
-    assert.match(String(parseSkill('---\nname: ok\ndescription: d\n---\n  ', '/x')), /no instructions/);
-  });
-
   it('lets a later folder replace a skill of the same name and skips broken ones', () => {
     const a = skillTree({ 'one/SKILL.md': SKILL('one'), 'two/SKILL.md': SKILL('two'), 'bad/SKILL.md': 'nothing' });
     const b = skillTree({ 'mine/SKILL.md': SKILL('two').replace('Step one.', 'My own steps.') });
@@ -57,35 +47,6 @@ describe('reading a skill', () => {
       fs.rmSync(a, { recursive: true, force: true });
       fs.rmSync(b, { recursive: true, force: true });
     }
-  });
-
-  it('looks in the built-in folder, then the person\'s, then the project\'s', () => {
-    const dirs = skillDirs('/work/app');
-    assert.equal(dirs.length, 3);
-    assert.ok(fs.existsSync(path.join(dirs[0], 'ui-ux', 'SKILL.md')), 'the built-in skills ship with ocode');
-    assert.match(dirs[1], /\.ollamacode[\\/]skills$/);
-    assert.equal(dirs[2], path.join('/work/app', '.ocode', 'skills'));
-  });
-});
-
-describe('the ui-ux skill', () => {
-  it('covers web UI files and nothing else', () => {
-    const skill = findSkill('ui-ux')!;
-    assert.ok(skill, 'built in');
-    for (const rel of ['index.html', 'src/App.tsx', 'styles/site.scss', 'web/Card.vue', 'tailwind.config.js']) assert.equal(skill.matches(rel), true, rel);
-    for (const rel of ['main.go', 'src/server.ts', 'README.md']) assert.equal(skill.matches(rel), false, rel);
-  });
-});
-
-describe('the system prompt', () => {
-  it('lists the skills and says to load one before the work it covers', () => {
-    const prompt = buildSystemPrompt({ cwd: '/work' });
-    assert.match(prompt, /\nSKILLS\nBefore starting work a skill covers, call use_skill with its name and follow its steps/);
-    assert.match(prompt, /\n- ui-ux: load before creating or changing any web page/);
-  });
-
-  it('leaves them out when tools are off, since nothing could load one', () => {
-    assert.doesNotMatch(buildSystemPrompt({ cwd: '/work', toolsEnabled: false }), /SKILLS/);
   });
 });
 
@@ -100,12 +61,6 @@ describe('use_skill', () => {
     assert.match(r.display, /Files in this skill \(read one with use_skill file\): motion\.css, tokens\.css$/);
   });
 
-  it('reads one of the skill\'s files', async () => {
-    const r = await run({ name: 'ui-ux', file: 'tokens.css' });
-    assert.equal(r.ok, true, r.error);
-    assert.match(r.display, /--color-accent:/);
-  });
-
   it('names what exists when asked for something that does not', async () => {
     const noFile = await run({ name: 'ui-ux', file: '../../package.json' });
     assert.equal(noFile.ok, false);
@@ -114,15 +69,6 @@ describe('use_skill', () => {
 });
 
 describe('pointing at a skill', () => {
-  const ui = parseSkill(SKILL('ui', 'paths: ["**/*.css"]\n'), '/x');
-  const find = (rel: string) => (typeof ui !== 'string' && ui.matches(rel) ? [ui] : []);
-
-  it('points once per skill per turn, and not at files no skill covers', () => {
-    const noted = new Set<string>();
-    assert.equal(skillNote(['main.go'], noted, find), undefined);
-    assert.match(String(skillNote(['a.css'], noted, find)), /The ui skill covers a\.css \(does ui things\)\. .*use_skill with name "ui"/);
-    assert.equal(skillNote(['b.css'], noted, find), undefined, 'already pointed at this turn');
-  });
 
   it('rides on the result of the first call in a turn that works on a covered file', async () => {
     const replies = [

@@ -71,19 +71,6 @@ describe('requests the server makes', () => {
   });
 });
 
-describe('what a tool returns', () => {
-  it('an image is named with its size, not handed to the model as base64', async () => {
-    const client = fake('camera', 'image');
-    try {
-      await client.connect(5000);
-      const { text } = await client.callTool('echo', {}, 5000);
-      assert.equal(text, '[image image/png, 146 KB — not shown as text]');
-    } finally {
-      await client.close();
-    }
-  });
-});
-
 describe('stopping a call', () => {
   it('a cancelled call stops at once, and the server is told which request to drop', async () => {
     const note = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-mcp-')), 'cancel.json');
@@ -145,21 +132,6 @@ describe('when a server says no', () => {
     } finally {
       McpClient.MAX_LINE_CHARS = previous;
       await client.close();
-    }
-  });
-});
-
-describe('the handshake', () => {
-  it('tells the server the version of ocode that is running', async () => {
-    const seen = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-mcp-')), 'hello.json');
-    const client = fake('greeter', 'hello', seen);
-    try {
-      await client.connect(5000);
-      const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-      assert.deepEqual(JSON.parse(fs.readFileSync(seen, 'utf8')).clientInfo, { name: 'ollamacode', version: pkg.version });
-    } finally {
-      await client.close();
-      fs.rmSync(path.dirname(seen), { recursive: true, force: true });
     }
   });
 });

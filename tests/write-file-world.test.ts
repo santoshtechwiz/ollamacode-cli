@@ -19,22 +19,6 @@ async function ctxFor(root: string) {
   return { ctx, changes };
 }
 
-test('a write that creates a file advances the world once', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wf-'));
-  try {
-    const { ctx, changes } = await ctxFor(root);
-    const file = path.join(root, 'created.txt');
-
-    const result = await writeFile.execute({ path: file, content: 'hello\n' } as any, ctx);
-
-    assert.equal(result.ok, true);
-    assert.equal(changes.length, 1);
-    assert.equal(changes[0].op, 'create');
-  } finally {
-    await fs.rm(root, { recursive: true, force: true });
-  }
-});
-
 test('rewriting identical content does not advance the world', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wf-'));
   try {

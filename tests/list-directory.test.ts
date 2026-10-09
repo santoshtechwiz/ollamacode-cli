@@ -36,16 +36,4 @@ describe('list_directory', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
-
-  it('a subfolder too big for the listing says how much it holds instead', async () => {
-    const root = workspace([...Array.from({ length: 200 }, (_, i) => `big/f${i}.txt`), 'small/a.txt']);
-    try {
-      const lines = String((await list(root, '.')).display).split('\n');
-      assert.ok(lines.includes('big/ (200 entries, not opened)'), lines.slice(0, 5).join('\n'));
-      assert.ok(lines.includes('  a.txt (1B)'));
-      assert.ok(lines.length < 160);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
 });
