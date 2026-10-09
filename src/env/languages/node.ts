@@ -23,6 +23,7 @@ async function detectNode(root: string): Promise<StackInfo | null> {
   const script = (name: string) => (pm === 'npm' ? ['npm', 'run', name] : [pm, name]);
   const tsSignal = (await exists(path.join(root, 'tsconfig.json'))) || Boolean(pkg.devDependencies?.typescript || pkg.dependencies?.typescript);
   const usesTsc = Object.values(scripts).some((cmd) => /\btsc\b/.test(String(cmd)));
+  const eslint = eslintFiles(pkg);
   const hasTs = !usesTsc && (await languageFromProjectDoc(root)) === 'js' ? false : tsSignal;
   return {
     id: 'node',
@@ -35,7 +36,7 @@ async function detectNode(root: string): Promise<StackInfo | null> {
     // Its own type check if it names one; else the compiler's, for TypeScript; plain JavaScript has no compile step.
     check: scripts.typecheck ? script('typecheck') : hasTs ? ['npx', 'tsc', '--noEmit'] : scripts.lint ? script('lint') : undefined,
     lint: scripts.lint ? script('lint') : undefined,
-    lintFiles: eslintFiles(pkg),
+    fileScoped: eslint ? { lint: eslint } : undefined,
     run: scripts.dev ? script('dev') : scripts.start ? (pm === 'npm' ? ['npm', 'start'] : [pm, 'start']) : undefined,
     dev: scripts.dev ? script('dev') : undefined,
   };

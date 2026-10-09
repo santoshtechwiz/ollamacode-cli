@@ -18,6 +18,9 @@ export const PYTHON: Language = {
     check: (py) => [py, '-m', 'compileall', '-q', '-x', 'venv|site-packages|node_modules|__pycache__', '.'],
     lint: (py) => [py, '-m', 'ruff', 'check', '.'],
   },
+  fileScoped: {
+    lint: (py) => ({ argv: [py, '-m', 'ruff', 'check'], extensions: ['.py', '.pyi'] }),
+  },
   source: {
     symbols: [/^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)/gm, /^\s*class\s+([A-Za-z_]\w*)/gm],
     imports: [/^\s*from\s+([\w.]+)\s+import\b/gm, /^\s*import\s+([\w.]+)/gm],

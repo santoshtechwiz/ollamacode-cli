@@ -45,19 +45,17 @@ export function checkCommands(setting: string): string[] {
 
 /**
  * The command to run in this folder: the configured one as written, or the project's own for a check named by verb.
- * Lint takes the changed files when the project's linter can: only what changed is linted, which keeps it fast enough
- * to run after every step. '' when there is nothing for it to look at.
+ * A verb whose command takes files (ESLint, ruff) is given only the changed ones, which keeps it fast enough to run
+ * after every step. '' when there is nothing for it to look at.
  */
 async function projectCommand(command: string, folder: string, files: string[]): Promise<string | null> {
   if (!isCheckVerb(command)) return command;
   const stacks = await detectStacks(folder).catch((): import('../../types.ts').StackInfo[] => []);
   const quote = (argv: string[]) => argv.map((a) => (/^[\w@./:=-]+$/.test(a) ? a : JSON.stringify(a))).join(' ');
-  if (command === 'lint') {
-    const byFile = stacks.map((stack) => stack.lintFiles).find(Boolean);
-    if (byFile) {
-      const lintable = files.filter((f) => byFile.extensions.includes(path.extname(f).toLowerCase()));
-      return lintable.length ? quote([...byFile.argv, ...lintable]) : '';
-    }
+  const byFile = stacks.map((stack) => stack.fileScoped?.[command]).find(Boolean);
+  if (byFile) {
+    const scoped = files.filter((f) => byFile.extensions.includes(path.extname(f).toLowerCase()));
+    return scoped.length ? quote([...byFile.argv, ...scoped]) : '';
   }
   const argv = stacks.map((stack) => stack[command]).find((a) => Array.isArray(a) && a.length);
   return argv ? quote(argv) : null;

@@ -1,4 +1,4 @@
-import type { StackInfo, ToolchainProvider } from '../../types';
+import type { FileScopedCommand, StackInfo, ToolchainProvider } from '../../types';
 
 /**
  * What a project can be asked to do, by name. The one list of them: a language fills the ones it has, the detector
@@ -24,6 +24,8 @@ export interface Language extends ToolchainProvider {
   /** Source file extensions; a project with no marker is still found by these. */
   extensions?: string[];
   commands?: Commands;
+  /** Verbs whose command can be given files, built from the runtime command: `ruff check <files>`. */
+  fileScoped?: Partial<Record<Verb, (cmd: string) => FileScopedCommand>>;
   /** Custom project detection when markers and commands are not enough. */
   detect?: (root: string) => Promise<StackInfo | null>;
   /** Folders a build writes inside the project (`bin/`, `obj/`, `dist/`): generated, never the project's own source. */

@@ -97,6 +97,18 @@ describe('agent.afterEdit with several checks', () => {
     }
   });
 
+  it('gives Python\'s ruff only the changed .py files', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-py-'));
+    try {
+      fs.mkdirSync(path.join(root, 'api'));
+      fs.writeFileSync(path.join(root, 'api/pyproject.toml'), '[project]\nname = "api"\n');
+      const t = await turn(root, [{ toolCalls: [call('1', 'write_file', { path: 'api/app.py', content: 'x = 1' }), call('2', 'write_file', { path: 'api/README.md', content: '# api' })] }, { content: 'Done.' }], { afterEdit: 'lint' }, []);
+      assert.deepEqual(t.ran.filter((r) => r !== 'write_file').map((r) => r.replace(/^\S+ -m ruff/, 'python -m ruff')), ['python -m ruff check app.py in api']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('skips lint when no changed file is one the linter reads', async () => {
     const root = project();
     try {

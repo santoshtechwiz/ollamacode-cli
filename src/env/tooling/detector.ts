@@ -78,6 +78,10 @@ async function detectByMarkers(root: string, lang: Language): Promise<StackInfo 
   const cmd = runtime.command ?? candidates[0];
   const stack: StackInfo = { id: lang.id, label: lang.label, root, marker };
   for (const verb of VERBS) stack[verb] = lang.commands?.[verb]?.(cmd, marker);
+  for (const verb of VERBS) {
+    const scoped = lang.fileScoped?.[verb]?.(cmd);
+    if (scoped) (stack.fileScoped ??= {})[verb] = scoped;
+  }
   return stack;
 }
 

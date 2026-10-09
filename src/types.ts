@@ -169,6 +169,12 @@ export interface ProviderDef {
   tokenEnvVar?: string;
 }
 
+/** A command that takes the files to work on after its own arguments, and the kinds of file it reads. */
+export interface FileScopedCommand {
+  argv: string[];
+  extensions: string[];
+}
+
 export interface StackInfo {
   id: string;
   label: string;
@@ -182,8 +188,8 @@ export interface StackInfo {
   run?: string[];
   dev?: string[];
   lint?: string[];
-  /** The linter run on given files, for files with these extensions: a check after an edit lints only what changed. */
-  lintFiles?: { argv: string[]; extensions: string[] };
+  /** Verbs whose command also takes files: a check after an edit runs on only the changed files with these extensions. */
+  fileScoped?: Partial<Record<import('./env/languages/types.ts').Verb, FileScopedCommand>>;
   marker?: string;
 }
 

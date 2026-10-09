@@ -1,4 +1,4 @@
-import type { StackInfo } from '../types';
+import type { FileScopedCommand } from '../types';
 
 // What ocode knows about front-end frameworks inside a Node project. Data only: one more framework is one more row.
 
@@ -17,7 +17,7 @@ const ESLINT_PLUGIN_EXTENSIONS: ReadonlyArray<{ plugin: string; extensions: stri
 ];
 
 /** ESLint run on given files, when the project has ESLint: its script extensions and its plugins' framework files. */
-export function eslintFiles(pkg: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }): StackInfo['lintFiles'] {
+export function eslintFiles(pkg: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }): FileScopedCommand | undefined {
   const deps: Record<string, string> = { ...pkg.dependencies, ...pkg.devDependencies };
   if (!deps.eslint) return undefined;
   const extra = ESLINT_PLUGIN_EXTENSIONS.filter((p) => deps[p.plugin]).flatMap((p) => p.extensions);

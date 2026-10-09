@@ -295,8 +295,8 @@ each project's tests, build or linter. Name several to run them in order:
 ocode config set agent.afterEdit "check lint"
 ```
 
-`lint` runs ESLint on only the files that step changed when the project has ESLint, so it stays fast enough for
-every step. Framework files are included when their ESLint plugin is installed: `.vue` (eslint-plugin-vue),
+`lint` runs on only the files that step changed when the project's linter takes files (ESLint, `ruff check`), so it
+stays fast enough for every step. Framework files are included when their ESLint plugin is installed: `.vue` (eslint-plugin-vue),
 `.svelte` (eslint-plugin-svelte), `.astro` (eslint-plugin-astro), Angular templates (angular-eslint). Or give a
 command of your own:
 
