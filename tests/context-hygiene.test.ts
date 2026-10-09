@@ -8,7 +8,7 @@ import { buildModelRequest } from '../src/context/builder';
 import { ContextStore } from '../src/context/store';
 import { createWorkspaceState, describeSession } from '../src/context/workspace-state';
 import { buildSystemPrompt } from '../src/prompts/system';
-import { outputDirsAt } from '../src/env/languages';
+import { outputDirsAt } from '../src/env/project-layout';
 import { openWorkspaceIndex } from '../src/context/workspace-index/open';
 import { createAgentRuntime } from '../src/agent/runtime';
 import { createAgentState } from '../src/agent/state';

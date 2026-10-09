@@ -13,7 +13,7 @@ import { ownProcessStoppedBy, ownProcessRefusal } from './analysis/own-process';
 import { executeShell } from './execution/execute';
 import { runsToEnd } from './analysis/runs-to-end';
 import { detachReason } from './analysis/detach';
-import { projectDirsIn, projectFolderOf } from '../../env/languages';
+import { projectDirsIn, projectFolderOf } from '../../env/project-layout';
 import { noteWorkIn } from '../../context/workspace-state';
 import { parseShellDiagnostics } from './analysis/diagnostics';
 import { formatOutput } from './output/presentation';

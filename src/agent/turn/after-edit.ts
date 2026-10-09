@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROLE, TOOL_NAME } from '../../protocol';
-import { isProjectMarker } from '../../env/languages';
+import { isProjectMarker } from '../../env/project-layout';
 import { detectStacks } from '../../env/tooling/detector';
 import type { ToolExecutor } from '../../tool/execution/executor';
 import type { TurnCallbacks } from './turn';

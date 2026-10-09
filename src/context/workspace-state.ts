@@ -7,7 +7,7 @@ import { failureImplication } from '../prompts/recovery';
 import { logger } from '../core/logger';
 import { normalizeRelPath } from '../core/paths';
 import { existsSync } from 'node:fs';
-import { holdsProjectMarker, projectFolderOf } from '../env/languages';
+import { holdsProjectMarker, projectFolderOf } from '../env/project-layout';
 import { isInside } from '../tool/core/paths';
 import { BackgroundInbox, describeExitsForModel } from '../tool/process/background-inbox';
 import { todoLines, type TodoItem } from '../agent/todos';

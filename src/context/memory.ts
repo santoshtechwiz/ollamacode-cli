@@ -4,7 +4,7 @@ import path from 'node:path';
 import { MEMORY_VERSION, STORAGE } from '../protocol';
 import { MEMORY_BLOCK_HEADER } from '../prompts/memory';
 import { writeJsonAtomic } from '../core/config';
-import { isProjectMarker } from '../env/languages';
+import { isProjectMarker } from '../env/project-layout';
 
 const MAX_CONVENTIONS = 30;
 const MAX_FACTS = 20;

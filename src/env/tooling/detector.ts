@@ -5,7 +5,8 @@ import { logger } from '../../core/logger';
 
 import { detectOne, exists } from './probe';
 import { getProviders } from './registry';
-import { isProjectMarker, type Language } from '../languages';
+import { type Language } from '../languages';
+import { isProjectMarker } from '../project-layout';
 import { walkFiles } from '../../tool/filesystem/_fs';
 import type { StackInfo } from '../../types';
 
