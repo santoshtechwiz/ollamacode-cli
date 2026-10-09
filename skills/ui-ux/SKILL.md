@@ -62,7 +62,8 @@ Follow these steps in order. Change only what makes the UI more consistent or ea
 
 10. Verify. A type check is not enough: it passed on a Next.js site that crashed on its first page.
    - Run the project's build (`npm run build`, `ng build`…): it prerenders pages and catches what a type check cannot (values that change between renders, image hosts not configured, template errors). Run its lint too.
-   - Start the dev server in the background, then call check_page on its URL (or on the .html file of a site with no server) and fix what it reports. It checks mobile, tablet and desktop widths.
+   - Start the dev server in the background (or reuse the one already running), then call check_page on the address its result says it is listening on (or on the .html file of a site with no server) and fix what it reports. It checks mobile, tablet, desktop and dark mode.
+   - Give the person only an address the result or subprocess_status says it is listening on. "Not listening on any port yet" means check again; never guess a port.
    - check_page cannot see states it does not reach: check loading, empty and error states by reading the code.
    - Say only what you checked. Do not call a page responsive or accessible unless check_page passed.
 
