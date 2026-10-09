@@ -10,7 +10,7 @@ import { readdirSync } from 'node:fs';
 import { holdsProjectMarker, projectFolderOf } from '../env/project-layout';
 import { isInside } from '../tool/core/paths';
 import { BackgroundInbox, describeExitsForModel } from '../tool/process/background-inbox';
-import { reopenFailed, todoLines, type TodoItem } from '../agent/todos';
+import { completeVerified, reopenFailed, todoLines, type TodoItem } from '../agent/todos';
 
 const MAX_CHANGES = 50;
 
@@ -267,9 +267,12 @@ const passedKey = (root: string, cwd: string, command: string) =>
   `${path.relative(path.resolve(root), path.resolve(cwd)).split(path.sep).join('/')}\u0000${command.trim()}`;
 
 /** A command exited 0 in this folder: it holds for the files as they are now, whoever ran it (the model or a check). */
-export function notePassed(state: Pick<WorkspaceState, 'root' | 'changeSeq' | 'passedAt'> | null | undefined, cwd: string, command: string): void {
+export function notePassed(state: Pick<WorkspaceState, 'root' | 'changeSeq' | 'passedAt'> & { todos?: TodoItem[] } | null | undefined, cwd: string, command: string): void {
   if (!state?.root) return;
   (state.passedAt ??= {})[passedKey(state.root, cwd, command)] = Number(state.changeSeq ?? 0);
+  // The task in progress that this command proves is done: the list follows the evidence.
+  const completed = completeVerified(state.todos ?? [], command);
+  if (completed) state.todos = completed;
 }
 
 /** Whether this command passed, in any folder, with no file changed since: the evidence a task's verify asks for. */

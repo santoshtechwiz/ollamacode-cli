@@ -117,6 +117,8 @@ export function applyUpdates(list: readonly TodoItem[], updates: readonly any[])
       if (sent !== undefined && (Array.isArray(sent) ? sent.length === 0 : !clean(sent))) delete todo[key];
     }
     todo = settled(todo);
+    // One task in progress: starting another puts the one in progress back to pending, instead of refusing the start.
+    if (todo.status === 'in_progress') next = next.map((t) => (t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t));
     // A new status, or new work on it, settles why it was opened again.
     if (raw?.status) delete todo.reopened;
     if (at >= 0) next.splice(at, 1);
@@ -177,4 +179,18 @@ export function reopenFailed(todos: readonly TodoItem[], command: string): TodoI
   return todos.map((todo) => (todo.status === 'completed' && todo.verify === failed
     ? settled({ ...todo, status: 'pending' as const, reopened: `\`${failed}\` failed after it was completed` })
     : todo));
+}
+
+/**
+ * A command passed: the task in progress that it proves is completed. Its proof is in, so the list follows the work
+ * without waiting for the model to say so. Only the task in progress: a pending task's command can pass before its work
+ * is done (the build passes before the feature exists).
+ */
+export function completeVerified(todos: readonly TodoItem[], command: string): TodoItem[] | null {
+  const passed = command.trim();
+  const at = todos.findIndex((todo) => todo.status === 'in_progress' && todo.verify === passed);
+  if (at < 0) return null;
+  const waits = (todos[at].dependsOn ?? []).some((dep) => todos.find((t) => t.content === dep)?.status !== 'completed');
+  if (waits) return null;
+  return todos.map((todo, i) => (i === at ? { ...todo, status: 'completed' as const } : todo));
 }

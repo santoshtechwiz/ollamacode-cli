@@ -178,3 +178,27 @@ describe('what the session showed', () => {
     assert.ok(notes.includes('Not finished: 1 of 2 tasks are still open (Search filters notes).'), notes.join(' | '));
   });
 });
+
+describe('the list follows the work', () => {
+  it('ticks the task in progress when its command passes, and no other', async () => {
+    const { root, state } = session();
+    try {
+      state.todos = [
+        { content: 'The page builds', status: 'in_progress', verify: 'npm run build' },
+        { content: 'Skeletons show while loading', status: 'pending', verify: 'npm run build' },
+      ];
+      notePassed(state, path.join(root, 'app'), 'npm run build');
+      assert.deepEqual(names(state), ['completed: The page builds', 'pending: Skeletons show while loading'],
+        'a pending task\'s command can pass before its work exists');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('starting the next task is never refused: the one in progress goes back to pending', async () => {
+    const state: any = { todos: [{ content: 'NoteList is accessible', status: 'in_progress' }, { content: 'The editor saves', status: 'pending' }] };
+    const r = await write(state, { update: [{ task: 'The editor saves', status: 'in_progress' }] });
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(names(state), ['pending: NoteList is accessible', 'in_progress: The editor saves']);
+  });
+});
