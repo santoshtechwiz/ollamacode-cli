@@ -1,0 +1,72 @@
+import assert from 'node:assert/strict';
+import test, { describe, it } from 'node:test';
+import { parseWindowsProcesses } from '../src/tool/process/processes/discovery';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import '../src/tool/index.ts';
+import { ToolExecutor } from '../src/tool/core/tool-runtime';
+import { createWorkspaceState } from '../src/context/workspace-state';
+import {
+  listeningPorts,
+  parseLsof,
+  parseProcessTable,
+  parseSs,
+  parseWindowsListing,
+  processTree,
+} from '../src/tool/process/analysis/listening-ports';
+
+describe('windows-process-list', () => {
+  test('reads the Windows listing, with command lines or without (the quick fallback)', () => {
+    const full = '4\t0\tSystem\t\t\r\n1200\t900\tnode.exe\tC:\\Program Files\\nodejs\\node.exe\t"node" bin\\cli.js --tab\there\r\n';
+    assert.deepEqual(parseWindowsProcesses(full), [
+      { pid: 4, image: 'System', exePath: undefined, command: '' },
+      { pid: 1200, parentPid: 900, image: 'node.exe', exePath: 'C:\\Program Files\\nodejs\\node.exe', command: '"node" bin\\cli.js --tab\there' },
+    ]);
+
+    const light = '1200\t900\tnode.exe\r\n900\t1\tpwsh.exe\r\n';
+    assert.deepEqual(parseWindowsProcesses(light).map((p) => [p.pid, p.parentPid, p.image]), [[1200, 900, 'node.exe'], [900, 1, 'pwsh.exe']]);
+  });
+});
+
+describe('listening-ports', () => {
+  // Where a background job really listens, read from the system: a dev server that had printed only "> next dev" left
+  // a model to make up "port 3000 was busy, so it is on 3001".
+  describe('reading the system\'s listeners', () => {
+    it('reads the Windows listing, Linux ss and lsof output', () => {
+      const win = parseWindowsListing('P 4 0\r\nP 14640 9000\r\nP 19708 14640\r\nL 19708 3001\r\nL 19708 3001\r\nWARNING: something\r\n');
+      assert.deepEqual([...win.table], [[4, 0], [14640, 9000], [19708, 14640]]);
+      assert.deepEqual(win.listeners, [{ pid: 19708, port: 3001 }, { pid: 19708, port: 3001 }]);
+      assert.deepEqual(parseSs('LISTEN 0 511 *:3000 *:* users:(("next-server",pid=4242,fd=21))\nESTAB 0 0 1.2.3.4:5 6.7.8.9:10'), [{ pid: 4242, port: 3000 }]);
+      assert.deepEqual(parseLsof('p4242\nf21\nn*:3000\nn[::1]:3001\np99\nn127.0.0.1:5432'), [{ pid: 4242, port: 3000 }, { pid: 4242, port: 3001 }, { pid: 99, port: 5432 }]);
+    });
+
+    it('counts every process under the job, not only the one it started', () => {
+      const table = parseProcessTable('  10 1\n  20 10\n  30 20\n  40 1\n');
+      assert.deepEqual([...processTree(10, table)].sort(), [10, 20, 30]);
+    });
+  });
+
+  describe('a background server', () => {
+    it('reports the port it really listens on, at start and on status', async (t) => {
+      if ((await listeningPorts(process.pid)) === null) return t.skip('this system cannot list listeners');
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-ports-'));
+      fs.writeFileSync(path.join(root, 'server.js'), "require('http').createServer((q, s) => s.end('ok')).listen(0, () => console.log('started'));\n");
+      const state: any = createWorkspaceState(root);
+      const ex = new ToolExecutor({ root, state: Object.assign(state, { autoFixAuthorized: true }) });
+      try {
+        const started: any = (await ex.run('exec_shell', { command: 'node server.js', background: true })).result;
+        assert.equal(started.ok, true, started.error);
+        assert.match(started.display, /Listening on http:\/\/localhost:\d+/);
+        const port = started.data.ports[0];
+        assert.match(started.display, new RegExp(`at http://localhost:${port}`), 'the head names the real address');
+        const status: any = (await ex.run('subprocess_status', { id: started.data.id })).result;
+        assert.match(status.display, new RegExp(`Listening on http://localhost:${port}`));
+      } finally {
+        for (const sub of state.subprocesses.values()) sub.process.kill();
+        state.reset?.();
+        fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      }
+    });
+  });
+});

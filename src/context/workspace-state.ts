@@ -6,11 +6,11 @@ import { classifyFailure, EPHEMERAL_SESSION } from '../protocol';
 import { failureImplication } from '../prompts/recovery';
 import { logger } from '../core/logger';
 import { normalizeRelPath } from '../core/paths';
-import { existsSync } from 'node:fs';
-import { holdsProjectMarker, projectFolderOf } from '../env/languages';
+import { readdirSync } from 'node:fs';
+import { holdsProjectMarker, projectFolderOf } from '../env/project-layout';
 import { isInside } from '../tool/core/paths';
 import { BackgroundInbox, describeExitsForModel } from '../tool/process/background-inbox';
-import { todoLines, type TodoItem } from '../agent/todos';
+import { completeVerified, reopenFailed, todoLines, type TodoItem } from '../agent/todos';
 
 const MAX_CHANGES = 50;
 
@@ -73,6 +73,8 @@ export interface WorkspaceState {
   changeSeq?: number;
   turnStartChanges?: number;
   verifiedAt?: number;
+  /** The change count each command last passed at, by folder (see notePassed): a passing run is good until a change. */
+  passedAt?: Record<string, number>;
   /** The project this conversation last changed files in (the nearest folder with a project marker), kept by the system. */
   workedProject?: { root: string; name: string } | null;
   index: import('./workspace-index/_shared.ts').IndexHandle | null;
@@ -261,6 +263,42 @@ export function uncheckedChanges(state: Pick<WorkspaceState, 'changes' | 'verifi
   return (state.changes ?? []).filter((c) => Number(c.seq ?? 0) > after);
 }
 
+const passedKey = (root: string, cwd: string, command: string) =>
+  `${path.relative(path.resolve(root), path.resolve(cwd)).split(path.sep).join('/')}\u0000${command.trim()}`;
+
+/** A command exited 0 in this folder: it holds for the files as they are now, whoever ran it (the model or a check). */
+export function notePassed(state: Pick<WorkspaceState, 'root' | 'changeSeq' | 'passedAt'> & { todos?: TodoItem[] } | null | undefined, cwd: string, command: string): void {
+  if (!state?.root) return;
+  (state.passedAt ??= {})[passedKey(state.root, cwd, command)] = Number(state.changeSeq ?? 0);
+  // The task in progress that this command proves is done: the list follows the evidence.
+  const completed = completeVerified(state.todos ?? [], command);
+  if (completed) state.todos = completed;
+}
+
+/** Whether this command passed, in any folder, with no file changed since: the evidence a task's verify asks for. */
+export function passedNow(state: Pick<WorkspaceState, 'root' | 'changeSeq' | 'passedAt'> | null | undefined, command: string): boolean {
+  const suffix = `\u0000${command.trim()}`;
+  const now = Number(state?.changeSeq ?? 0);
+  return Object.entries(state?.passedAt ?? {}).some(([key, at]) => key.endsWith(suffix) && at === now);
+}
+
+/**
+ * A command failed in this folder: whatever passed before no longer holds for the files as they are, and a completed
+ * task it proves is open again.
+ */
+export function noteFailed(state: Pick<WorkspaceState, 'root' | 'passedAt' | 'todos'> | null | undefined, cwd: string, command: string): void {
+  if (!state?.root) return;
+  if (state.passedAt) delete state.passedAt[passedKey(state.root, cwd, command)];
+  const reopened = reopenFailed(state.todos ?? [], command);
+  if (reopened) state.todos = reopened;
+}
+
+/** Whether this command already passed in this folder with no file changed since. */
+export function passedSinceChange(state: Pick<WorkspaceState, 'root' | 'changeSeq' | 'passedAt'> | null | undefined, cwd: string, command: string): boolean {
+  if (!state?.root) return false;
+  return state.passedAt?.[passedKey(state.root, cwd, command)] === Number(state.changeSeq ?? 0);
+}
+
 /** Work happened in this project folder (absolute): it becomes the working project, unless it is the workspace root. */
 export function noteWorkIn(state: Pick<WorkspaceState, 'root' | 'workedProject'> | null | undefined, project: string | null): void {
   if (!state?.root || !project) return;
@@ -270,15 +308,27 @@ export function noteWorkIn(state: Pick<WorkspaceState, 'root' | 'workedProject'>
   state.workedProject = { root: abs, name: path.basename(abs) };
 }
 
+/** A folder with nothing in it yet (or gone). */
+function emptyFolder(dir: string): boolean {
+  try {
+    return readdirSync(dir).length === 0;
+  } catch {
+    return true;
+  }
+}
+
 /**
  * The folder commands and git run in when given none: the project this conversation last changed files in, but only
  * when the workspace root is not a project itself (then the root is the place). Never a guess from the request's
  * words: "create a todo app" matched an existing todo-app folder and put a new project's installs inside it.
+ * An empty folder is not a place to run yet: an approved plan makes its folder before anything is in it, and a
+ * scaffolder given that folder's name from there (`dotnet new … -o todo-app`, `npm create vite@latest todo-app`) built
+ * the project in todo-app/todo-app. Run from the root, it fills the folder, which then becomes the working project.
  */
 export function workingProject(state: Pick<WorkspaceState, 'root' | 'workedProject'> | null | undefined): string | null {
   if (!state?.root) return null;
-  // A project deleted since is no place to run.
-  const project = [state.workedProject?.root].find((p) => p && existsSync(p)) ?? null;
+  // A project deleted since, or not started yet, is no place to run.
+  const project = [state.workedProject?.root].find((p) => p && !emptyFolder(p)) ?? null;
   if (!project || isInside(project, state.root)) return null;
   return holdsProjectMarker(state.root) ? null : project;
 }
@@ -309,8 +359,8 @@ export function describeSession(state: WorkspaceState, { exits = true }: { exits
   }
 
   if (todos.length > 0) {
-    lines.push('Your task list (todo_write with the full list replaces it):');
-    lines.push(...todoLines(todos));
+    lines.push('Your task list (todo_write update changes the tasks it names; a full list replaces it):');
+    lines.push(...todoLines(todos, (command) => passedNow(state, command)));
   }
 
   if (running.length > 0) {

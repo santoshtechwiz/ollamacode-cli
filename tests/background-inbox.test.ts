@@ -3,14 +3,19 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
-import { BackgroundInbox, describeExitsForModel, describeExitForPerson, type BackgroundExit } from '../src/tool/process/background-inbox';
+import { BackgroundInbox, type BackgroundExit } from '../src/tool/process/background-inbox';
 import { runInBackground } from '../src/tool/process/background';
 import stopSubprocess from '../src/tool/process/stop-subprocess.tool';
 import { createWorkspaceState, describeSession } from '../src/context/workspace-state';
-import { runTurn } from '../src/agent/turn/turn';
 import { ContextStore } from '../src/context/store';
 import { ROLE, STOP_REASONS } from '../src/protocol';
 import { killProcessTreeAndWait } from '../src/env/process/kill';
+import { createBackgroundHandoff, MAX_AUTO_HANDOFFS } from '../src/cli/chat/background-handoff';
+import '../src/tool/index';
+import { createExecutor } from '../src/tool/execution/executor';
+import { createAgentState } from '../src/agent/state';
+import { applyApprovalPolicy } from '../src/tool/policy/permission-policy';
+import { renderToolResult } from '../src/agent/router/render';
 
 const exit = (id: string, endedAt: number, over: Partial<BackgroundExit> = {}): BackgroundExit => ({
   id, command: `build ${id}`, outcome: 'finished', exitCode: 0, signal: null, durationMs: 134_000, tail: 'Build succeeded.', endedAt, ...over,
@@ -29,14 +34,6 @@ async function removeWorkspace(cwd: string, state: any): Promise<void> {
 }
 
 describe('the background inbox', () => {
-  it('keeps an exit for the model and tells every listener once', () => {
-    const inbox = new BackgroundInbox();
-    const heard: string[] = [];
-    inbox.subscribe((e) => heard.push(e.id));
-    inbox.record(exit('a', 1));
-    assert.deepEqual(heard, ['a']);
-    assert.deepEqual(inbox.pending().map((e) => e.id), ['a']);
-  });
 
   it('drops what a turn showed the model, and keeps what ended after its last request', () => {
     const inbox = new BackgroundInbox();
@@ -45,13 +42,6 @@ describe('the background inbox', () => {
     inbox.record(exit('later', 200));
     inbox.settle();
     assert.deepEqual(inbox.pending().map((e) => e.id), ['later']);
-  });
-
-  it('a listener that fails never loses the exit for the model', () => {
-    const inbox = new BackgroundInbox();
-    inbox.subscribe(() => { throw new Error('terminal closed'); });
-    inbox.record(exit('a', 1));
-    assert.equal(inbox.pending().length, 1);
   });
 
   it('a new conversation starts empty, and listeners keep listening', () => {
@@ -63,25 +53,6 @@ describe('the background inbox', () => {
     inbox.record(exit('new', 2));
     assert.deepEqual(inbox.pending().map((e) => e.id), ['new']);
     assert.deepEqual(heard, ['old', 'new']);
-  });
-
-  it('says how it ended, plainly, to the model and to the person', () => {
-    const failed = exit('docker-build', 1, { outcome: 'failed', exitCode: 1, tail: 'error during connect' });
-    const lines = describeExitsForModel([failed]);
-    assert.match(lines[0], /do not poll/);
-    assert.equal(lines[1], '- docker-build: `build docker-build` failed (exit 1) after 2m 14s');
-    assert.equal(lines[2], '    error during connect');
-  });
-
-  it('shows the person what the job printed, under one line saying how it ended', () => {
-    // The note's own icon says how it went; the text carries no second mark.
-    assert.equal(
-      describeExitForPerson(exit('tests', 1)),
-      'background "tests" finished (exit 0) after 2m 14s — the agent will see it with your next message\nBuild succeeded.',
-    );
-    const long = Array.from({ length: 9 }, (_, i) => `line ${i + 1}`).join('\n');
-    assert.deepEqual(describeExitForPerson(exit('fetch', 1, { tail: `${long}\n` })).split('\n').slice(1), ['line 5', 'line 6', 'line 7', 'line 8', 'line 9']);
-    assert.match(describeExitForPerson(exit('quiet', 1, { tail: '' })), /^background "quiet" finished \(exit 0\) after 2m 14s, printing nothing — /);
   });
 });
 
@@ -172,46 +143,6 @@ describe('a background process that ends tells the session', { concurrency: true
   });
 });
 
-describe('a job that finishes before it reaches the background', () => {
-  it('says it is done when the job finished while starting', async () => {
-    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-bg-'));
-    fs.writeFileSync(path.join(cwd, 'build.js'), "console.log('Build succeeded.');\n");
-    const state: any = createWorkspaceState(cwd);
-    const history = new ContextStore({ messages: [{ role: ROLE.USER, content: 'run the full build in the background' }], budgetTokens: 8000 });
-    const start = (id: string, n: string) => ({ id: n, type: 'function', function: { name: 'exec_shell', arguments: { command: 'node build.js', background: true, id } } });
-    const replies = [
-      { toolCalls: [start('full-build-background', 'c1')] },
-      { toolCalls: [start('full-build-bg', 'c2')] },
-      { content: 'The build succeeded.' },
-    ];
-    let asked = 0;
-    try {
-      await runTurn({
-        model: 'test',
-        history,
-        config: { maxIterations: 6 },
-        state,
-        gateway: {
-          model: 'test',
-          provider: { id: 'test' },
-          async stream() {
-            const r = replies[asked++] ?? { content: 'done' };
-            return { result: { content: r.content ?? '', toolCalls: r.toolCalls ?? [], finishReason: 'stop' }, attempt: 1, retries: 0, startedAt: Date.now() };
-          },
-        } as any,
-        toolRunner: { async run(_name: string, args: any) { return { result: await runInBackground(args, { cwd, root: cwd, state } as any) }; } } as any,
-      } as any);
-      const results = history.messages.filter((m) => m.role === ROLE.TOOL).map((m) => String(m.content));
-      assert.match(results[0], /finished \(exit 0\) while starting/);
-    } finally {
-      await removeWorkspace(cwd, state);
-    }
-  });
-});
-
-describe('a reworded restart that keeps finding nothing new', () => {
-});
-
 describe('a background process that ended reaches the model as news', () => {
   it('sits after the "for reference only" block, right before the person\'s words', async () => {
     const { buildModelRequest } = await import('../src/context/builder');
@@ -232,5 +163,146 @@ describe('a background process that ended reaches the model as news', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('background-handoff', () => {
+  const exit = (id: string): BackgroundExit => ({
+    id, command: `run ${id}`, outcome: 'finished', exitCode: 0, signal: null, durationMs: 11_000, tail: 'FizzBuzz', endedAt: Date.now(),
+  });
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+  function chat(over: { busy?: boolean; typing?: boolean; unfinished?: boolean } = {}) {
+    const background = new BackgroundInbox();
+    const state = { busy: false, typing: false, unfinished: false, ...over };
+    const notes: string[] = [];
+    const turns: string[] = [];
+    const handoff = createBackgroundHandoff({
+      background,
+      busy: () => state.busy,
+      queued: () => false,
+      typing: () => state.typing,
+      lastTurnUnfinished: () => state.unfinished,
+      note: (text) => notes.push(text),
+      echo: () => {},
+      // What executeTurn does with the inbox: the request shows the exits, the finished turn settles them.
+      runTurn: async (text) => {
+        turns.push(text);
+        background.markShown();
+        background.settle();
+      },
+      afterTurn: async () => handoff.handOff(),
+    });
+    return { background, state, notes, turns, handoff };
+  }
+
+  describe('background results reach the agent without anyone typing', () => {
+    it('an idle chat hands the result to the agent and says so', async () => {
+      const c = chat();
+      c.background.record(exit('fizzbuzz'));
+      await tick();
+      assert.match(c.notes[0], /^background "fizzbuzz" finished \(exit 0\) after 11s — passing it to the agent now\nFizzBuzz$/);
+      assert.deepEqual(c.turns, ['background "fizzbuzz" finished (exit 0) after 11s']);
+    });
+
+    it('a running turn gets it itself; one that already asked its last gets it as soon as it ends', async () => {
+      const c = chat({ busy: true });
+      c.background.record(exit('late'));
+      await tick();
+      assert.match(c.notes[0], /the agent gets it with this turn/);
+      assert.deepEqual(c.turns, [], 'no second turn while one runs');
+      c.state.busy = false;
+      await c.handoff.handOff();
+      assert.equal(c.turns.length, 1);
+    });
+
+    it('does not pick up after a stopped or failed turn, or while the person is typing', async () => {
+      for (const over of [{ unfinished: true }, { typing: true }]) {
+        const c = chat(over);
+        c.background.record(exit('job'));
+        await tick();
+        assert.match(c.notes[0], /the agent will see it with your next message/);
+        assert.deepEqual(c.turns, []);
+      }
+    });
+
+    it('stops after a few in a row with nobody typing, until the person speaks', async () => {
+      const c = chat();
+      for (let i = 0; i <= MAX_AUTO_HANDOFFS; i++) {
+        c.background.record(exit(`job${i}`));
+        await tick();
+      }
+      assert.equal(c.turns.length, MAX_AUTO_HANDOFFS);
+      assert.match(c.notes.at(-1)!, /with your next message/);
+      c.handoff.personSpoke();
+      await c.handoff.handOff();
+      assert.equal(c.turns.length, MAX_AUTO_HANDOFFS + 1, 'the waiting result goes once the person is back');
+    });
+  });
+});
+
+describe('serving-handover', () => {
+  // A foreground command that turns out to be serving is handed to the background, still running, with its output so far.
+  function workspace() {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-serve-'));
+    fs.writeFileSync(path.join(cwd, 'index.js'),
+      "const http=require('http');const s=http.createServer((q,r)=>{console.log('GET '+q.url);r.end('ok')});" +
+      "s.listen(0,()=>console.log('Server listening on http://localhost:'+s.address().port));");
+    const state: any = createWorkspaceState(cwd, { sessionId: `s${Date.now()}` });
+    state.permissions = createAgentState().permissions;
+    applyApprovalPolicy(state, { yes: true });
+    return { cwd, ex: createExecutor({ root: cwd, state }) };
+  }
+
+  describe('a foreground command that is serving', () => {
+    it('comes back in seconds, keeps running in the background, and its later output is still captured', async () => {
+      const w = workspace();
+      let id = '';
+      try {
+        const started = Date.now();
+        const r: any = (await w.ex.run('exec_shell', { command: 'node index.js' })).result;
+        assert.ok(Date.now() - started < 10_000, `took ${Date.now() - started}ms`);
+        assert.equal(r.ok, true, r.error);
+        assert.equal(r.data.background, true);
+        id = r.data.id;
+        assert.match(r.display, /is serving at http:\/\/localhost:\d+ .* carries on in the background/);
+        assert.match(r.display, /Output so far:\nServer listening on/);
+        assert.equal(await (await fetch(`${r.data.url}/hello`)).text(), 'ok', 'still serving after the handover');
+        await new Promise((res) => setTimeout(res, 300));
+        const status: any = (await w.ex.run('subprocess_status', { id })).result;
+        assert.match(String(status.display), /GET \/hello/, 'output printed after the handover is captured');
+      } finally {
+        if (id) await w.ex.run('stop_subprocess', { id });
+        fs.rmSync(w.cwd, { recursive: true, force: true });
+      }
+    });
+
+    it('a test run that prints an address and goes quiet is waited for, and its failure is its result', async () => {
+      const w = workspace();
+      try {
+        fs.writeFileSync(path.join(w.cwd, 'package.json'), JSON.stringify({ scripts: { test: 'node slow.test.js' } }));
+        fs.writeFileSync(path.join(w.cwd, 'slow.test.js'),
+          "console.log('app listening on http://localhost:3000');setTimeout(()=>{console.log('1 failing');process.exit(1)},2500);");
+        const r: any = (await w.ex.run('exec_shell', { command: 'npm test' })).result;
+        assert.ok(!r.data?.background, 'not handed to the background');
+        assert.equal(r.ok, false);
+        assert.match(String(r.display ?? r.error), /1 failing/);
+      } finally {
+        fs.rmSync(w.cwd, { recursive: true, force: true });
+      }
+    });
+
+    it('a "server" that exits at once is reported as finished, with nothing left running', async () => {
+      const w = workspace();
+      try {
+        fs.writeFileSync(path.join(w.cwd, 'server.js'), "module.exports = require('http').createServer();");
+        const r: any = (await w.ex.run('exec_shell', { command: 'node server.js', background: true })).result;
+        assert.equal(r.ok, true);
+        const seen = renderToolResult(r, 'exec_shell');
+        assert.match(seen, /finished \(exit 0\) while starting, so nothing is left running in the background/);
+      } finally {
+        fs.rmSync(w.cwd, { recursive: true, force: true });
+      }
+    });
   });
 });

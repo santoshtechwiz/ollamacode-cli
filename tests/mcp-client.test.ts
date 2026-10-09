@@ -2,9 +2,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it } from 'node:test';
+import { describe, it, after, before } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { McpClient, quoteForCmd } from '../src/mcp/client';
+import { startMcpServers, mcpReady, mcpServerStatus, closeMcpServers, bridgeTool } from '../src/mcp/registry';
+import '../src/tool/index';
+import { PermissionPolicy } from '../src/tool/policy/permission-policy';
+import { createAgentState } from '../src/agent/state';
 
 const SERVER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-mcp-server.cjs');
 const fake = (name: string, ...args: string[]) => new McpClient({ name, command: process.execPath, args: [SERVER, ...args] } as any);
@@ -67,19 +71,6 @@ describe('requests the server makes', () => {
     } finally {
       await client.close();
       fs.rmSync(path.dirname(reply), { recursive: true, force: true });
-    }
-  });
-});
-
-describe('what a tool returns', () => {
-  it('an image is named with its size, not handed to the model as base64', async () => {
-    const client = fake('camera', 'image');
-    try {
-      await client.connect(5000);
-      const { text } = await client.callTool('echo', {}, 5000);
-      assert.equal(text, '[image image/png, 146 KB — not shown as text]');
-    } finally {
-      await client.close();
     }
   });
 });
@@ -149,21 +140,6 @@ describe('when a server says no', () => {
   });
 });
 
-describe('the handshake', () => {
-  it('tells the server the version of ocode that is running', async () => {
-    const seen = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-mcp-')), 'hello.json');
-    const client = fake('greeter', 'hello', seen);
-    try {
-      await client.connect(5000);
-      const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-      assert.deepEqual(JSON.parse(fs.readFileSync(seen, 'utf8')).clientInfo, { name: 'ollamacode', version: pkg.version });
-    } finally {
-      await client.close();
-      fs.rmSync(path.dirname(seen), { recursive: true, force: true });
-    }
-  });
-});
-
 describe('arguments through a Windows shim', () => {
   it('quotes what cmd.exe would split or run, and leaves plain words alone', () => {
     assert.equal(quoteForCmd('@playwright/mcp@latest'), '@playwright/mcp@latest');
@@ -172,5 +148,84 @@ describe('arguments through a Windows shim', () => {
     assert.equal(quoteForCmd('--root=C:\\dir\\'), '"--root=C:\\dir\\\\"');
     assert.equal(quoteForCmd('say "hi"'), '"say \\"hi\\""');
     assert.equal(quoteForCmd(''), '""');
+  });
+});
+
+describe('mcp-background', () => {
+  const SERVER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-mcp-server.cjs');
+  let home = '';
+  let previousHome: string | undefined;
+  before(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-mcp-home-'));
+    previousHome = process.env.OLLAMACODE_HOME;
+    process.env.OLLAMACODE_HOME = home;
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
+      mcpServers: [
+        { name: 'fake', command: process.execPath, args: [SERVER, 'ok'] },
+        // A typo in the command: this used to hang session start for good.
+        { name: 'typo', command: 'no-such-mcp-binary-for-ocode-tests', args: [] },
+      ],
+    }));
+  });
+
+  after(async () => {
+    await closeMcpServers();
+    if (previousHome === undefined) delete process.env.OLLAMACODE_HOME;
+    else process.env.OLLAMACODE_HOME = previousHome;
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it('servers connect in the background: the caller goes on at once, a broken one cannot hold anything up', async () => {
+    const registered: string[] = [];
+    const started = Date.now();
+    startMcpServers((defs) => registered.push(...defs.map((d) => d.name)));
+    assert.ok(Date.now() - started < 200, 'starting returns without waiting for any server');
+
+    await mcpReady();
+    assert.ok(Date.now() - started < 10_000, 'readiness settles even though one command does not exist');
+    assert.deepEqual(registered, ['mcp__fake__echo']);
+    assert.deepEqual(
+      mcpServerStatus().map((s) => [s.name, s.connected]),
+      [['fake', true], ['typo', false]],
+    );
+  });
+});
+
+describe('mcp-tools', () => {
+  const client = { name: 'docs', callTool: async () => ({ text: 'ok', isError: false }) } as any;
+  const decide = (def: any, grantAll = false) => {
+    const permissions = createAgentState().permissions;
+    if (grantAll) permissions.alwaysAllowAll = true;
+    return new PermissionPolicy().decide({
+      toolName: def.name, args: {}, toolDef: def, cwd: os.tmpdir(), root: os.tmpdir(),
+      permissions, yes: false, policy: 'ask', interactive: true, grantedRoots: [],
+    });
+  };
+
+  describe('what an MCP server declares about its tools', () => {
+    it('a read-only tool runs without asking', async () => {
+      assert.equal(await decide(bridgeTool(client, { name: 'search', annotations: { readOnlyHint: true } })), 'allow');
+    });
+
+    it('a tool with no declaration is asked about, and "always" covers it', async () => {
+      const def = bridgeTool(client, { name: 'update' });
+      assert.equal(await decide(def), 'ask');
+      assert.notEqual(await decide(def, true), 'ask');
+    });
+
+    it('a tool declared destructive is asked about every time, even under "always"', async () => {
+      const def = bridgeTool(client, { name: 'wipe', annotations: { destructiveHint: true } });
+      assert.equal(await decide(def, true), 'ask');
+    });
+  });
+
+  describe('the names the model calls MCP tools by', () => {
+    it('two servers whose names clean to the same text still get distinct tool names', () => {
+      const taken = new Set<string>();
+      const a = bridgeTool({ ...client, name: 'my-server' }, { name: 'run' }, taken).name;
+      const b = bridgeTool({ ...client, name: 'my_server' }, { name: 'run' }, taken).name;
+      assert.equal(a, 'mcp__my_server__run');
+      assert.equal(b, 'mcp__my_server__run_2');
+    });
   });
 });

@@ -5,7 +5,8 @@ import { logger } from '../../core/logger';
 
 import { detectOne, exists } from './probe';
 import { getProviders } from './registry';
-import { isProjectMarker, type Language } from '../languages';
+import { LANGUAGES, VERBS, type Language } from '../languages';
+import { isProjectMarker } from '../project-layout';
 import { walkFiles } from '../../tool/filesystem/_fs';
 import type { StackInfo } from '../../types';
 
@@ -75,23 +76,18 @@ async function detectByMarkers(root: string, lang: Language): Promise<StackInfo 
   const runtime = await detectOne(main.name, main.commands);
   const candidates = typeof main.commands === 'function' ? main.commands(process.platform) : main.commands;
   const cmd = runtime.command ?? candidates[0];
-  const c = lang.commands ?? {};
-  return {
-    id: lang.id,
-    label: lang.label,
-    root,
-    marker,
-    test: c.test?.(cmd, marker),
-    build: c.build?.(cmd, marker),
-    check: c.check?.(cmd, marker),
-    lint: c.lint?.(cmd, marker),
-    run: c.run?.(cmd, marker),
-  };
+  const stack: StackInfo = { id: lang.id, label: lang.label, root, marker };
+  for (const verb of VERBS) stack[verb] = lang.commands?.[verb]?.(cmd, marker);
+  for (const verb of VERBS) {
+    const scoped = lang.fileScoped?.[verb]?.(cmd);
+    if (scoped) (stack.fileScoped ??= {})[verb] = scoped;
+  }
+  return stack;
 }
 
 export async function detectStacks(root: string): Promise<StackInfo[]> {
   const stacks: StackInfo[] = [];
-  for (const lang of getProviders()) {
+  for (const lang of LANGUAGES) {
     const found = lang.detect ? await lang.detect(root) : lang.markers || lang.extensions ? await detectByMarkers(root, lang) : null;
     if (found) stacks.push(found);
   }

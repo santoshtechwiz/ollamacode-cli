@@ -76,6 +76,15 @@ Use it for anything bigger than a one-file change.
 4. Once approved it switches to Agent and the same turn carries the plan out,
    keeping a task list as it goes.
 
+The task list holds outcomes ("the page adds and deletes tasks"), not typing
+steps. Each task can say when it is done and which command proves it, and wait
+for the tasks it depends on. A task is marked done only on evidence: its command
+passed on the files as they are now (a command that already passed is not run
+again), or the agent says what showed it works. If that command fails later,
+the task opens again. As the agent learns more it changes only the tasks
+concerned: it splits, adds, reorders or drops them, and the rest stay as they
+were.
+
 If the work stops part way (the step limit, you pressed `Ctrl+C`), `/continue`
 picks it up.
 
@@ -141,6 +150,51 @@ steps and 5 minutes unless it says otherwise (at most 8 minutes). `also` adds
 tools on top of the read-only set, for example `["web_search", "web_fetch"]`.
 A role with a built-in's name replaces it. New roles apply from the next start.
 
+### Skills
+
+A skill is a set of step-by-step instructions for one kind of work. The agent
+sees the list of skills (name and one line each) and loads one when the work
+calls for it. You don't need to ask for it by name:
+
+```text
+make a landing page for my bakery
+the settings page looks cramped on phones, fix it
+```
+
+ocode ships with one skill:
+
+| Skill | For | What it does |
+| --- | --- | --- |
+| `ui-ux` | building, reviewing or fixing a web UI | asks which stack and folder for a new site instead of assuming React; uses your project's theme (or its starter `tokens.css`) instead of one-off values; checks layout, spacing, type, color, forms, loading/empty/error states and accessibility; then verifies with the build and `check_page` |
+
+When the agent reads or edits a file a skill covers (`.html`, `.css`, `.tsx`,
+`.vue` … for `ui-ux`), it is reminded once per turn that the skill exists. The
+reminder points at the skill; loading it is the agent's call, because a `.tsx`
+file can be plain logic.
+
+**Skills of your own.** A skill is a folder with a `SKILL.md`:
+
+```markdown
+---
+name: api-design
+description: designing or changing an HTTP API
+paths: ["src/routes/**", "openapi.yaml"]
+---
+1. Read the existing routes and follow their naming, status codes and error shape.
+2. ...
+```
+
+`paths` is optional. Other files in the folder (templates, references) can be
+read through the skill. Skills are read from, in order (a later one replaces an
+earlier one with the same name):
+
+1. the skills that ship with ocode;
+2. `~/.ollamacode/skills/<name>/SKILL.md`, yours in every project;
+3. `.ocode/skills/<name>/SKILL.md` in the project, which you can commit and share.
+
+Skills are read when ocode starts, so a new or changed skill applies from the
+next start.
+
 ### Web search and web pages
 
 The agent can look things up and read pages:
@@ -178,6 +232,33 @@ Excel support uses the optional `xlsx` package, downloaded from
 `cdn.sheetjs.com`. If your network blocks that site, ocode still installs and
 runs, PDFs still work, and spreadsheet requests say the package is missing.
 
+### Checking web pages
+
+The agent can open a page in a headless browser and see what is wrong with it,
+so a web UI change is checked rather than guessed at:
+
+```text
+start the dev server and check the settings page on mobile
+check index.html for accessibility problems
+```
+
+`check_page` opens a URL (a running dev server) or a static `.html` file at
+mobile (375px), tablet (768px) and desktop (1280px) widths and reports:
+
+- sideways scrolling, and the elements that stick out past the screen edge;
+- accessibility problems from [axe-core](https://github.com/dequelabs/axe-core)
+  (WCAG 2.2 A/AA): contrast, missing labels and alt text, small tap targets;
+- uncaught script errors;
+- images, scripts, styles or data that failed to load.
+
+The same problem at several widths is reported once, naming the widths. From
+the shell: `node scripts/check-page.mjs index.html` (exit 1 when it finds
+errors). It
+uses the optional `playwright-core` and `axe-core` packages and a Chromium
+browser: run `npx playwright install chromium` once, or have Chrome or Edge
+installed. Without them ocode runs as usual and only page checks say they are
+unavailable.
+
 ### Running programs and servers
 
 Ask it to run things the way you would type them:
@@ -195,6 +276,12 @@ it ends, its output shows up in the chat and goes to the agent on its own; you
 don't need to type anything. A long command asks after 2 minutes whether to keep
 waiting.
 
+Everything ocode started stops when ocode does: background servers, a check
+still running, MCP servers. That includes `/exit`, Ctrl+C twice, and closing
+the terminal window, so a dev server never outlives the session holding its
+port. Only a process killed from outside (Task Manager, `kill -9`) cannot clean
+up after itself.
+
 ### Checks after every edit
 
 Have ocode check the agent's work whenever it changes files, so it cannot say "done" over code that does not build:
@@ -210,14 +297,23 @@ with different kinds of projects:
 |---|---|
 | TypeScript | its `typecheck` script, or `npx tsc --noEmit` |
 | Python | `python -m compileall -q` over the project (every file parsed, none run; virtualenvs skipped) |
-| C# / .NET | `dotnet build` |
+| C# / .NET | `dotnet build` into `obj/ocode-check/`, so an app running from `bin/` (`dotnet run`) never makes it fail |
 | Rust | `cargo check` |
 | Go | `go vet ./...` |
 | Terraform | `terraform validate` |
 | JavaScript | its `typecheck` or `lint` script, if it has one |
 
 A project with no check is skipped, and the agent is told so. `test`, `build` and `lint` work the same way with
-each project's tests, build or linter. Or give a command of your own:
+each project's tests, build or linter. Name several to run them in order:
+
+```sh
+ocode config set agent.afterEdit "check lint"
+```
+
+`lint` runs on only the files that step changed when the project's linter takes files (ESLint, `ruff check`), so it
+stays fast enough for every step. Framework files are included when their ESLint plugin is installed: `.vue` (eslint-plugin-vue),
+`.svelte` (eslint-plugin-svelte), `.astro` (eslint-plugin-astro), Angular templates (angular-eslint). Or give a
+command of your own:
 
 ```sh
 ocode config set agent.afterEdit "npm test"
@@ -232,6 +328,63 @@ and its result goes to the model with that step, so a failing test gets fixed
 straight away instead of at the end. It runs without asking because you
 configured it.
 `ocode config unset agent.afterEdit` turns it off.
+
+### Letting ocode choose the checks
+
+`agent.beforeDone` is `auto` unless you set it: when the agent answers after changing files, ocode checks the work
+before the answer counts as done. It can be set for after each edit too:
+
+```sh
+ocode config set agent.afterEdit auto
+```
+
+ocode then decides from what changed, what the project is, and how long each check took in this project before:
+
+| When | What runs |
+| --- | --- |
+| After an edit | only checks that took under 10 seconds here last time (a fast type check, lint on the changed files); a slow one waits for the end |
+| Before "done" | a framework whose build checks more than types (Next.js, Nuxt, Angular, SvelteKit, Astro, Remix): lint on the changed files, then the build, which includes the type check |
+| | any other project: the type check when code changed, and lint on the changed files |
+| | lint is left out once it took 10 seconds or more in this project (ESLint on a Next.js app often does); `"lint build"` keeps it |
+| | then, for a web front end (a framework above, React, Vue or Svelte, with a `dev` script), its page: see below |
+| | a site with no project around it: its changed `.html` files, opened with `check_page` |
+| | nothing when only documentation changed, and never a check that already passed on the same files |
+
+How long each check took is kept in the project's `.ocode/memory.json`, so the next session knows what is fast from
+its first edit. A project ocode has never checked runs everything at the end the first time.
+
+The page check opens the page the way you will: in the session's dev server for that project, or, when none is
+running, one it starts in the background (it stays running for you, and stops with ocode). The address is the port
+the system says the server listens on, never one guessed from its output. `check_page` then loads it at mobile,
+tablet, desktop and dark mode. A script error, a failed request or sideways scrolling sends the agent back to fix
+it; accessibility advice is reported without holding the answer back. It runs only after the build passed, and
+without a browser installed it is reported as unchecked, not failed.
+
+### A check before "done"
+
+A type check after each edit cannot see everything: a Next.js page that uses `new Date()` while prerendering, or
+an image host missing from `next.config`, passes `tsc` and still fails. A build catches both, but is too slow to
+run after every step. `agent.beforeDone` runs once when the agent answers:
+
+```sh
+ocode config set agent.beforeDone build
+```
+
+It runs only when files changed since it last ran, in each changed project's folder, and takes the same words
+(`check`, `build`, `test`, `lint`, several at once) or a command of your own. If it fails, the agent reads the
+failure and keeps working instead of saying "done"; when it can't fix it and changes nothing more, its answer
+stands, so a failure it can't fix never loops. `ocode config set agent.beforeDone off` turns it off. Add `page` to
+the words to open the page too (`"build page"`).
+
+Each check has a time limit: 90 seconds after an edit, 5 minutes before "done". A check that runs out of time is
+stopped and reported as unfinished, not as a failure the agent must fix. `ocode config set agent.checkTimeoutMs
+180000` changes both. A linter or type check can be slow on a large project (a first ESLint run over a Next.js app
+on Windows can take minutes), so keep the fast check after each edit and the slow ones for the end:
+
+```sh
+ocode config set agent.afterEdit check
+ocode config set agent.beforeDone "lint build"
+```
 
 ### Git
 

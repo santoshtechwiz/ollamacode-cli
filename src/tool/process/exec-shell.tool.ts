@@ -13,8 +13,8 @@ import { ownProcessStoppedBy, ownProcessRefusal } from './analysis/own-process';
 import { executeShell } from './execution/execute';
 import { runsToEnd } from './analysis/runs-to-end';
 import { detachReason } from './analysis/detach';
-import { projectDirsIn, projectFolderOf } from '../../env/languages';
-import { noteWorkIn } from '../../context/workspace-state';
+import { projectDirsIn, projectFolderOf } from '../../env/project-layout';
+import { noteFailed, notePassed, noteWorkIn } from '../../context/workspace-state';
 import { parseShellDiagnostics } from './analysis/diagnostics';
 import { formatOutput } from './output/presentation';
 import { runInBackground, keepServingInBackground, SERVING } from './background';
@@ -205,6 +205,7 @@ export default defineTool({
     if (execution.exitCode === 0) {
       // A passing build, test, lint or type-check checks every change made before it.
       if (endsOnItsOwn && ctx?.state) ctx.state.verifiedAt = ctx.state.changeSeq ?? 0;
+      notePassed(ctx?.state, request.cwd, command);
       return ok({
         kind: 'command',
         display: presentation,
@@ -213,6 +214,8 @@ export default defineTool({
       });
     }
 
+    // It no longer holds for these files, whatever passed before; a completed task it proves is open again.
+    noteFailed(ctx?.state, request.cwd, command);
     const primary = diagnostics.find((d) => d.severity === 'error' || d.severity === 'failure');
     const failingLoc = primary?.file ? `${primary.file}${primary.line ? `:${primary.line}` : ''}` : '';
     const failingProject = primary?.project ? ` (in ${primary.project})` : '';

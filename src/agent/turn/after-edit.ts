@@ -4,9 +4,15 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROLE, TOOL_NAME } from '../../protocol';
-import { isProjectMarker } from '../../env/languages';
+import { ROLE, TOOL_ERROR_CODE, TOOL_NAME } from '../../protocol';
+import { holdsProjectMarker, projectFolderOf as nearestProjectFolder } from '../../env/project-layout';
+import { CHECK_VERBS, type Verb } from '../../env/languages';
 import { detectStacks } from '../../env/tooling/detector';
+import { autoSteps, FAST_CHECK_MS, PAGE, type CheckPhase, type Step } from './check-plan';
+import { checkPages } from './page-check';
+import { commandLine } from './helpers';
+import { passedSinceChange } from '../../context/workspace-state';
+import { loadMemory, updateMemory } from '../../context/memory';
 import type { ToolExecutor } from '../../tool/execution/executor';
 import type { TurnCallbacks } from './turn';
 
@@ -24,37 +30,216 @@ const FAILURE_TAIL_LINES = 40;
  */
 export function projectFolderOf(root: string, rel: string): string {
   const top = path.resolve(root);
-  if (holdsMarker(top)) return '';
-  let dir = path.dirname(path.resolve(top, rel));
-  while (dir.startsWith(top)) {
-    if (holdsMarker(dir)) return path.relative(top, dir).split(path.sep).join('/');
-    if (dir === top) break;
-    dir = path.dirname(dir);
-  }
-  return '';
-}
-
-function holdsMarker(dir: string): boolean {
-  try {
-    return fs.readdirSync(dir).some((name) => isProjectMarker(name));
-  } catch {
-    return false; // a folder the step deleted: look above it
-  }
+  if (holdsProjectMarker(top)) return '';
+  // A folder the step deleted holds no marker, so the search goes on above it.
+  const found = nearestProjectFolder(top, path.resolve(top, rel));
+  return found ? path.relative(top, found).split(path.sep).join('/') : '';
 }
 
 /** A project's own command, by name: "check", "build", "test" or "lint" is the one ocode detected for its stack. */
-const PROJECT_VERBS = new Set(['check', 'build', 'test', 'lint']);
+const isCheckVerb = (word: string): word is Verb => (CHECK_VERBS as readonly string[]).includes(word);
+/** A word a setting can name: a project's check, or its page opened in a browser. */
+const isStep = (word: string): word is Step => word === PAGE || isCheckVerb(word);
 
-/** The command to run in this folder: the configured one as written, or the project's own for a check named by verb. */
-async function projectCommand(command: string, folder: string): Promise<string | null> {
-  if (!PROJECT_VERBS.has(command)) return command;
-  const stacks = await detectStacks(folder).catch((): import('../../types.ts').StackInfo[] => []);
-  const argv = stacks.map((stack) => stack[command as 'check' | 'build' | 'test' | 'lint']).find((a) => Array.isArray(a) && a.length);
-  return argv ? argv.map((a) => (/^[\w@./:=-]+$/.test(a) ? a : JSON.stringify(a))).join(' ') : null;
+/** The setting that turns a check off; agent.beforeDone is "auto" unless set. */
+export const OFF = 'off';
+
+/**
+ * The commands a setting names: words that are all steps ("check lint page") are one each, run in that order;
+ * anything else is one command as written ("npm test", "pytest -q"). "off" names none.
+ */
+export function checkCommands(setting: string): string[] {
+  const words = setting.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 1 && words[0] === OFF) return [];
+  return words.length > 0 && words.every(isStep) ? words : setting.trim() ? [setting.trim()] : [];
 }
 
-export async function runAfterEditCheck({ command, root, changed, history, toolRunner, callbacks, signal }: {
+/**
+ * The command to run in this folder: the configured one as written, or the project's own for a check named by verb.
+ * A verb whose command takes files (ESLint, ruff) is given only the changed ones, which keeps it fast enough to run
+ * after every step. '' when there is nothing for it to look at.
+ */
+function projectCommand(command: string, stacks: import('../../types.ts').StackInfo[], files: string[]): string | null {
+  if (!isCheckVerb(command)) return command;
+  const byFile = stacks.map((stack) => stack.fileScoped?.[command]).find(Boolean);
+  if (byFile) {
+    const scoped = files.filter((f) => byFile.extensions.includes(path.extname(f).toLowerCase()));
+    return scoped.length ? commandLine([...byFile.argv, ...scoped]) : '';
+  }
+  const argv = stacks.map((stack) => stack[command]).find((a) => Array.isArray(a) && a.length);
+  return argv ? commandLine(argv) : null;
+}
+
+/** The setting that lets ocode choose the checks (see check-plan.ts). */
+export const AUTO = 'auto';
+
+/**
+ * What a session knows about its checks: how long each took per project (for auto), and, through exec_shell, which
+ * commands passed on the files as they are now (workspace-state notePassed), whoever ran them.
+ */
+export interface CheckMemory {
+  /**
+   * Last duration of a verb in a project folder, ms; key `${folder}\0${verb}`. Read from the project's memory the first
+   * time a session needs it and written back after each run, so auto knows a slow check from the first edit of the next
+   * session too, instead of finding out again.
+   */
+  checkMs?: Record<string, number>;
+  root?: string;
+  changeSeq?: number;
+  passedAt?: Record<string, number>;
+  /** The session's background jobs: a dev server already running for a project serves its page check. */
+  subprocesses?: Map<string, { cwd: string; pid?: number; exited?: boolean; error?: string }>;
+}
+
+/** The check durations this session knows: the project's remembered ones until a check runs here. */
+function knownDurations(memory: CheckMemory, root: string): Record<string, number> {
+  if (!memory.checkMs) {
+    let remembered: Record<string, number> = {};
+    try { remembered = loadMemory(root).agentState.checkMs ?? {}; } catch { /* none */ }
+    memory.checkMs = { ...remembered };
+  }
+  return memory.checkMs;
+}
+
+function rememberDuration(memory: CheckMemory, root: string, key: string, ms: number): void {
+  knownDurations(memory, root)[key] = ms;
+  try {
+    updateMemory(root, (mem) => { mem.agentState.checkMs = { ...mem.agentState.checkMs, [key]: ms }; });
+  } catch { /* a read-only project still runs its checks */ }
+}
+
+/**
+ * How long a configured check may run before it is stopped. A check holds the turn while it runs, and in a chat a
+ * command has no limit of its own, so a slow linter (ESLint over a Next.js project on a cold Windows cache) held a turn
+ * past a minute and a half. A check that runs out of time is unfinished, not failed: nothing in the code is wrong yet.
+ * agent.checkTimeoutMs sets both.
+ */
+const AFTER_EDIT_TIMEOUT_MS = 90_000;
+const BEFORE_DONE_TIMEOUT_MS = 300_000;
+
+export interface CheckRun {
+  /** The tool call made, as the model and the person see it: exec_shell for a command, check_page for a page. */
+  tool: string;
+  args: Record<string, unknown>;
+  /** How the person reads it: the command, or the page opened. */
+  label: string;
+  result: import('../../types.ts').ToolResult;
+  passed: boolean;
+  /** It ran out of time or was moved to the background: its result is not known. */
+  unfinished: boolean;
+  note: string;
+}
+
+/**
+ * Runs each command the setting names, once per project the changed files belong to, in that project's folder.
+ * `setting` names it in what the model reads (agent.afterEdit, agent.beforeDone).
+ */
+async function runChecks({ command, phase, memory, setting, name, timeoutMs, root, changed, toolRunner, callbacks, signal }: {
   command: string;
+  phase: CheckPhase;
+  memory?: CheckMemory;
+  timeoutMs: number;
+  setting: string;
+  /** How a note names the check: "After-edit check". */
+  name: string;
+  root: string;
+  changed: string[];
+  toolRunner: ToolExecutor;
+  callbacks: TurnCallbacks;
+  signal?: AbortSignal;
+}): Promise<{ notes: string[]; runs: CheckRun[] }> {
+  const byFolder = new Map<string, string[]>();
+  for (const rel of changed.length ? changed : ['.']) {
+    const folder = projectFolderOf(root, rel);
+    const inFolder = path.relative(path.resolve(root, folder), path.resolve(root, rel)).split(path.sep).join('/');
+    byFolder.set(folder, [...(byFolder.get(folder) ?? []), ...(rel === '.' ? [] : [inFolder])]);
+  }
+  const auto = command.trim() === AUTO;
+  const notes: string[] = [];
+  const runs: CheckRun[] = [];
+  for (const [folder, allFiles] of byFolder) {
+    if (signal?.aborted) break;
+    const where = folder ? ` in ${folder}` : '';
+    const files = allFiles.filter((f) => fs.existsSync(path.resolve(root, folder, f)));
+    const stacks = await detectStacks(path.resolve(root, folder)).catch((): import('../../types.ts').StackInfo[] => []);
+    const timeKey = (verb: string) => `${folder}\u0000${verb}`;
+    const steps = auto
+      ? autoSteps(phase, stacks, files, (verb) => (memory ? knownDurations(memory, root)[timeKey(verb)] : undefined))
+      : checkCommands(command);
+    // Two words can name one command (Go's check and lint are both go vet): it runs once per folder.
+    const ran = new Set<string>();
+    const folderRuns: CheckRun[] = [];
+    for (const each of steps) {
+      // Stopped (Ctrl+C): nothing more starts.
+      if (signal?.aborted) break;
+      if (each === PAGE) {
+        // A page is worth opening once the project's own checks pass: a failing build is what to fix first.
+        if (folderRuns.some((r) => !r.passed)) continue;
+        for (const page of await checkPages({ root, folder, files, stacks, jobs: memory?.subprocesses, toolRunner, callbacks, signal })) {
+          const note = page.unfinished
+            ? `${name} ${page.label}${where} (${setting}) could not run: ${page.result.error ?? 'unknown reason'}; the page is unchecked.`
+            : page.passed
+              ? `${name} ${page.label}${where} (${setting}) passed.`
+              : `${name} ${page.label}${where} (${setting}) failed:\n${String(page.result.display ?? page.result.error ?? '').trim()}`;
+          notes.push(note);
+          runs.push({ ...page, note });
+        }
+        continue;
+      }
+      const run = projectCommand(each, stacks, files);
+      if (run === '' || (run && ran.has(run))) continue;
+      if (!run) {
+        notes.push(`${name} (${setting} "${each}")${where} did not run: this project has no ${each} command ocode knows.`);
+        continue;
+      }
+      ran.add(run);
+      const args = folder ? { command: run, cwd: folder, timeout_ms: timeoutMs } : { command: run, timeout_ms: timeoutMs };
+      // Already passed on the files as they are now (the model ran the build itself after its last fix): not again.
+      if (memory?.root && passedSinceChange(memory as { root: string }, path.resolve(root, folder), run)) {
+        const note = `${name} \`${run}\`${where} (${setting}) already passed after the last change; not run again.`;
+        notes.push(note);
+        const skipped: CheckRun = { tool: TOOL_NAME.EXEC_SHELL, args, label: run, result: { ok: true, kind: 'command' }, passed: true, unfinished: false, note };
+        runs.push(skipped);
+        folderRuns.push(skipped);
+        continue;
+      }
+      callbacks.onToolStart?.(TOOL_NAME.EXEC_SHELL, args);
+      const { result, durationMs } = await toolRunner.run(TOOL_NAME.EXEC_SHELL, args, { signal, approve: async () => true });
+      callbacks.onToolResult?.(TOOL_NAME.EXEC_SHELL, args, result);
+      const data = result.data as { execution?: { exitCode?: number }; background?: boolean; id?: string } | undefined;
+      const exit = data?.execution?.exitCode;
+      const output = String(result.display ?? result.error ?? '').split('\n').slice(-FAILURE_TAIL_LINES).join('\n').trim();
+      // Passed means it ran to the end and exited 0; a check still running in the background has not passed yet.
+      const timedOut = result.code === TOOL_ERROR_CODE.ETIMEDOUT;
+      const unfinished = Boolean(data?.background) || timedOut;
+      const passed = !unfinished && result.ok && (exit === undefined || exit === 0);
+      // A check that ran out of time took at least that long: it is not fast, whatever it would have taken. One stopped
+      // (Ctrl+C) says how long it takes only once it has run past fast: stopped sooner, it might have finished in time.
+      const took = durationMs ?? 0;
+      if (memory && isCheckVerb(each) && (!signal?.aborted || took >= FAST_CHECK_MS)) {
+        rememberDuration(memory, root, timeKey(each), unfinished ? Math.max(took, timeoutMs) : took);
+      }
+      const note = data?.background
+        ? `${name} \`${run}\`${where} (${setting}) did not finish: it kept running, so it was moved to the background${data.id ? ` as ${data.id}` : ''}; its result is not known.`
+        : timedOut
+          ? `${name} \`${run}\`${where} (${setting}) did not finish within ${Math.round(timeoutMs / 1000)}s and was stopped; its result is not known. agent.checkTimeoutMs gives it longer.`
+          : passed
+          ? `${name} \`${run}\`${where} (${setting}) passed.`
+          : `${name} \`${run}\`${where} (${setting}) failed${exit !== undefined ? ` with exit ${exit}` : ''}:\n${output}`;
+      notes.push(note);
+      const done: CheckRun = { tool: TOOL_NAME.EXEC_SHELL, args, label: run, result, passed, unfinished, note };
+      runs.push(done);
+      folderRuns.push(done);
+    }
+  }
+  return { notes, runs };
+}
+
+/** agent.afterEdit: run after a step that changed files; the outcome rides on that step's last tool result. */
+export async function runAfterEditCheck({ command, timeoutMs = AFTER_EDIT_TIMEOUT_MS, memory, root, changed, history, toolRunner, callbacks, signal }: {
+  command: string;
+  timeoutMs?: number;
+  memory?: CheckMemory;
   /** The workspace root, and the files the step changed, workspace-relative. */
   root: string;
   changed: string[];
@@ -63,33 +248,29 @@ export async function runAfterEditCheck({ command, root, changed, history, toolR
   callbacks: TurnCallbacks;
   signal?: AbortSignal;
 }): Promise<void> {
-  // Once per project the step touched, in that project's folder.
-  const folders = [...new Set((changed.length ? changed : ['.']).map((rel) => projectFolderOf(root, rel)))];
-  const notes: string[] = [];
-  for (const folder of folders) {
-    const where = folder ? ` in ${folder}` : '';
-    const run = await projectCommand(command, path.resolve(root, folder));
-    if (!run) {
-      notes.push(`After-edit check (agent.afterEdit "${command}")${where} did not run: this project has no ${command} command ocode knows.`);
-      continue;
-    }
-    const args = folder ? { command: run, cwd: folder } : { command: run };
-    callbacks.onToolStart?.(TOOL_NAME.EXEC_SHELL, args);
-    const { result } = await toolRunner.run(TOOL_NAME.EXEC_SHELL, args, { signal, approve: async () => true });
-    callbacks.onToolResult?.(TOOL_NAME.EXEC_SHELL, args, result);
-    const data = result.data as { execution?: { exitCode?: number }; background?: boolean; id?: string } | undefined;
-    const exit = data?.execution?.exitCode;
-    const output = String(result.display ?? result.error ?? '').split('\n').slice(-FAILURE_TAIL_LINES).join('\n').trim();
-    // Passed means it ran to the end and exited 0; a check still running in the background has not passed yet.
-    notes.push(data?.background
-      ? `After-edit check \`${run}\`${where} (agent.afterEdit) did not finish: it kept running, so it was moved to the background${data.id ? ` as ${data.id}` : ''}; its result is not known.`
-      : result.ok && (exit === undefined || exit === 0)
-        ? `After-edit check \`${run}\`${where} (agent.afterEdit) passed.`
-        : `After-edit check \`${run}\`${where} (agent.afterEdit) failed${exit !== undefined ? ` with exit ${exit}` : ''}:\n${output}`);
-  }
-
+  const { notes } = await runChecks({ command, phase: 'edit', memory, setting: 'agent.afterEdit', name: 'After-edit check', timeoutMs, root, changed, toolRunner, callbacks, signal });
+  if (notes.length === 0) return;
   // The step's last result carries it: the model reads what its edits caused next to what they did.
   const messages = history.messages as Message[];
   const at = messages.findLastIndex((m) => m.role === ROLE.TOOL);
   if (at >= 0) messages[at] = { ...messages[at], content: `${messages[at].content}\n\n${notes.join('\n\n')}` };
+}
+
+/**
+ * agent.beforeDone: run when the model answers after changing files, so "done" is checked the way the person asked
+ * (a build that prerenders pages catches what a type check cannot). Every check that ran comes back: the turn records
+ * the failed ones as calls ocode made, so the model reads why the work is not done yet, and tells the person how it went.
+ */
+export async function runBeforeDoneCheck({ command, timeoutMs = BEFORE_DONE_TIMEOUT_MS, memory, root, changed, toolRunner, callbacks, signal }: {
+  command: string;
+  timeoutMs?: number;
+  memory?: CheckMemory;
+  root: string;
+  changed: string[];
+  toolRunner: ToolExecutor;
+  callbacks: TurnCallbacks;
+  signal?: AbortSignal;
+}): Promise<CheckRun[]> {
+  const { runs } = await runChecks({ command, phase: 'done', memory, setting: 'agent.beforeDone', name: 'Check before answering', timeoutMs, root, changed, toolRunner, callbacks, signal });
+  return runs;
 }
