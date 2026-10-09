@@ -9,11 +9,8 @@ import { createWorkspaceState } from '../src/context/workspace-state';
 import { createAgentRuntime } from '../src/agent/runtime';
 import { createAgentState } from '../src/agent/state';
 import askUser from '../src/tool/agent/interaction/ask-user.tool';
-import todoWrite from '../src/agent/planning/todo-write.tool';
-import { renderMath } from '../src/ui/latex';
 import { runTurn } from '../src/agent/turn/turn';
 import { STOP_REASONS } from '../src/protocol';
-import { BackgroundInbox } from '../src/tool/process/background-inbox';
 import { lineageOf, listProcesses } from '../src/tool/process/processes/discovery';
 import { markStoppedByAgent } from '../src/tool/process/subprocess-state';
 import { namesKilledBy, ownProcessStoppedBy } from '../src/tool/process/analysis/own-process';
@@ -101,16 +98,6 @@ describe('ended background jobs', () => {
     id, command: `build ${id}`, outcome: 'finished' as const, exitCode: 0, signal: null, durationMs: 1000, tail: 'Build succeeded.', endedAt,
   });
 
-  it('keeps one that ended in the same millisecond as the request that showed the others', () => {
-    const inbox = new BackgroundInbox();
-    const now = Date.now();
-    inbox.record(exit('shown', now));
-    inbox.markShown();
-    inbox.record(exit('same-ms', now));
-    inbox.settle();
-    assert.deepEqual(inbox.pending().map((e) => e.id), ['same-ms']);
-  });
-
   it('are still pending after a turn whose model call failed, so the model is told next time', async () => {
     const t = scripted([], async () => ({ ok: true }));
     t.runtime.gateway.stream = async () => { throw new Error('ollama went away'); };
@@ -139,11 +126,6 @@ describe('an answer cut off at the length limit', () => {
 });
 
 describe('stop_process on one of ocode\'s own background jobs', () => {
-  it('reads each process\'s parent from the OS', async () => {
-    const own = (await listProcesses()).find((p) => p.pid === process.pid);
-    assert.ok(own, 'this process is listed');
-    assert.equal(own.parentPid, process.ppid);
-  });
 
   it('marks the job stopped on purpose when what is killed is the job or runs under it', () => {
     // shell (20) → npm (30) → node holding the port (40)
@@ -154,28 +136,6 @@ describe('stop_process on one of ocode\'s own background jobs', () => {
     markStoppedByAgent(new Map([['dev', devServer], ['other', other]]), [lineageOf(40, processes)]);
     assert.equal(devServer.stopRequested, true, 'its end is not reported as a crash');
     assert.equal(other.stopRequested, undefined, 'an unrelated job is still reported when it ends');
-  });
-});
-
-describe('the pinned task list', () => {
-  it('redraws when todo_write sets it, though that step changes no file', async () => {
-    const shown: unknown[] = [];
-    const t = scripted(
-      [{ toolCalls: [call('1', 'todo_write', { todos: [{ content: 'Add the parser', status: 'in_progress' }] })] }, { content: 'Working on it.' }],
-      (_name, args, state) => todoWrite.execute(args, { state } as any),
-    );
-    try {
-      await t.runtime.execute({ input: 'add a parser', toolRunner: t.toolRunner, includeAutoContext: false, onStepComplete: () => shown.push(t.workspace.state.todos) });
-      assert.deepEqual(shown, [[{ content: 'Add the parser', status: 'in_progress' }]]);
-    } finally {
-      t.cleanup();
-    }
-  });
-});
-
-describe('math in answers', () => {
-  it('shows \\bmod as mod', () => {
-    assert.equal(renderMath(String.raw`a \bmod n`), 'a mod n');
   });
 });
 

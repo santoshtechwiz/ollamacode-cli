@@ -50,7 +50,7 @@ If a fix seems to need any of these, stop, explain the flow, and ask. Removing a
 ## 4. Verify
 
 1. `npx tsc --noEmit -p .`
-2. `npm test` — always run it. When it fails, fix the code, never the tests. Add or retire tests only when the user asks. `tests/turn-flow.test.ts` pins the turn rules above.
+2. `npm test` — always run it. When it fails, fix the code, never the tests. Do not add new tests or test files: when a change needs covering, extend the existing test for that behaviour. A test earns its place by catching a real bug, not by adding to a green count. Retire tests only when the user asks. `tests/turn-flow.test.ts` pins the turn rules above.
 3. Prove the change live. Only real `ocode` chat runs count as proof:
    - `npm run eval -- --model <name> [--only id,...]` runs fixed tasks (node, py, .NET, Go) in fresh clones and prints pass/fail, errors, stuck turns and missing answers;
    - `npm run eval -- --mine <dir...>` groups the tool errors in saved sessions;

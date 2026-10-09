@@ -41,7 +41,7 @@ function approved(state: any, plan: string, steps: string[], display: string) {
     if (todos.length) state.todos = todos;
   }
   const list = todos.length
-    ? `\nIts steps are your task list now:\n${todoLines(todos).join('\n')}\nAs you work, mark the step you start in_progress and each finished one completed with todo_write.`
+    ? `\nIts steps are your task list now:\n${todoLines(todos).join('\n')}\nAs you work, change them with todo_write update: give each its doneWhen and verify (the command that proves it) as you start it, mark it in_progress, and completed once that command passed or you can say what showed it works; split, add, reorder or remove tasks when what you find changes the plan.`
     : '';
   return {
     ...ok({ kind: 'status', display, data: { plan, approved: true } }),
@@ -94,7 +94,7 @@ export default defineTool({
       steps: {
         type: 'array',
         items: { type: 'string' },
-        description: 'The plan as a checklist of plain strings, one short line per step in order ("Create the project", "Run the tests"). Once approved it is the task list the user watches.',
+        description: 'The plan as a checklist of plain strings, one outcome per line in order ("The API serves GET /todos", "The page adds and deletes tasks"). Once approved it is the task list the user watches.',
       },
     },
     required: ['plan', 'folder'],

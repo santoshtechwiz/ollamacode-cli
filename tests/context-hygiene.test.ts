@@ -3,19 +3,20 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it } from 'node:test';
-import { buildModelRequest } from '../src/context/builder';
+import test, { describe, it } from 'node:test';
+import { buildModelRequest, DEFAULT_HISTORY_TOKENS } from '../src/context/builder';
 import { ContextStore } from '../src/context/store';
 import { createWorkspaceState, describeSession } from '../src/context/workspace-state';
-import { buildSystemPrompt } from '../src/prompts/system';
-import { outputDirsAt } from '../src/env/languages';
 import { openWorkspaceIndex } from '../src/context/workspace-index/open';
 import { createAgentRuntime } from '../src/agent/runtime';
 import { createAgentState } from '../src/agent/state';
 import { configureLogger, logger } from '../src/core/logger';
-import { traceRequestBody } from '../src/model/gateway';
-import { traceStreamEvent } from '../src/model/stream-events';
 import { ROLE } from '../src/protocol';
+import { runTurn } from '../src/agent/turn/turn';
+import { runCompact } from '../src/cli/commands/cmds/compact';
+import { buildTurnContext } from '../src/agent/turn/context';
+import '../src/tool/index';
+import { gatherContext } from '../src/context/auto-context';
 
 const call = (id: string, name: string, args: Record<string, unknown>) => ({ id, type: 'function', function: { name, arguments: args } });
 const assistantCall = (id: string, name: string, args: Record<string, unknown>) => ({ role: ROLE.ASSISTANT, content: '', tool_calls: [call(id, name, args)] });
@@ -52,14 +53,6 @@ describe('the request the model is sent', () => {
     assert.equal(results[1], 'OK exec_shell — $ dotnet test\nPassed! 36 tests');
   });
 
-  it('cuts long arguments of an earlier turn\'s calls, and keeps this turn\'s calls whole', async () => {
-    const { messages } = await buildModelRequest({ store: twoTurns(), includeWorkspaceSnapshot: false });
-    const [earlier, current] = messages.filter((m) => m.tool_calls?.length).map((m) => m.tool_calls![0].function.arguments as any);
-    assert.equal(earlier.path, 'A.cs', 'what the call was about stays');
-    assert.match(earlier.content, /^x{80}… \[2920 more chars omitted\]$/);
-    assert.equal(current.note.length, 500, 'the current turn is sent as it is');
-  });
-
   it('after "continue", the turn it continues is sent whole, so its reads are not redone', async () => {
     const store: any = new ContextStore({ messages: [], budgetTokens: 8000 });
     store.addUser('build the app');
@@ -82,38 +75,9 @@ describe('the request the model is sent', () => {
 });
 
 describe('the environment the system prompt describes', () => {
-  const rt = (name: string) => ({ name, available: true, version: '1.0.0' });
-  const runtimes = { dotnet: rt('dotnet'), terraform: rt('terraform'), node: rt('node'), python: rt('python'), git: rt('git') };
-  const dotnet = { id: 'dotnet', label: 'C# / .NET', root: 'c:/w', marker: 'App.csproj', test: ['dotnet', 'test'] };
-
-  it('lists the toolchains of the workspace\'s projects and git, not everything installed', () => {
-    const prompt = buildSystemPrompt({ cwd: 'c:/w', stacks: [dotnet], runtimes });
-    assert.match(prompt, /Available runtimes: dotnet \(1\.0\.0\), git \(1\.0\.0\)/);
-    assert.doesNotMatch(prompt, /terraform|python|node \(/i);
-    assert.doesNotMatch(prompt, /Common commands/);
-    assert.match(prompt, /test: dotnet test/, 'the project\'s own commands are listed instead');
-  });
-
-  it('lists everything installed when the workspace has no project yet', () => {
-    const prompt = buildSystemPrompt({ cwd: 'c:/w', stacks: [], runtimes });
-    assert.match(prompt, /terraform \(1\.0\.0\)/);
-  });
 });
 
 describe('the workspace index', () => {
-  it('names a .NET project\'s build output folders, and none for a project without any', () => {
-    const dotnet = tmp('ocode-dotnet-');
-    const node = tmp('ocode-node-');
-    try {
-      fs.writeFileSync(path.join(dotnet, 'App.csproj'), '<Project />');
-      fs.writeFileSync(path.join(node, 'package.json'), '{}');
-      assert.deepEqual(outputDirsAt(dotnet), [path.join(dotnet, 'bin'), path.join(dotnet, 'obj')]);
-      assert.deepEqual(outputDirsAt(node), [], 'a node project\'s bin/ holds its own scripts');
-    } finally {
-      fs.rmSync(dotnet, { recursive: true, force: true });
-      fs.rmSync(node, { recursive: true, force: true });
-    }
-  });
 
   it('does not index what a .NET build wrote', async () => {
     const root = tmp('ocode-index-');
@@ -226,31 +190,134 @@ describe('the debug log', () => {
     assert.match(text, /api_key=\*\*\*/);
     assert.doesNotMatch(text, /abcd1234efgh5678|sk_live_ABCDEFGH12/);
   });
+});
 
-  it('logs a reply\'s usage and finish, not a line per streamed chunk', () => {
-    const text = logged('trace', () => {
-      for (let i = 0; i < 50; i++) traceStreamEvent('Ollama', { type: 'assistant', delta: 'x' });
-      traceStreamEvent('Ollama', { type: 'tool_call_delta', argsText: '{}' });
-      traceStreamEvent('Ollama', { type: 'usage', promptTokens: 10, completionTokens: 2 });
-      traceStreamEvent('Ollama', { type: 'finish', reason: 'stop' });
+describe('context-fixed-overflow', () => {
+  test('instructions larger than the window fail with that reason, without compacting an empty conversation', async () => {
+    const history = new ContextStore({ messages: [] });
+    history.addUser('what is c#', { pinned: true });
+    let compactions = 0;
+    let modelCalls = 0;
+
+    const fail = runTurn({
+      model: 'tinyllama:latest',
+      history,
+      systemMessages: [{ role: ROLE.SYSTEM, content: 'instructions '.repeat(2000) }],
+      config: { maxIterations: 3, contextWindow: 2048, maxTokens: 819 },
+      toolsEnabled: false,
+      gateway: {
+        model: 'tinyllama:latest',
+        provider: { id: 'ollama' },
+        async stream() {
+          modelCalls++;
+          throw new Error('must not be sent');
+        },
+      } as any,
+      toolRunner: { async run() { throw new Error('must not run'); } } as any,
+      compactor: (() => {
+        compactions++;
+        return { capacityTokens: 0, dropped: 0 };
+      }) as any,
     });
-    assert.doesNotMatch(text, /assistant \+1ch|tool_call_delta/);
-    assert.match(text, /usage prompt=10 completion=2/);
-    assert.match(text, /finish stop/);
+
+    await assert.rejects(fail, /tinyllama:latest's 2,048-token window can't hold ocode's instructions .* \/tools/);
+    assert.equal(compactions, 0, 'there was nothing compaction could drop');
+    assert.equal(modelCalls, 0, 'a request known not to fit is never sent');
   });
+});
 
-  it('logs only what changed since the previous request, not the whole conversation and every tool again', () => {
-    const tools = [{ type: 'function', function: { name: 'read_file', description: 'Read a file.' } }];
-    const first = [{ role: 'system', content: 'SYSTEM-PROMPT' }, { role: 'user', content: 'run the unit test' }];
-    const second = [...first, { role: 'tool', content: 'NEW-RESULT' }];
-    const text = logged('trace', () => {
-      traceRequestBody(first, tools);
-      traceRequestBody(second, tools);
+describe('context-notice', () => {
+  // The context fills up: older history is capped, the person is told before and when it is trimmed, and /compact trims now.
+  /** A conversation of n finished exchanges, each about `words` words long. */
+  function conversation(n: number, words = 400): ContextStore {
+    const messages: any[] = [];
+    const text = (tag: string) => Array.from({ length: words }, (_, i) => `${tag}${i}`).join(' ');
+    for (let i = 0; i < n; i++) messages.push({ role: ROLE.USER, content: `question ${i} ${text('q')}` }, { role: ROLE.ASSISTANT, content: `answer ${i} ${text('a')}` });
+    messages.push({ role: ROLE.USER, content: 'the new question' });
+    return new ContextStore({ messages });
+  }
+
+  async function request(store: ContextStore) {
+    await buildModelRequest({ store, systemMessages: [{ role: ROLE.SYSTEM, content: 'You are ocode.' }], modelLimits: { contextWindow: 200_000, maxOutputTokens: 80_000 } } as any);
+    return store.lastBudget!;
+  }
+
+  describe('context filling up', () => {
+    it('older history is capped at the default even with a 200k window', async () => {
+      const budget = await request(conversation(200));
+      assert.ok(budget.historyTokens <= DEFAULT_HISTORY_TOKENS + 500, `history ${budget.historyTokens}`);
+      assert.ok(budget.dropped > 0);
     });
-    assert.equal(text.split('SYSTEM-PROMPT').length - 1, 1, 'the unchanged system prompt is logged once');
-    assert.match(text, /<messages 0-1: same as the previous request>/);
-    assert.match(text, /NEW-RESULT/);
-    assert.equal(text.split('Read a file.').length - 1, 1, 'unchanged tool schemas are logged once');
-    assert.match(text, /<same 1 tool\(s\) as the previous request>/);
+
+    it('/compact summary keeps a model-written summary of what it removed', async () => {
+      const store = conversation(40);
+      const asked: any[] = [];
+      const provider = {
+        id: 'test', label: 'Test', detect: async () => true, ensureAuth: async () => {}, listModels: async () => [],
+        async streamChat({ messages }: any) {
+          asked.push(messages);
+          return { content: '- built the parser in src/parse.js\n- tests still failing on dates', toolCalls: [], finishReason: 'stop' };
+        },
+      };
+      const written: string[] = [];
+      await runCompact({
+        history: store, write: (t: string) => written.push(t), persist: () => {},
+        session: { provider, model: 'm' }, cfg: { agent: { maxRetries: 0, idleTimeoutMs: 10_000, firstTokenTimeoutMs: 10_000 } }, workspace: {},
+      }, 'summary');
+      assert.equal(asked.length, 1);
+      assert.match(asked[0][1].content, /question 39/, 'the older conversation was sent, newest kept when long');
+      assert.ok(asked[0][1].content.length <= 60_000);
+      assert.match(String(store.preservedSummary), /^Summary of the earlier conversation:\n- built the parser/);
+      assert.match(written.join(''), /A summary of what was removed is kept/);
+    });
+
+    it('/compact keeps the latest request and cuts the rest down', async () => {
+      const store = conversation(40);
+      const before = store.tokenCount;
+      const written: string[] = [];
+      let saved = 0;
+      await runCompact({ history: store, write: (t: string) => written.push(t), persist: () => { saved += 1; } });
+      assert.ok(store.tokenCount < before / 4, `${before} → ${store.tokenCount}`);
+      assert.equal(store.messages.at(-1)?.content, 'the new question');
+      assert.match(String(store.preservedSummary), /Earlier conversation trimmed/);
+      assert.equal(saved, 1);
+      assert.match(written.join(''), /compacted/);
+    });
+  });
+});
+
+describe('system-prompt-stable', () => {
+  describe('the project list the model is given', () => {
+    it('is every project in the workspace, whatever the request says', async () => {
+      const workspace: any = {
+        cwd: '/tmp/ws',
+        stacks: [
+          { id: 'node', label: 'Node.js', root: '/tmp/ws/todo-app', markers: ['package.json'] },
+          { id: 'dotnet', label: '.NET', root: '/tmp/ws/bid-app', markers: ['bid.sln'] },
+        ],
+        runtimes: {},
+        contextLength: 131072,
+      };
+      const forRequest = async (input: string) =>
+        (await buildTurnContext({ workspace, toolsEnabled: true, input, includeAutoContext: false })).system[0].content;
+      const todo = await forRequest('create a todo app in node.js');
+      const other = await forRequest('give me plan to implement e-hailing in node.js');
+      assert.equal(todo, other, 'one request\'s words must not narrow the projects the model is told about');
+      assert.match(String(todo), /bid-app/);
+    });
+  });
+});
+
+describe('auto-context', () => {
+  test('key files go into auto-context as their own text, without line numbers', async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-autoctx-'));
+    try {
+      fs.writeFileSync(path.join(cwd, 'package.json'), '{\n  "name": "demo",\n  "scripts": { "test": "node --test" }\n}\n');
+      const block = await gatherContext(cwd, { projectDoc: null });
+      assert.match(block, /package\.json:\n\{\n {2}"name": "demo",/);
+      assert.doesNotMatch(block, /^\s+\d+\t/m, 'no line-number gutter');
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });

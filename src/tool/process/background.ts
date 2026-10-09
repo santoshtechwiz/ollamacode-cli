@@ -1,3 +1,4 @@
+import { describeListening, listeningPorts } from './analysis/listening-ports';
 import { TOOL_ERROR_CODE } from '../../protocol';
 import { ok, fail } from '../core/tool-result';
 import { resolveCallCwd } from './shell/runtime';
@@ -114,7 +115,11 @@ export async function runInBackground(args: Record<string, unknown>, ctx: ToolCo
   // From here it runs on its own: when it ends, the session is told, so nothing needs to poll for it.
   if (state.background) reportWhenEnded(sub, state.background);
 
-  const url = LOCAL_URL.exec(output)?.[0];
+  const printed = LOCAL_URL.exec(output)?.[0];
+  // Where it really listens, asked of the system: what it printed can be missing (still starting) or out of date.
+  const ports = await listeningPorts(sub.process.pid);
+  const url = ports?.length ? `http://localhost:${ports[0]}` : printed;
+  const listening = describeListening(ports);
   const head = url
     ? `Running in the background as "${id}" (pid ${sub.process.pid}) at ${url}`
     : outcome === 'settled'
@@ -124,10 +129,11 @@ export async function runInBackground(args: Record<string, unknown>, ctx: ToolCo
     kind: 'command',
     display: [
       head,
+      ...(listening ? [listening] : []),
       tail ? `Output so far:\n${tail}` : 'No output yet.',
       `It is still running. When it ends you are told in the session record — do not poll. ` +
         `Read its output any time with subprocess_status {"id":"${id}"}; stop it with stop_subprocess {"id":"${id}"}.`,
     ].join('\n'),
-    data: { ...data, ...(url ? { url } : {}) },
+    data: { ...data, ...(url ? { url } : {}), ...(ports ? { ports } : {}) },
   });
 }

@@ -67,8 +67,12 @@ interface AgentConfig {
   memory?: { enabled: boolean; maxChars?: number; };
   /** Let the agent hand self-contained tasks to subagents (delegate_task). On unless set to false. */
   subagents?: boolean;
-  /** A command run after any step that changed files (tests, a linter); its result goes to the model. Unset: none. */
+  /** A command run after any step that changed files (tests, a linter), check words ("check lint"), or "auto". Unset: none. */
   afterEdit?: string;
+  /** Like afterEdit, run when the model answers after changing files; a failure goes back to the model. "auto" picks the checks. */
+  beforeDone?: string;
+  /** How long an afterEdit or beforeDone check may run before it is stopped, ms. Unset: 90 s after an edit, 5 min before done. */
+  checkTimeoutMs?: number;
   /** Subagent roles of the person's own, by name; see agent/subagent/roles.ts. */
   subagentRoles?: Record<string, import('../agent/subagent/roles.ts').CustomRoleConfig>;
 }
@@ -108,6 +112,9 @@ export const DEFAULTS = Object.freeze({
     thinking: (THINKING_MODE.AUTO as ThinkingMode),
     memory: { enabled: true, maxChars: undefined },
     subagents: true,
+    // Before the agent says it is done with changed files, ocode checks the work itself (see agent/turn/check-plan.ts):
+    // a model's "the site is ready" was too often unchecked. "off" turns it off; a verb list or a command replaces it.
+    beforeDone: 'auto' as string,
   },
 });
 
@@ -120,7 +127,7 @@ export function configFile() {
 }
 
 /** Settings that live under "agent" in config.json. */
-const AGENT_KEYS: ReadonlySet<string> = new Set([...Object.keys(DEFAULTS.agent), 'contextBudget', 'afterEdit', 'subagentRoles']);
+const AGENT_KEYS: ReadonlySet<string> = new Set([...Object.keys(DEFAULTS.agent), 'contextBudget', 'afterEdit', 'beforeDone', 'checkTimeoutMs', 'subagentRoles']);
 
 /**
  * An agent setting written at the top level of config.json (a snippet pasted without its "agent": { } wrapper) is read

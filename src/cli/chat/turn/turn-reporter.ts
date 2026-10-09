@@ -159,18 +159,23 @@ function reportSummary(result: TurnResult): number {
  * The task list as the turn left it, kept in the transcript once each time the model rewrites it: a turn that left it
  * as it was shows nothing again. A list with every task done is finished, and goes.
  */
-function reportTodos(host: ChatTurnContext): void {
+function reportTodos(host: ChatTurnContext, result: TurnResult): void {
   const state = (host.workspace as any)?.state;
   if (!state || state.todos === state.todosShown) return;
   const items = checklistOf(state.todos);
   host.render.commitTasks(items);
-  if (items.length && items.every((item) => item.status === 'done')) state.todos = [];
+  const open = items.filter((item) => item.status !== 'done');
+  // A task is done only on evidence, so an answer can say "all done" over a list that is not: the person reads which.
+  if (open.length && result.stopReason === STOP_REASONS.COMPLETE) {
+    host.render.note(`Not finished: ${open.length} of ${items.length} tasks are still open (${open.map((item) => item.title).slice(0, 3).join('; ')}${open.length > 3 ? '; …' : ''}).`, 'warn');
+  }
+  if (items.length && !open.length) state.todos = [];
   state.todosShown = state.todos;
 }
 
 export async function reportChatTurn(host: ChatTurnContext, result: TurnResult): Promise<number> {
   reportAnswer(host, result);
-  reportTodos(host);
+  reportTodos(host, result);
   await reportStop(host, result);
   reportUnchecked(host, result);
   reportContext(host);

@@ -27,7 +27,8 @@ import {
   type IndexHandle,
 } from './_shared';
 import { scanSource } from './search';
-import { isProjectMarker, MANIFEST_FILES, outputDirsAt, sourceRulesFor } from '../../env/languages';
+import { sourceRulesFor } from '../../env/languages';
+import { isProjectMarker, MANIFEST_FILES, outputDirsAt } from '../../env/project-layout';
 
 async function discoverProjects(root: string, signal?: AbortSignal): Promise<Array<{ abs: string; markers: string[]; }>> {
   const byDir = new Map();

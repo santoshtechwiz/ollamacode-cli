@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { isProjectMarker } from '../../env/languages';
+import { isProjectMarker } from '../../env/project-layout';
 import { workingProject } from '../../context/workspace-state';
 import { isInside } from '../core/paths';
 import { TOOL_ERROR_CODE } from '../../protocol';

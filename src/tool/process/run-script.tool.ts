@@ -53,6 +53,36 @@ function interpreterFor(language: ScriptLanguage): { file: string; args: string[
   }
 }
 
+/**
+ * Where the script file goes. Node resolves a script's imports from where the file is, not from its cwd, so a
+ * JavaScript or TypeScript script goes inside the nearest node_modules/.cache at or above the cwd (where Babel and
+ * ESLint keep theirs: ignored by git and by dev servers' watchers), and `import 'lucide-react'` finds the project's
+ * package. With no node_modules there, or for other languages, the OS temp folder.
+ */
+async function scriptHome(language: ScriptLanguage, cwd: string): Promise<string> {
+  if (language === 'javascript' || language === 'typescript') {
+    for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
+      const modules = path.join(dir, 'node_modules');
+      const found = await fs.stat(modules).then((s) => s.isDirectory(), () => false);
+      if (found) {
+        const cache = path.join(modules, '.cache');
+        const made = await fs.mkdir(cache, { recursive: true }).then(() => true, () => false);
+        if (made) return cache;
+        break;
+      }
+      if (path.dirname(dir) === dir) break;
+    }
+  }
+  return os.tmpdir();
+}
+
+/** Python puts the script's own folder on its path, not the cwd: the cwd goes on PYTHONPATH so the project's modules import. */
+function scriptEnv(language: ScriptLanguage, cwd: string): Record<string, string> {
+  if (language !== 'python') return {};
+  const existing = process.env.PYTHONPATH;
+  return { PYTHONPATH: existing ? `${cwd}${path.delimiter}${existing}` : cwd };
+}
+
 function languageOf(raw: unknown): ScriptLanguage | null {
   const lang = raw === undefined ? 'javascript' : String(raw);
   return (SCRIPT_LANGUAGES as readonly string[]).includes(lang) ? (lang as ScriptLanguage) : null;
@@ -68,9 +98,10 @@ export default defineTool({
     'Answer questions that span many files or need computing — counts, grouping, totals, comparisons across files, logs, JSON — in one call with a short script.',
   risky: true,
   description:
-    'Run a short throwaway script (written to the OS temp dir, deleted after) and return stdout, stderr, exit code and ' +
-    'duration. Runs from the workspace root (or cwd); OCODE_ROOT holds the root. Default language: JavaScript as an ES ' +
-    'module (import what you need; top-level await works); also typescript, python, powershell, bash when installed. ' +
+    'Run a short throwaway script (deleted after) and return stdout, stderr, exit code and duration. Runs from the ' +
+    "workspace root (or cwd); OCODE_ROOT holds the root. It imports the packages and modules of the project at cwd. " +
+    'Default language: JavaScript as an ES module (use import, not require; top-level await works); also typescript, ' +
+    'python, powershell, bash when installed. ' +
     'Use it when an answer would take many read/search calls (discovery with conditions, JSON/config or dependency ' +
     'analysis, bulk search/replace, log analysis) and print the findings. For one read, search or edit use those ' +
     'tools; for builds and tests use exec_shell.',
@@ -136,7 +167,7 @@ export default defineTool({
     let dir: string | null = null;
     let scriptPath = '';
     try {
-      dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ocode-script-'));
+      dir = await fs.mkdtemp(path.join(await scriptHome(language, request.cwd), 'ocode-script-'));
       scriptPath = path.join(dir, `script.${EXTENSION[language]}`);
       await fs.writeFile(scriptPath, code, 'utf8');
       logger.debug(`run_script: ${language} in ${request.cwd} (timeout=${request.timeoutMs}ms)`);
@@ -145,7 +176,7 @@ export default defineTool({
       const outcome = await runChild({
         file: interpreter.file,
         args: [...interpreter.args, scriptPath, ...scriptArgs],
-        options: { cwd: request.cwd, env: { ...childEnv(), OCODE_ROOT: ctx.root ?? ctx.cwd } },
+        options: { cwd: request.cwd, env: { ...childEnv(), ...scriptEnv(language, request.cwd), OCODE_ROOT: ctx.root ?? ctx.cwd } },
         timeoutMs: request.timeoutMs,
         signal: ctx.signal,
       });

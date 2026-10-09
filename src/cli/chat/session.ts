@@ -388,11 +388,16 @@ function restoreWorkedProject(state: any, rec: SessionRecord | null | undefined)
 /** Whatever ends the process, the record is saved and the claim released; `onTerm` stops work in flight first. */
 export function guardProcess(s: ChatSession, onTerm?: () => void): void {
   process.on('exit', () => { try { if (s.claim) releaseSessionClaim(s.root, s.claim.id); } catch { /* ignore */ } });
-  process.on('SIGTERM', () => {
-    try { onTerm?.(); } catch { /* ignore */ }
-    saveChat(s);
-    process.exit(143);
-  });
+  // SIGHUP is the terminal going away: its window closed (Windows sends it then too). Left to its default, the process
+  // ended without its 'exit' handlers, so the dev servers and checks it had started kept running and held their ports.
+  const SIGNAL_EXIT_CODES = { SIGTERM: 143, SIGHUP: 129 } as const;
+  for (const [signal, code] of Object.entries(SIGNAL_EXIT_CODES)) {
+    process.on(signal, () => {
+      try { onTerm?.(); } catch { /* ignore */ }
+      saveChat(s);
+      process.exit(code);
+    });
+  }
 }
 
 export async function closeSession(s: ChatSession): Promise<void> {

@@ -4,7 +4,9 @@ import path from 'node:path';
 import { ROLE } from '../protocol';
 
 import { resolveShell } from '../tool/process/shell/runtime';
+import { TOOLS } from '../env/toolchains';
 import { LANGUAGES } from '../env/languages';
+import { skills } from '../skills/loader';
 
 export function buildSystemPrompt({
   cwd,
@@ -24,6 +26,7 @@ export function buildSystemPrompt({
     toolsEnabled ? workflowSection(brief) : null,
     toolsEnabled ? toolUseSection() : null,
     toolsEnabled ? lookItUpSection(brief) : null,
+    toolsEnabled ? skillsSection() : null,
   ].filter(Boolean);
 
   return sections.join('\n\n');
@@ -40,10 +43,7 @@ function projectRuntimes(
   if (stacks.length === 0) return runtimes;
   const ids = new Set(stacks.map((stack) => stack.id));
   const names = new Set(
-    LANGUAGES.filter((language) => {
-      const projectKind = Boolean(language.markers || language.markerPattern || language.extensions || language.detect);
-      return !projectKind || ids.has(language.id) || (language.stackAliases ?? []).some((alias) => ids.has(alias));
-    }).flatMap((language) => language.runtimes.map((runtime) => runtime.name)),
+    [...TOOLS, ...LANGUAGES.filter((language) => ids.has(language.id))].flatMap((provider) => provider.runtimes.map((runtime) => runtime.name)),
   );
   return Object.fromEntries(Object.entries(runtimes).filter(([name]) => names.has(name)));
 }
@@ -76,8 +76,9 @@ function environmentSection(
   }
 
   lines.push(
-    '- Execution: each exec_shell starts in a fresh shell. ' +
-      'Pass cwd only when the command must run from a different directory.',
+    '- Execution: each exec_shell starts in a fresh shell, so cd does not carry over to the next command. ' +
+      'Given no cwd, a command runs in the working project when there is one (its result says "(in folder/)"), otherwise in the workspace root; ' +
+      'paths in the command are relative to that folder. Pass cwd only when the command must run from a different directory.',
   );
 
   if (runtimes.python?.available) {
@@ -161,7 +162,8 @@ function stackSection(
 
     const loc = rel === '' || rel === '.' ? '' : ` (in ${rel})`;
 
-    lines.push(`- ${stack.label}${loc} (detected from ${stack.marker})`);
+    const uses = stack.frameworks?.length ? ` with ${stack.frameworks.join(', ')}` : '';
+    lines.push(`- ${stack.label}${uses}${loc} (detected from ${stack.marker})`);
 
     const commands = [
       stack.test && `test: ${stack.test.join(' ')}`,
@@ -334,6 +336,20 @@ When the user asks for an action and a matching tool exists, CALL THE TOOL throu
 - Native tools for simple steps; when answering would take many reads or searches (find files matching a condition, analyse JSON/config, dependencies, duplicates, logs), write one short run_script instead and print the result.`;
 }
 
+
+/**
+ * The skills there are, one line each, and when to load one. Here rather than only in use_skill's description: models
+ * follow the system prompt more closely than a tool's description or a note on a tool result.
+ */
+function skillsSection(): string | null {
+  const list = skills();
+  if (list.length === 0) return null;
+  return [
+    'SKILLS',
+    'Before starting work a skill covers, call use_skill with its name and follow its steps; load it once per task.',
+    ...list.map((s) => `- ${s.name}: ${s.description}`),
+  ].join('\n');
+}
 
 function lookItUpSection(brief: boolean = false): string {
   return brief

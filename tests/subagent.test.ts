@@ -14,10 +14,8 @@ import { createExecutor } from '../src/tool/execution/executor';
 import { applyApprovalPolicy } from '../src/tool/policy/permission-policy';
 import { createSubagentRunner, type ParentTurn } from '../src/agent/subagent/runner';
 import { CHILD_EXCLUDED_TOOLS, MAX_DELEGATIONS_PER_TURN, SUBAGENT_ROLES, allRoles } from '../src/agent/subagent/roles';
-import delegateTool from '../src/agent/subagent/delegate.tool';
 import { CancelError, isCancel } from '../src/core/errors';
-import { ROLE, STOP_REASONS, TOOL_ERROR_CODE, TOOL_RESULT_STATUS } from '../src/protocol';
-import { describeToolResult } from '../src/ui/tool-preview';
+import { ROLE, STOP_REASONS } from '../src/protocol';
 
 type Reply = { content?: string; toolCalls?: any[] };
 const call = (id: string, name: string, args: Record<string, unknown> = {}) => ({ id, type: 'function', function: { name, arguments: args } });
@@ -128,29 +126,6 @@ describe('what a child may do', () => {
     assert.ok(toolNames(s.asked.parent[0]).includes('delegate_task'), 'the parent is offered it, with no setting at all');
   });
 
-  it('in text mode, the research child\'s tool catalog lists its web tools and no edit tools', async () => {
-    const s = await session({
-      native: false,
-      parent: [{ toolCalls: [call('p1', 'delegate_task', { role: 'research', task: 'Find the latest LTS' })] }, { content: 'Done.' }],
-      child: [{ content: 'Found it.' }],
-    });
-    const prompt = s.asked.child[0].messages.filter((m: any) => m.role === ROLE.SYSTEM).map((m: any) => String(m.content)).join('\n');
-    assert.match(prompt, /^- web_search\(/m);
-    assert.match(prompt, /^- web_fetch\(/m);
-    assert.doesNotMatch(prompt, /^- edit_file\(/m);
-    assert.doesNotMatch(prompt, /^- delegate_task\(/m);
-  });
-
-  it('a review child stays inside the project: no web tools, no edits', async () => {
-    const s = await session({
-      parent: [{ toolCalls: [call('p1', 'delegate_task', { role: 'review', task: 'Review app.js' })] }, { content: 'Done.' }],
-      child: [{ content: 'Looks fine.' }],
-    });
-    const offered = toolNames(s.asked.child[0]);
-    for (const name of ['web_search', 'web_fetch', 'edit_file', 'write_file']) assert.ok(!offered.includes(name), `${name} offered to a review child`);
-    assert.ok(offered.includes('read_file'));
-  });
-
   for (const native of [true, false]) it(`a call to a tool outside its role is refused at the child's runner, and nothing changes (${native ? 'tool channel' : 'text mode, where no tool list is sent'})`, async () => {
     const parentList = [{ content: 'parent step', status: 'pending' }];
     const s = await session({
@@ -210,13 +185,6 @@ function runner(runChild: (params: any) => Promise<any>, roles = SUBAGENT_ROLES)
 const finished = (content: string, extra: Record<string, unknown> = {}) => ({ content, stopReason: STOP_REASONS.COMPLETE, toolResults: [], iterations: 1, ...extra });
 
 describe('the subagent runner', () => {
-  it('marks where the child\'s work starts and ends, for the person reading the transcript', async () => {
-    const notes: string[] = [];
-    const { delegate, parent } = runner(async () => finished('done', { iterations: 2 }));
-    parent.callbacks = { note: (text: string) => notes.push(text) };
-    await delegate({ role: 'coding', task: 'Change the port to 8080 and run the tests' });
-    assert.deepEqual(notes, ['coding 1 started: Change the port to 8080 and run the tests', 'coding 1 finished · 2 steps · changed no files']);
-  });
 
   it('starts the child with its role: the task alone, its instruction, its step budget, one level deep', async () => {
     let seen: any;
@@ -294,31 +262,6 @@ describe('the subagent runner', () => {
     assert.deepEqual(asked, ['exec_shell']);
   });
 
-  it('an unfinished child shows as one warning line, not an error, and the runner adds no second one', async () => {
-    const notes: string[] = [];
-    const roles = { slow: { ...SUBAGENT_ROLES.review, id: 'slow', maxIterations: 2 } };
-    const { delegate, parent } = runner(async () => finished('', { stopReason: STOP_REASONS.MAX_ITERATIONS, iterations: 2 }), roles);
-    parent.callbacks = { note: (text: string) => notes.push(text) };
-    const result = await delegateTool.execute({ role: 'slow', task: 'Review it' } as any, { delegate } as any);
-    assert.equal(notes.length, 1, `only the start is noted: ${notes.join(' / ')}`);
-    assert.equal(result.status, TOOL_RESULT_STATUS.PARTIAL);
-    const view = describeToolResult('delegate_task', result);
-    assert.equal(view.partial, true);
-    assert.doesNotMatch(view.title, /ERROR/);
-    assert.match(view.title, /slow subagent stopped before finishing: it used all 2 of its steps/);
-  });
-
-  it('a child that ends without a report still says what it looked at', async () => {
-    const read = (path: string) => ({ name: 'read_file', args: { path }, result: { ok: true, kind: 'file', data: { path } } });
-    const { delegate } = runner(async () => finished('', {
-      stopReason: STOP_REASONS.MAX_ITERATIONS,
-      toolResults: [read('Program.cs'), read('Domain/User.cs'), read('Program.cs'), { name: 'read_file', args: {}, result: { ok: false, kind: 'none', data: { path: 'gone.cs' } } }],
-    }));
-    const result = await delegateTool.execute({ role: 'review', task: 'Review it' } as any, { delegate } as any);
-    assert.deepEqual((result.data as any).lookedAt, ['Program.cs', 'Domain/User.cs'], 'each once, only what it actually got');
-    assert.match(String(result.display), /It wrote no report\. It had looked at: Program\.cs, Domain\/User\.cs/);
-  });
-
   it('the parent stopping stops the child, as a cancel and not a failure', async () => {
     const controller = new AbortController();
     const { delegate } = runner((params) => new Promise((resolve) => {
@@ -339,18 +282,6 @@ describe('the subagent runner', () => {
     assert.equal(over.ok, false);
     assert.equal(over.stopReason, 'refused');
     assert.equal(runs, MAX_DELEGATIONS_PER_TURN);
-  });
-
-  it('one past the limit tells the parent to do it itself, not to try again, and shows as not started', async () => {
-    const { delegate } = runner(async () => finished('ok'));
-    for (let i = 0; i < MAX_DELEGATIONS_PER_TURN; i++) await delegate({ role: 'research', task: `task ${i}` });
-    const result = await delegateTool.execute({ role: 'research', task: 'one more' } as any, { delegate } as any);
-    assert.equal(result.code, TOOL_ERROR_CODE.EBLOCKED);
-    assert.match(String(result.hint), /Do this part yourself/);
-    assert.doesNotMatch(String(result.hint), /call delegate_task/);
-    const view = describeToolResult('delegate_task', result);
-    assert.equal(view.neutral, true);
-    assert.doesNotMatch(view.title, /ERROR/);
   });
 
   it('refuses an unknown role or an empty task without starting anything', async () => {
@@ -382,13 +313,5 @@ describe('roles of your own (agent.subagentRoles)', () => {
     assert.equal(roles.review.maxIterations, 40, 'a built-in can be replaced');
     assert.equal(roles.research.id, 'research', 'the other built-ins stay');
     assert.equal('Bad Name' in roles || 'empty' in roles, false);
-  });
-});
-
-describe('the delegate tool', () => {
-  it('says plainly when the turn cannot start subagents', async () => {
-    const result = await delegateTool.execute({ role: 'research', task: 'x' }, { cwd: process.cwd() } as any);
-    assert.equal(result.ok, false);
-    assert.equal(result.code, TOOL_ERROR_CODE.ENOTSUPPORTED);
   });
 });

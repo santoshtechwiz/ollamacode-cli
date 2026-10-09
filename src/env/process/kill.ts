@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { logger } from '../../core/logger';
 
@@ -75,6 +75,26 @@ export function isGone(pid: number): boolean {
     return false;
   } catch (err) {
     return (err as NodeJS.ErrnoException)?.code === 'ESRCH';
+  }
+}
+
+/**
+ * Stop a process and everything it started while ocode itself is exiting. Nothing asynchronous runs once the 'exit'
+ * event fires, so the asynchronous kill above never reached the children there, and dev servers outlived the session
+ * holding their ports. Elsewhere children are started detached, each leading its own process group, so one signal
+ * reaches the whole group; Windows has no groups to signal, and taskkill /T walks the tree.
+ */
+export function killTreeSync(pid: number | undefined): void {
+  if (!pid) return;
+  try {
+    if (process.platform === 'win32') {
+      execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: KILL_TIMEOUT_MS });
+    } else {
+      process.kill(-pid, 'SIGKILL');
+    }
+  } catch {
+    // Not a group leader, or already gone: the process itself, if it is still there.
+    try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ }
   }
 }
 

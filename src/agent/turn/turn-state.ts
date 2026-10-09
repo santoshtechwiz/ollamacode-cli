@@ -53,6 +53,8 @@ export interface TurnState {
   toolCalls: ToolCallRecord[];
   answer: string | undefined;
   stopReason: StopReason | undefined;
+  /** Skills whose files a call touched this turn, so each is pointed at once (see skills/notes); started on first use. */
+  skillsNoted?: Set<string>;
 }
 
 export function createTurnState(maxIterations: number = 25): TurnState {

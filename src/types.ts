@@ -169,10 +169,20 @@ export interface ProviderDef {
   tokenEnvVar?: string;
 }
 
+/** A command that takes the files to work on after its own arguments, and the kinds of file it reads. */
+export interface FileScopedCommand {
+  argv: string[];
+  extensions: string[];
+}
+
 export interface StackInfo {
   id: string;
   label: string;
   root: string;
+  /** A Node project written in TypeScript. */
+  typescript?: boolean;
+  /** The front-end frameworks it uses, by name (Next.js, Angular …); see env/frameworks.ts. */
+  frameworks?: string[];
   test?: string[];
   build?: string[];
   /** The fastest command that proves the code still compiles or parses, without running the app. */
@@ -180,6 +190,8 @@ export interface StackInfo {
   run?: string[];
   dev?: string[];
   lint?: string[];
+  /** Verbs whose command also takes files: a check after an edit runs on only the changed files with these extensions. */
+  fileScoped?: Partial<Record<import('./env/languages/types.ts').Verb, FileScopedCommand>>;
   marker?: string;
 }
 

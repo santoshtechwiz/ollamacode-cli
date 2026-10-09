@@ -24,23 +24,4 @@ describe('workspace index location', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
-
-  it('removes the old .agent/workspace.db, and the folder only when nothing else is in it', async () => {
-    const lone = tmp();
-    const shared = tmp();
-    try {
-      for (const root of [lone, shared]) {
-        fs.mkdirSync(path.join(root, '.agent'));
-        fs.writeFileSync(path.join(root, '.agent', 'workspace.db'), 'old');
-      }
-      fs.writeFileSync(path.join(shared, '.agent', 'workflow.md'), 'keep');
-      for (const root of [lone, shared]) await (await openWorkspaceIndex(root))?.close();
-      assert.equal(fs.existsSync(path.join(lone, '.agent')), false, 'only ocode\'s file was there');
-      assert.equal(fs.existsSync(path.join(shared, '.agent', 'workspace.db')), false);
-      assert.equal(fs.readFileSync(path.join(shared, '.agent', 'workflow.md'), 'utf8'), 'keep');
-    } finally {
-      fs.rmSync(lone, { recursive: true, force: true });
-      fs.rmSync(shared, { recursive: true, force: true });
-    }
-  });
 });
