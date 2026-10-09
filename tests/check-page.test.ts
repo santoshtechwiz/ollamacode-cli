@@ -21,8 +21,8 @@ function workspace(files: Record<string, string>): string {
   return root;
 }
 
-async function check(root: string, args: Record<string, unknown>): Promise<any> {
-  return (await createExecutor({ root, state: createWorkspaceState(root) }).run('check_page', args)).result;
+async function check(root: string, args: Record<string, unknown>, state: any = createWorkspaceState(root)): Promise<any> {
+  return (await createExecutor({ root, state }).run('check_page', args)).result;
 }
 
 const BAD = `<!doctype html><html lang="en"><head><title>Broken</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
@@ -50,10 +50,13 @@ describe('check_page report', () => {
 
 describe('check_page in a browser', { skip: browserAvailable ? false : 'no browser available' }, () => {
 
-  it('reports sideways scrolling, script errors, missing files and accessibility problems', async () => {
+  it('reports sideways scrolling, script errors, missing files and accessibility problems; only a clean page counts as checked', async () => {
     const root = workspace({ 'index.html': BAD });
     try {
-      const r = await check(root, { path: 'index.html' });
+      const state: any = createWorkspaceState(root);
+      state.note('write', 'index.html', 'file');
+      const r = await check(root, { path: 'index.html' }, state);
+      assert.equal(state.verifiedAt, undefined, 'a page with errors does not check the change');
       assert.equal(r.ok, true, r.error);
       assert.match(r.display, /\[layout\] The page is wider than the screen, so it scrolls sideways; .* — mobile, tablet\n {4}div\.hero \(\d+px\)/);
       assert.match(r.display, /\[scripts\] Uncaught script error: boom — everywhere checked/);
@@ -61,6 +64,12 @@ describe('check_page in a browser', { skip: browserAvailable ? false : 'no brows
       assert.match(r.display, /\[requests\] Resources failed to load .* — everywhere checked\n {4}file:.*gone\.png.*\n {4}file:.*lost\.png.*\n {4}file:.*missing\.png/);
       assert.match(r.display, /\[accessibility\] .*\(color-contrast, serious\)/);
       assert.match(r.display, /\[accessibility\] .*\(label, critical\)/);
+
+      // Fixed, the same page checks the change: the turn's end no longer says nothing checked it.
+      fs.writeFileSync(path.join(root, 'index.html'), '<!doctype html><html lang="en"><head><title>Fixed</title><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><main><h1>Hi</h1><p>Fine.</p></main></body></html>');
+      state.note('write', 'index.html', 'file');
+      assert.equal((await check(root, { path: 'index.html' }, state)).ok, true);
+      assert.equal(state.verifiedAt, state.changeSeq);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

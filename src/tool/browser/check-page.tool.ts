@@ -99,6 +99,8 @@ export default defineTool({
         }
       }
       const report = formatReport(label, results);
+      // A page that loaded with nothing wrong checks the changes made before it, as a passing build or test does.
+      if (ctx.state && !report.findings.some((f: Finding) => f.severity === 'error')) ctx.state.verifiedAt = ctx.state.changeSeq ?? 0;
       return ok({
         kind: 'text',
         display: report.text,
