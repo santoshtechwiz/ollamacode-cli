@@ -181,6 +181,8 @@ export interface StackInfo {
   root: string;
   /** A Node project written in TypeScript. */
   typescript?: boolean;
+  /** The front-end frameworks it uses, by name (Next.js, Angular …); see env/frameworks.ts. */
+  frameworks?: string[];
   test?: string[];
   build?: string[];
   /** The fastest command that proves the code still compiles or parses, without running the app. */

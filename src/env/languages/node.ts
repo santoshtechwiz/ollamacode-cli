@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { exists, readJson, detectPackageManager } from '../tooling/probe';
-import { eslintFiles } from '../frameworks';
+import { eslintFiles, frameworksOf } from '../frameworks';
 import type { StackInfo } from '../../types';
 import type { Language } from './types';
 
@@ -29,6 +29,7 @@ async function detectNode(root: string): Promise<StackInfo | null> {
     id: 'node',
     label: hasTs ? 'TypeScript' : 'Node.js',
     typescript: hasTs,
+    frameworks: frameworksOf(pkg).map((f) => f.label),
     root,
     marker: 'package.json',
     test: scripts.test ? (pm === 'npm' ? ['npm', 'test'] : [pm, 'test']) : undefined,

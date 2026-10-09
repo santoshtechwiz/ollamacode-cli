@@ -164,7 +164,8 @@ function stackSection(
 
     const loc = rel === '' || rel === '.' ? '' : ` (in ${rel})`;
 
-    lines.push(`- ${stack.label}${loc} (detected from ${stack.marker})`);
+    const uses = stack.frameworks?.length ? ` with ${stack.frameworks.join(', ')}` : '';
+    lines.push(`- ${stack.label}${uses}${loc} (detected from ${stack.marker})`);
 
     const commands = [
       stack.test && `test: ${stack.test.join(' ')}`,
