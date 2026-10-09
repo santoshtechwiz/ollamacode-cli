@@ -8,17 +8,13 @@ import { describe, it } from 'node:test';
 import '../src/tool/index.ts';
 import { ToolExecutor } from '../src/tool/core/tool-runtime';
 import { createWorkspaceState } from '../src/context/workspace-state';
-import { describeListening, listeningPorts, parseLsof, parseNetstat, parseProcessTable, parseSs, processTree } from '../src/tool/process/analysis/listening-ports';
+import { describeListening, listeningPorts, parseLsof, parseProcessTable, parseSs, parseWindowsListing, processTree } from '../src/tool/process/analysis/listening-ports';
 
 describe('reading the system\'s listeners', () => {
-  it('reads Windows netstat, Linux ss and lsof output', () => {
-    assert.deepEqual(parseNetstat([
-      '  Proto  Local Address          Foreign Address        State           PID',
-      '  TCP    0.0.0.0:3001           0.0.0.0:0              LISTENING       14640',
-      '  TCP    [::]:3001              [::]:0                 LISTENING       14640',
-      '  TCP    127.0.0.1:52011        127.0.0.1:3001         ESTABLISHED     9000',
-      '  UDP    0.0.0.0:5353           *:*                                    1200',
-    ].join('\r\n')), [{ pid: 14640, port: 3001 }, { pid: 14640, port: 3001 }]);
+  it('reads the Windows listing, Linux ss and lsof output', () => {
+    const win = parseWindowsListing('P 4 0\r\nP 14640 9000\r\nP 19708 14640\r\nL 19708 3001\r\nL 19708 3001\r\nWARNING: something\r\n');
+    assert.deepEqual([...win.table], [[4, 0], [14640, 9000], [19708, 14640]]);
+    assert.deepEqual(win.listeners, [{ pid: 19708, port: 3001 }, { pid: 19708, port: 3001 }]);
     assert.deepEqual(parseSs('LISTEN 0 511 *:3000 *:* users:(("next-server",pid=4242,fd=21))\nESTAB 0 0 1.2.3.4:5 6.7.8.9:10'), [{ pid: 4242, port: 3000 }]);
     assert.deepEqual(parseLsof('p4242\nf21\nn*:3000\nn[::1]:3001\np99\nn127.0.0.1:5432'), [{ pid: 4242, port: 3000 }, { pid: 4242, port: 3001 }, { pid: 99, port: 5432 }]);
   });
