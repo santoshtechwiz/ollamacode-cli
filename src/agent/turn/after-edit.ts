@@ -8,7 +8,7 @@ import { ROLE, TOOL_ERROR_CODE, TOOL_NAME } from '../../protocol';
 import { holdsProjectMarker, projectFolderOf as nearestProjectFolder } from '../../env/project-layout';
 import { CHECK_VERBS, type Verb } from '../../env/languages';
 import { detectStacks } from '../../env/tooling/detector';
-import { autoSteps, PAGE, type CheckPhase, type Step } from './check-plan';
+import { autoSteps, FAST_CHECK_MS, PAGE, type CheckPhase, type Step } from './check-plan';
 import { checkPages } from './page-check';
 import { commandLine } from './helpers';
 import { passedSinceChange } from '../../context/workspace-state';
@@ -213,9 +213,11 @@ async function runChecks({ command, phase, memory, setting, name, timeoutMs, roo
       const timedOut = result.code === TOOL_ERROR_CODE.ETIMEDOUT;
       const unfinished = Boolean(data?.background) || timedOut;
       const passed = !unfinished && result.ok && (exit === undefined || exit === 0);
-      if (memory && isCheckVerb(each) && !signal?.aborted) {
-        // A check that ran out of time took at least that long: it is not fast, whatever it would have taken.
-        rememberDuration(memory, root, timeKey(each), unfinished ? Math.max(durationMs ?? 0, timeoutMs) : durationMs ?? 0);
+      // A check that ran out of time took at least that long: it is not fast, whatever it would have taken. One stopped
+      // (Ctrl+C) says how long it takes only once it has run past fast: stopped sooner, it might have finished in time.
+      const took = durationMs ?? 0;
+      if (memory && isCheckVerb(each) && (!signal?.aborted || took >= FAST_CHECK_MS)) {
+        rememberDuration(memory, root, timeKey(each), unfinished ? Math.max(took, timeoutMs) : took);
       }
       const note = data?.background
         ? `${name} \`${run}\`${where} (${setting}) did not finish: it kept running, so it was moved to the background${data.id ? ` as ${data.id}` : ''}; its result is not known.`

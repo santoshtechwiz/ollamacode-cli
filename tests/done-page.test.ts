@@ -153,6 +153,37 @@ describe('check durations', () => {
   });
 });
 
+describe('a check stopped with Ctrl+C', () => {
+  it('is remembered as slow once it ran past fast, and not at all when stopped sooner', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-stopped-'));
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: 'tsc --noEmit' } }));
+    fs.writeFileSync(path.join(root, 'tsconfig.json'), '{}');
+    fs.writeFileSync(path.join(root, 'a.ts'), 'export {}');
+    const stopAfter = (ms: number): any => {
+      const controller = new AbortController();
+      return {
+        signal: controller.signal,
+        toolRunner: {
+          async run() {
+            controller.abort();
+            return { result: { ok: false, kind: 'command', code: 'ECANCELLED', error: 'cancelled' }, durationMs: ms };
+          },
+        },
+      };
+    };
+    try {
+      const soon = stopAfter(2_000);
+      await runBeforeDoneCheck({ command: 'auto', memory: { root }, root, changed: ['a.ts'], toolRunner: soon.toolRunner, callbacks: {}, signal: soon.signal });
+      assert.deepEqual(loadMemory(root).agentState.checkMs ?? {}, {}, 'two seconds says nothing about how long it takes');
+      const late = stopAfter(40_000);
+      await runBeforeDoneCheck({ command: 'auto', memory: { root }, root, changed: ['a.ts'], toolRunner: late.toolRunner, callbacks: {}, signal: late.signal });
+      assert.deepEqual(Object.values(loadMemory(root).agentState.checkMs ?? {}), [40_000]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('stopping what ocode started as it exits', () => {
   it('stops a process and what it started, with nothing left to wait for', async (t) => {
     if (process.platform !== 'linux') return t.skip('read from /proc; Windows goes through taskkill /T');
