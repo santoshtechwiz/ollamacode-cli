@@ -95,10 +95,11 @@ describe('plan mode', () => {
   it("an approved plan's steps are the task list, and the model is told to mark them", async () => {
     const root = tmp();
     try {
-      const steps = ['Create a.txt', 'Check it with cat'];
+      // Each step is an outcome, with the command that proves it when one does: the task it becomes is ticked when that passes.
+      const steps = [{ outcome: 'Create a.txt' }, { outcome: 'Check it with cat', verify: 'cat a.txt' }];
       const { result, state } = await planTurn(root, [['present_plan', { plan: 'Create a.txt; check it.', folder: '.', steps }]], () => 'Yes, start now');
-      assert.deepEqual(state.todos, steps.map((content) => ({ content, status: 'pending' })));
-      assert.match(String(result.toolResults[0].result.modelNote), /task list now:\n\[ \] Create a\.txt\n\[ \] Check it with cat\n[\s\S]*todo_write/);
+      assert.deepEqual(state.todos, [{ content: 'Create a.txt', status: 'pending' }, { content: 'Check it with cat', status: 'pending', verify: 'cat a.txt' }]);
+      assert.match(String(result.toolResults[0].result.modelNote), /task list now:\n\[ \] Create a\.txt\n\[ \] Check it with cat — verify: `cat a\.txt`\n[\s\S]*todo_write/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

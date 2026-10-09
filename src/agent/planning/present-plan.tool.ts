@@ -17,10 +17,25 @@ function where(folder: string): string {
   return folder === '.' ? 'the workspace root' : `\`${folder.replace(/[\\/]+$/, '')}/\``;
 }
 
+/** A step as approved: what will work, and the command that proves it when one does. */
+interface Step {
+  outcome: string;
+  verify?: string;
+}
+
+/** A step as sent: an outcome with its check, or the plain text older calls send. */
+function stepOf(raw: unknown): Step | null {
+  const outcome = String((raw && typeof raw === 'object' ? (raw as any).outcome : raw) ?? '').trim();
+  if (!outcome) return null;
+  const verify = raw && typeof raw === 'object' ? String((raw as any).verify ?? '').trim() : '';
+  return verify ? { outcome, verify } : { outcome };
+}
+
 /** What the person approves: where the work goes, the plan, and its steps, which become the task list once they say yes. */
-function shown(plan: string, steps: string[], folder: string): string {
+function shown(plan: string, steps: Step[], folder: string): string {
   const head = folder ? `**Where:** ${where(folder)}\n\n` : '';
-  return `${head}${plan}${steps.length ? `\n\n**Steps**\n${steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}` : ''}`;
+  const line = (step: Step, i: number) => `${i + 1}. ${step.outcome}${step.verify ? ` — checked by \`${step.verify}\`` : ''}`;
+  return `${head}${plan}${steps.length ? `\n\n**Steps**\n${steps.map(line).join('\n')}` : ''}`;
 }
 
 /** The approved folder becomes where the work is: made if new, and where commands given no folder run. */
@@ -33,15 +48,15 @@ function settleFolder(state: any, root: string | undefined, folder: string): voi
 }
 
 /** Approved: plan mode is over, the plan's steps are the task list, and the same turn carries the plan out. */
-function approved(state: any, plan: string, steps: string[], display: string) {
-  const todos: TodoItem[] = steps.map((content) => ({ content, status: 'pending' }));
+function approved(state: any, plan: string, steps: Step[], display: string) {
+  const todos: TodoItem[] = steps.map((step) => ({ content: step.outcome, status: 'pending', ...(step.verify ? { verify: step.verify } : {}) }));
   if (state) {
     state.planExploring = false;
     state.planHeld = false;
     if (todos.length) state.todos = todos;
   }
   const list = todos.length
-    ? `\nIts steps are your task list now:\n${todoLines(todos).join('\n')}\nAs you work, change them with todo_write update: give each its doneWhen and verify (the command that proves it) as you start it, mark it in_progress, and completed once that command passed or you can say what showed it works; split, add, reorder or remove tasks when what you find changes the plan.`
+    ? `\nIts steps are your task list now:\n${todoLines(todos).join('\n')}\nAs you work, change them with todo_write update: mark the one you start in_progress; a task with verify is completed when that command passes, one without it when you send evidence of what showed it works; split, add, reorder or remove tasks when what you find changes the plan.`
     : '';
   return {
     ...ok({ kind: 'status', display, data: { plan, approved: true } }),
@@ -93,8 +108,15 @@ export default defineTool({
       },
       steps: {
         type: 'array',
-        items: { type: 'string' },
-        description: 'The plan as a checklist of plain strings, one outcome per line in order ("The API serves GET /todos", "The page adds and deletes tasks"). Once approved it is the task list the user watches.',
+        items: {
+          type: 'object',
+          properties: {
+            outcome: { type: 'string', description: 'What will work when this step is done ("The API serves GET /todos"), not a step of typing ("Create server.js")' },
+            verify: { type: 'string', description: 'A shell command whose exit 0 proves it ("npm test", "dotnet build"); leave it out when no command does' },
+          },
+          required: ['outcome'],
+        },
+        description: 'The plan as outcomes in order. Once approved they are the task list the user watches, and a step with verify is ticked when its command passes.',
       },
     },
     required: ['plan', 'folder'],
@@ -108,7 +130,7 @@ export default defineTool({
     const plan = String(args.plan ?? '').trim();
     if (!plan) return fail('plan must not be empty', { code: TOOL_ERROR_CODE.EINVAL });
     const state = ctx.state as any;
-    const steps = (Array.isArray(args.steps) ? args.steps : []).map((step: unknown) => String(step ?? '').trim()).filter(Boolean);
+    const steps = (Array.isArray(args.steps) ? args.steps : []).map(stepOf).filter((step: Step | null): step is Step => step !== null);
     // Path arguments arrive resolved; the person reads the folder as the workspace names it.
     const root = ctx.root ?? ctx.cwd;
     const given = String(args.folder ?? '').trim();
