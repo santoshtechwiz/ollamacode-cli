@@ -45,7 +45,7 @@ describe('check_page report', () => {
     ]);
     assert.equal(findings.length, 3);
     assert.match(text, /^index\.html: 2 errors, 1 warning \(checked at mobile 375px, tablet 768px, desktop 1280px\)\./);
-    assert.match(text, /✗ \[scripts\] Uncaught script error: boom — all widths/);
+    assert.match(text, /✗ \[scripts\] Uncaught script error: boom — everywhere checked/);
     assert.match(text, /✗ \[layout\] wide — mobile, tablet\n {4}div\.hero \(900px\)/);
     assert.ok(text.trimEnd().endsWith('! [accessibility] minor thing — desktop'), 'warnings come after errors');
   });
@@ -56,7 +56,7 @@ describe('check_page report', () => {
 
   it('takes the widths a call names, keeping the known names and dropping impossible sizes', () => {
     assert.deepEqual(viewportsFor([375, 1440, 5, 'x']).map((v) => v.name), ['mobile', '1440px']);
-    assert.equal(viewportsFor(undefined).length, 3);
+    assert.deepEqual(viewportsFor(undefined).map((v) => v.name), ['mobile', 'tablet', 'desktop', 'desktop dark']);
   });
 });
 
@@ -78,11 +78,26 @@ describe('check_page in a browser', { skip: browserAvailable ? false : 'no brows
       const r = await check(root, { path: 'index.html' });
       assert.equal(r.ok, true, r.error);
       assert.match(r.display, /\[layout\] The page is wider than the screen, so it scrolls sideways; .* — mobile, tablet\n {4}div\.hero \(\d+px\)/);
-      assert.match(r.display, /\[scripts\] Uncaught script error: boom — all widths/);
+      assert.match(r.display, /\[scripts\] Uncaught script error: boom — everywhere checked/);
       assert.doesNotMatch(r.display, /Failed to load resource/, 'a failed load is reported once, by the requests check');
-      assert.match(r.display, /\[requests\] Resources failed to load .* — all widths\n {4}file:.*gone\.png.*\n {4}file:.*lost\.png.*\n {4}file:.*missing\.png/);
+      assert.match(r.display, /\[requests\] Resources failed to load .* — everywhere checked\n {4}file:.*gone\.png.*\n {4}file:.*lost\.png.*\n {4}file:.*missing\.png/);
       assert.match(r.display, /\[accessibility\] .*\(color-contrast, serious\)/);
       assert.match(r.display, /\[accessibility\] .*\(label, critical\)/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('checks dark mode too: a scaffold\'s dark background under text styled for light', async () => {
+    const page = `<!doctype html><html lang="en"><head><title>Dark</title><meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{background:#fff;color:#111} @media (prefers-color-scheme: dark){body{background:#0a0a0a}}</style></head>
+<body><main><h1>Studio</h1><p>Portraits and landscapes.</p></main></body></html>`;
+    const root = workspace({ 'index.html': page });
+    try {
+      const r = await check(root, { path: 'index.html' });
+      assert.equal(r.ok, true, r.error);
+      assert.match(r.display, /checked at mobile 375px, tablet 768px, desktop 1280px, desktop dark 1280px/);
+      assert.match(r.display, /\[accessibility\] .*\(color-contrast, serious\) — desktop dark\n/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

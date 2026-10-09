@@ -19,7 +19,7 @@ export interface BrowserContext {
   close(): Promise<void>;
 }
 export interface Browser {
-  newContext(opts: { viewport: { width: number; height: number } }): Promise<BrowserContext>;
+  newContext(opts: { viewport: { width: number; height: number }; colorScheme?: 'light' | 'dark' }): Promise<BrowserContext>;
   close(): Promise<void>;
 }
 

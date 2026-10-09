@@ -4,19 +4,25 @@ export interface Viewport {
   name: string;
   width: number;
   height: number;
+  /** The color scheme the page is told the person prefers; light unless set. */
+  colorScheme?: 'light' | 'dark';
 }
 
-/** The widths a page is checked at unless the call names its own. */
+/**
+ * The screens a page is checked on unless the call names its own widths. The dark one is there because scaffolds
+ * (create-next-app, Vite) switch the page to dark with prefers-color-scheme while hardcoded light classes stay light.
+ */
 export const DEFAULT_VIEWPORTS: readonly Viewport[] = Object.freeze([
   { name: 'mobile', width: 375, height: 812 },
   { name: 'tablet', width: 768, height: 1024 },
   { name: 'desktop', width: 1280, height: 900 },
+  { name: 'desktop dark', width: 1280, height: 900, colorScheme: 'dark' as const },
 ]);
 
 export function viewportsFor(widths: unknown): Viewport[] {
   if (!Array.isArray(widths) || widths.length === 0) return [...DEFAULT_VIEWPORTS];
   return [...new Set(widths.map(Number).filter((w) => Number.isFinite(w) && w >= 200 && w <= 3840).map(Math.round))].map((width) => {
-    const known = DEFAULT_VIEWPORTS.find((v) => v.width === width);
+    const known = DEFAULT_VIEWPORTS.find((v) => v.width === width && !v.colorScheme);
     return known ?? { name: `${width}px`, width, height: 900 };
   });
 }
@@ -59,7 +65,7 @@ export function formatReport(target: string, results: ViewportFindings[]): { tex
     .join(', ');
   const lines = [`${target}: ${counts} (checked at ${checked}).`];
   for (const f of findings) {
-    const at = f.seenAt.length === results.length ? 'all widths' : f.seenAt.join(', ');
+    const at = f.seenAt.length === results.length ? 'everywhere checked' : f.seenAt.join(', ');
     lines.push(`${f.severity === 'error' ? '✗' : '!'} [${f.check}] ${f.message} — ${at}`);
     for (const w of f.where ?? []) lines.push(`    ${w}`);
   }

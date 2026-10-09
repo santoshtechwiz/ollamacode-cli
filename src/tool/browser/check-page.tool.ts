@@ -20,9 +20,9 @@ export default defineTool({
   changesOnItsOwn: true,
   activity: 'Checking a page in a browser',
   label: 'Check Page',
-  brief: 'Open a web page in a headless browser at mobile, tablet and desktop widths and report layout, accessibility and loading problems.',
+  brief: 'Open a web page in a headless browser at mobile, tablet, desktop and dark mode; report layout, accessibility and loading problems.',
   description:
-    'Open a web page in a headless browser at mobile (375px), tablet (768px) and desktop (1280px) widths and report what is wrong: ' +
+    'Open a web page in a headless browser at mobile (375px), tablet (768px) and desktop (1280px) widths, and on desktop in dark mode, and report what is wrong: ' +
     'sideways scrolling and the elements causing it, accessibility problems (contrast, missing labels and alt text, small tap targets), ' +
     'script errors, and images, scripts or data that failed to load. Pass url for a running site (start a dev server first with ' +
     'exec_shell background: true), or path for a static .html file in the workspace. Use it after changing a web UI to check the change.',
@@ -77,7 +77,7 @@ export default defineTool({
       browser = await launchBrowser();
       const results: ViewportFindings[] = [];
       for (const viewport of viewports) {
-        const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height } });
+        const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, colorScheme: viewport.colorScheme ?? 'light' });
         try {
           const page = await context.newPage();
           const collectors = await Promise.all(PAGE_CHECKS.map((check) => check.start(page)));

@@ -1,0 +1,68 @@
+/*
+ * Motion for plain HTML and CSS: durations, easings, and classes for content that eases in as it scrolls into view.
+ * Animates only transform and opacity. Turned off for people who ask for reduced motion.
+ *
+ * Use:
+ *   <section class="reveal">…</section>                       fades and rises in once visible
+ *   <ul class="stagger"><li class="reveal">…</li>…</ul>        children follow one another by 50ms
+ *   <button class="press">…</button>                           eases hover and press
+ *
+ * And once, before </body>:
+ *   <script>
+ *     document.documentElement.classList.add('js');
+ *     const io = new IntersectionObserver((entries) => entries.forEach((e) => {
+ *       if (e.isIntersecting) { e.target.classList.add('is-visible'); io.unobserve(e.target); }
+ *     }), { threshold: 0.15 });
+ *     document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+ *   </script>
+ */
+:root {
+  --duration-fast: 150ms;
+  --duration-base: 250ms;
+  --duration-slow: 400ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --rise: 16px;
+}
+
+/* Hidden only once the script above has run (it adds .js), so a page without it still shows everything. */
+.js .reveal {
+  opacity: 0;
+  transform: translateY(var(--rise));
+  transition: opacity var(--duration-slow) var(--ease-out), transform var(--duration-slow) var(--ease-out);
+}
+.reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+.stagger > .reveal:nth-child(2) { transition-delay: 50ms; }
+.stagger > .reveal:nth-child(3) { transition-delay: 100ms; }
+.stagger > .reveal:nth-child(4) { transition-delay: 150ms; }
+.stagger > .reveal:nth-child(5) { transition-delay: 200ms; }
+.stagger > .reveal:nth-child(n + 6) { transition-delay: 250ms; }
+
+.press {
+  transition: transform var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+.press:hover { transform: translateY(-1px); }
+.press:active { transform: translateY(0) scale(0.98); }
+
+/* A dialog or menu: scale from 0.96 and fade. Add .is-open to show it. */
+.pop {
+  opacity: 0;
+  transform: scale(0.96);
+  transition: opacity var(--duration-base) var(--ease-out), transform var(--duration-base) var(--ease-out);
+}
+.pop.is-open {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal, .pop, .press { transition: none !important; }
+  /* Content shows at once; a closed .pop stays closed, it only stops moving. */
+  .js .reveal { opacity: 1; transform: none; }
+  .pop, .press:hover, .press:active { transform: none; }
+}
