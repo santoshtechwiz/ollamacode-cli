@@ -10,6 +10,7 @@ import { CHECK_VERBS, type Verb } from '../../env/languages';
 import { detectStacks } from '../../env/tooling/detector';
 import { autoSteps, PAGE, type CheckPhase, type Step } from './check-plan';
 import { checkPages } from './page-check';
+import { commandLine } from './helpers';
 import { passedSinceChange } from '../../context/workspace-state';
 import { loadMemory, updateMemory } from '../../context/memory';
 import type { ToolExecutor } from '../../tool/execution/executor';
@@ -60,14 +61,13 @@ export function checkCommands(setting: string): string[] {
  */
 function projectCommand(command: string, stacks: import('../../types.ts').StackInfo[], files: string[]): string | null {
   if (!isCheckVerb(command)) return command;
-  const quote = (argv: string[]) => argv.map((a) => (/^[\w@./:=-]+$/.test(a) ? a : JSON.stringify(a))).join(' ');
   const byFile = stacks.map((stack) => stack.fileScoped?.[command]).find(Boolean);
   if (byFile) {
     const scoped = files.filter((f) => byFile.extensions.includes(path.extname(f).toLowerCase()));
-    return scoped.length ? quote([...byFile.argv, ...scoped]) : '';
+    return scoped.length ? commandLine([...byFile.argv, ...scoped]) : '';
   }
   const argv = stacks.map((stack) => stack[command]).find((a) => Array.isArray(a) && a.length);
-  return argv ? quote(argv) : null;
+  return argv ? commandLine(argv) : null;
 }
 
 /** The setting that lets ocode choose the checks (see check-plan.ts). */

@@ -7,6 +7,7 @@ import path from 'node:path';
 import { TOOL_ERROR_CODE, TOOL_NAME } from '../../protocol';
 import { listeningPorts } from '../../tool/process/analysis/listening-ports';
 import { pageFiles } from './check-plan';
+import { commandLine } from './helpers';
 import type { StackInfo, ToolResult } from '../../types';
 import type { ToolExecutor } from '../../tool/execution/executor';
 import type { TurnCallbacks } from './turn';
@@ -109,7 +110,7 @@ export async function checkPages({ root, folder, files, stacks, jobs, toolRunner
   const running = [...(jobs?.values() ?? [])].find((job) => !job.exited && !job.error && path.resolve(job.cwd) === cwd);
   let job = running;
   if (!job) {
-    const command = serving.dev.map((a) => (/^[\w@./:=-]+$/.test(a) ? a : JSON.stringify(a))).join(' ');
+    const command = commandLine(serving.dev);
     const args = folder ? { command, cwd: folder, background: true } : { command, background: true };
     const started = await call(TOOL_NAME.EXEC_SHELL, args);
     const id = (started.data as { id?: string } | undefined)?.id;
