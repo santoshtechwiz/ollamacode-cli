@@ -6,10 +6,18 @@ import type { Language } from './types';
 const DOTNET_PROJECT = /\.(sln|slnx|csproj|fsproj|vbproj)$/i;
 const MAX_SIBLINGS_FOR_NESTED_DOTNET_SCAN = 8;
 
+/**
+ * The compile check builds into a folder of its own under obj/. Into bin/, as `dotnet build` does, it failed whenever the
+ * app was running (`dotnet run`): Windows locks the running .exe and its .dll files, so copying the new build over them
+ * failed ("Could not copy apphost.exe"), the code reading as broken while it compiled, and the model stopped the
+ * person's server to get past it. Each project of a solution takes the path relative to itself; obj/ is never source.
+ */
+export const DOTNET_CHECK = ['dotnet', 'build', '-p:BaseOutputPath=obj/ocode-check/'];
+
 async function detectDotnet(root: string): Promise<StackInfo | null> {
   const project = await findDotnetProject(root);
   if (!project) return null;
-  return { id: 'dotnet', label: 'C# / .NET', root, marker: path.basename(project), test: ['dotnet', 'test'], build: ['dotnet', 'build'], check: ['dotnet', 'build'], run: ['dotnet', 'run'] };
+  return { id: 'dotnet', label: 'C# / .NET', root, marker: path.basename(project), test: ['dotnet', 'test'], build: ['dotnet', 'build'], check: DOTNET_CHECK, run: ['dotnet', 'run'] };
 }
 
 async function findDotnetProject(root: string): Promise<string | null> {

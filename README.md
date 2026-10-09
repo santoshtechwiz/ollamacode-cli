@@ -288,7 +288,7 @@ with different kinds of projects:
 |---|---|
 | TypeScript | its `typecheck` script, or `npx tsc --noEmit` |
 | Python | `python -m compileall -q` over the project (every file parsed, none run; virtualenvs skipped) |
-| C# / .NET | `dotnet build` |
+| C# / .NET | `dotnet build` into `obj/ocode-check/`, so an app running from `bin/` (`dotnet run`) never makes it fail |
 | Rust | `cargo check` |
 | Go | `go vet ./...` |
 | Terraform | `terraform validate` |

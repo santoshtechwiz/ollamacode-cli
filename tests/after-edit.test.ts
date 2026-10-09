@@ -138,6 +138,21 @@ describe('agent.afterEdit', () => {
     }
   });
 
+  it('"check" in a .NET project compiles away from bin/, which a running app locks; "build" stays its own build', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-ae-dotnet-'));
+    try {
+      fs.mkdirSync(path.join(root, 'todo'));
+      fs.writeFileSync(path.join(root, 'todo', 'Todo.csproj'), '<Project Sdk="Microsoft.NET.Sdk.Web"></Project>');
+      const edit = [{ toolCalls: [call('1', 'write_file', { path: 'todo/Program.cs', content: 'x' })] }, { content: 'Done.' }];
+      const checked = await turn(edit, 'check', true, root);
+      assert.ok(checked.ran.includes('exec_shell: dotnet build -p:BaseOutputPath=obj/ocode-check/ in todo'), checked.ran.join(' | '));
+      const built = await turn(edit, 'build', true, root);
+      assert.ok(built.ran.includes('exec_shell: dotnet build in todo'), built.ran.join(' | '));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('a project with no such command says so instead of running something else', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-ae-none-'));
     try {
