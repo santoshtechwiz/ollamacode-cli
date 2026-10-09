@@ -69,6 +69,8 @@ interface AgentConfig {
   subagents?: boolean;
   /** A command run after any step that changed files (tests, a linter); its result goes to the model. Unset: none. */
   afterEdit?: string;
+  /** A command run when the model answers after changing files (a build); a failure goes back to the model. Unset: none. */
+  beforeDone?: string;
   /** Subagent roles of the person's own, by name; see agent/subagent/roles.ts. */
   subagentRoles?: Record<string, import('../agent/subagent/roles.ts').CustomRoleConfig>;
 }
@@ -120,7 +122,7 @@ export function configFile() {
 }
 
 /** Settings that live under "agent" in config.json. */
-const AGENT_KEYS: ReadonlySet<string> = new Set([...Object.keys(DEFAULTS.agent), 'contextBudget', 'afterEdit', 'subagentRoles']);
+const AGENT_KEYS: ReadonlySet<string> = new Set([...Object.keys(DEFAULTS.agent), 'contextBudget', 'afterEdit', 'beforeDone', 'subagentRoles']);
 
 /**
  * An agent setting written at the top level of config.json (a snippet pasted without its "agent": { } wrapper) is read

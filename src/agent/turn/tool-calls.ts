@@ -66,7 +66,7 @@ interface PreparedToolCall {
 }
 
 /** Adds the assistant/tool pair to history and returns the exact text the model now sees for it: the rendered result, cleaned and held to the shared output budget. */
-function recordExchange(history: ContextStore, call: ToolCall, result: ToolResult, limit: number, narration = '', reasoning = ''): string {
+export function recordExchange(history: ContextStore, call: ToolCall, result: ToolResult, limit: number, narration = '', reasoning = ''): string {
   const settled: ToolCall = { ...call, id: call.id || newId() };
   history.addAssistant(narration, [settled], { reasoning });
   const rendered = compressToolOutput(renderToolResult(result, settled.function.name), limit);

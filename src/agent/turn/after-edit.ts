@@ -45,14 +45,97 @@ function holdsMarker(dir: string): boolean {
 /** A project's own command, by name: "check", "build", "test" or "lint" is the one ocode detected for its stack. */
 const PROJECT_VERBS = new Set(['check', 'build', 'test', 'lint']);
 
-/** The command to run in this folder: the configured one as written, or the project's own for a check named by verb. */
-async function projectCommand(command: string, folder: string): Promise<string | null> {
-  if (!PROJECT_VERBS.has(command)) return command;
-  const stacks = await detectStacks(folder).catch((): import('../../types.ts').StackInfo[] => []);
-  const argv = stacks.map((stack) => stack[command as 'check' | 'build' | 'test' | 'lint']).find((a) => Array.isArray(a) && a.length);
-  return argv ? argv.map((a) => (/^[\w@./:=-]+$/.test(a) ? a : JSON.stringify(a))).join(' ') : null;
+/**
+ * The commands a setting names: words that are all verbs ("check lint") are one command each, run in that order;
+ * anything else is one command as written ("npm test", "pytest -q").
+ */
+export function checkCommands(setting: string): string[] {
+  const words = setting.trim().split(/\s+/).filter(Boolean);
+  return words.length > 0 && words.every((w) => PROJECT_VERBS.has(w)) ? words : setting.trim() ? [setting.trim()] : [];
 }
 
+/**
+ * The command to run in this folder: the configured one as written, or the project's own for a check named by verb.
+ * Lint takes the changed files when the project's linter can: only what changed is linted, which keeps it fast enough
+ * to run after every step. '' when there is nothing for it to look at.
+ */
+async function projectCommand(command: string, folder: string, files: string[]): Promise<string | null> {
+  if (!PROJECT_VERBS.has(command)) return command;
+  const stacks = await detectStacks(folder).catch((): import('../../types.ts').StackInfo[] => []);
+  const quote = (argv: string[]) => argv.map((a) => (/^[\w@./:=-]+$/.test(a) ? a : JSON.stringify(a))).join(' ');
+  if (command === 'lint') {
+    const byFile = stacks.map((stack) => stack.lintFiles).find(Boolean);
+    if (byFile) {
+      const lintable = files.filter((f) => byFile.extensions.includes(path.extname(f).toLowerCase()));
+      return lintable.length ? quote([...byFile.argv, ...lintable]) : '';
+    }
+  }
+  const argv = stacks.map((stack) => stack[command as 'check' | 'build' | 'test' | 'lint']).find((a) => Array.isArray(a) && a.length);
+  return argv ? quote(argv) : null;
+}
+
+interface CheckRun {
+  /** The tool call made, as the model and the person see it. */
+  args: { command: string; cwd?: string };
+  result: import('../../types.ts').ToolResult;
+  passed: boolean;
+  note: string;
+}
+
+/**
+ * Runs each command the setting names, once per project the changed files belong to, in that project's folder.
+ * `setting` names it in what the model reads (agent.afterEdit, agent.beforeDone).
+ */
+async function runChecks({ command, setting, name, root, changed, toolRunner, callbacks, signal }: {
+  command: string;
+  setting: string;
+  /** How a note names the check: "After-edit check". */
+  name: string;
+  root: string;
+  changed: string[];
+  toolRunner: ToolExecutor;
+  callbacks: TurnCallbacks;
+  signal?: AbortSignal;
+}): Promise<{ notes: string[]; runs: CheckRun[] }> {
+  const byFolder = new Map<string, string[]>();
+  for (const rel of changed.length ? changed : ['.']) {
+    const folder = projectFolderOf(root, rel);
+    const inFolder = path.relative(path.resolve(root, folder), path.resolve(root, rel)).split(path.sep).join('/');
+    byFolder.set(folder, [...(byFolder.get(folder) ?? []), ...(rel === '.' ? [] : [inFolder])]);
+  }
+  const notes: string[] = [];
+  const runs: CheckRun[] = [];
+  for (const each of checkCommands(command)) {
+    for (const [folder, files] of byFolder) {
+      const where = folder ? ` in ${folder}` : '';
+      const run = await projectCommand(each, path.resolve(root, folder), files.filter((f) => fs.existsSync(path.resolve(root, folder, f))));
+      if (run === '') continue;
+      if (!run) {
+        notes.push(`${name} (${setting} "${each}")${where} did not run: this project has no ${each} command ocode knows.`);
+        continue;
+      }
+      const args = folder ? { command: run, cwd: folder } : { command: run };
+      callbacks.onToolStart?.(TOOL_NAME.EXEC_SHELL, args);
+      const { result } = await toolRunner.run(TOOL_NAME.EXEC_SHELL, args, { signal, approve: async () => true });
+      callbacks.onToolResult?.(TOOL_NAME.EXEC_SHELL, args, result);
+      const data = result.data as { execution?: { exitCode?: number }; background?: boolean; id?: string } | undefined;
+      const exit = data?.execution?.exitCode;
+      const output = String(result.display ?? result.error ?? '').split('\n').slice(-FAILURE_TAIL_LINES).join('\n').trim();
+      // Passed means it ran to the end and exited 0; a check still running in the background has not passed yet.
+      const passed = !data?.background && result.ok && (exit === undefined || exit === 0);
+      const note = data?.background
+        ? `${name} \`${run}\`${where} (${setting}) did not finish: it kept running, so it was moved to the background${data.id ? ` as ${data.id}` : ''}; its result is not known.`
+        : passed
+          ? `${name} \`${run}\`${where} (${setting}) passed.`
+          : `${name} \`${run}\`${where} (${setting}) failed${exit !== undefined ? ` with exit ${exit}` : ''}:\n${output}`;
+      notes.push(note);
+      runs.push({ args, result, passed, note });
+    }
+  }
+  return { notes, runs };
+}
+
+/** agent.afterEdit: run after a step that changed files; the outcome rides on that step's last tool result. */
 export async function runAfterEditCheck({ command, root, changed, history, toolRunner, callbacks, signal }: {
   command: string;
   /** The workspace root, and the files the step changed, workspace-relative. */
@@ -63,33 +146,27 @@ export async function runAfterEditCheck({ command, root, changed, history, toolR
   callbacks: TurnCallbacks;
   signal?: AbortSignal;
 }): Promise<void> {
-  // Once per project the step touched, in that project's folder.
-  const folders = [...new Set((changed.length ? changed : ['.']).map((rel) => projectFolderOf(root, rel)))];
-  const notes: string[] = [];
-  for (const folder of folders) {
-    const where = folder ? ` in ${folder}` : '';
-    const run = await projectCommand(command, path.resolve(root, folder));
-    if (!run) {
-      notes.push(`After-edit check (agent.afterEdit "${command}")${where} did not run: this project has no ${command} command ocode knows.`);
-      continue;
-    }
-    const args = folder ? { command: run, cwd: folder } : { command: run };
-    callbacks.onToolStart?.(TOOL_NAME.EXEC_SHELL, args);
-    const { result } = await toolRunner.run(TOOL_NAME.EXEC_SHELL, args, { signal, approve: async () => true });
-    callbacks.onToolResult?.(TOOL_NAME.EXEC_SHELL, args, result);
-    const data = result.data as { execution?: { exitCode?: number }; background?: boolean; id?: string } | undefined;
-    const exit = data?.execution?.exitCode;
-    const output = String(result.display ?? result.error ?? '').split('\n').slice(-FAILURE_TAIL_LINES).join('\n').trim();
-    // Passed means it ran to the end and exited 0; a check still running in the background has not passed yet.
-    notes.push(data?.background
-      ? `After-edit check \`${run}\`${where} (agent.afterEdit) did not finish: it kept running, so it was moved to the background${data.id ? ` as ${data.id}` : ''}; its result is not known.`
-      : result.ok && (exit === undefined || exit === 0)
-        ? `After-edit check \`${run}\`${where} (agent.afterEdit) passed.`
-        : `After-edit check \`${run}\`${where} (agent.afterEdit) failed${exit !== undefined ? ` with exit ${exit}` : ''}:\n${output}`);
-  }
-
+  const { notes } = await runChecks({ command, setting: 'agent.afterEdit', name: 'After-edit check', root, changed, toolRunner, callbacks, signal });
+  if (notes.length === 0) return;
   // The step's last result carries it: the model reads what its edits caused next to what they did.
   const messages = history.messages as Message[];
   const at = messages.findLastIndex((m) => m.role === ROLE.TOOL);
   if (at >= 0) messages[at] = { ...messages[at], content: `${messages[at].content}\n\n${notes.join('\n\n')}` };
+}
+
+/**
+ * agent.beforeDone: run when the model answers after changing files, so "done" is checked the way the person asked
+ * (a build that prerenders pages catches what a type check cannot). The checks that failed come back for the turn to
+ * record as calls ocode made, so the model reads why the work is not done yet.
+ */
+export async function runBeforeDoneCheck({ command, root, changed, toolRunner, callbacks, signal }: {
+  command: string;
+  root: string;
+  changed: string[];
+  toolRunner: ToolExecutor;
+  callbacks: TurnCallbacks;
+  signal?: AbortSignal;
+}): Promise<CheckRun[]> {
+  const { runs } = await runChecks({ command, setting: 'agent.beforeDone', name: 'Check before answering', root, changed, toolRunner, callbacks, signal });
+  return runs.filter((r) => !r.passed);
 }

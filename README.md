@@ -289,7 +289,16 @@ with different kinds of projects:
 | JavaScript | its `typecheck` or `lint` script, if it has one |
 
 A project with no check is skipped, and the agent is told so. `test`, `build` and `lint` work the same way with
-each project's tests, build or linter. Or give a command of your own:
+each project's tests, build or linter. Name several to run them in order:
+
+```sh
+ocode config set agent.afterEdit "check lint"
+```
+
+`lint` runs ESLint on only the files that step changed when the project has ESLint, so it stays fast enough for
+every step. Framework files are included when their ESLint plugin is installed: `.vue` (eslint-plugin-vue),
+`.svelte` (eslint-plugin-svelte), `.astro` (eslint-plugin-astro), Angular templates (angular-eslint). Or give a
+command of your own:
 
 ```sh
 ocode config set agent.afterEdit "npm test"
@@ -304,6 +313,21 @@ and its result goes to the model with that step, so a failing test gets fixed
 straight away instead of at the end. It runs without asking because you
 configured it.
 `ocode config unset agent.afterEdit` turns it off.
+
+### A check before "done"
+
+A type check after each edit cannot see everything: a Next.js page that uses `new Date()` while prerendering, or
+an image host missing from `next.config`, passes `tsc` and still fails. A build catches both, but is too slow to
+run after every step. `agent.beforeDone` runs once when the agent answers:
+
+```sh
+ocode config set agent.beforeDone build
+```
+
+It runs only when files changed since it last ran, in each changed project's folder, and takes the same words
+(`check`, `build`, `test`, `lint`, several at once) or a command of your own. If it fails, the agent reads the
+failure and keeps working instead of saying "done"; when it can't fix it and changes nothing more, its answer
+stands, so a failure it can't fix never loops. `ocode config unset agent.beforeDone` turns it off.
 
 ### Git
 

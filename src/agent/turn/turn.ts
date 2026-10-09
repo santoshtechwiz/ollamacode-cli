@@ -19,7 +19,8 @@ import { clearDenials } from '../../tool/policy/permission-policy';
 import { processToolCalls } from './tool-calls';
 import { createContextRecovery } from './context-recovery';
 import { startsToolCall } from '../response/tool-parser';
-import { runAfterEditCheck } from './after-edit';
+import { runAfterEditCheck, runBeforeDoneCheck } from './after-edit';
+import { recordExchange } from './tool-calls';
 import { createSubagentRunner } from '../subagent/runner';
 
 export interface TurnCallbacks {
@@ -125,6 +126,10 @@ function recordTelemetry(
     callbacks.onGenerationRate?.(record.genTokensPerSec);
   }
 }
+
+/** What the model reads with a check of agent.beforeDone that failed. */
+const BEFORE_DONE_FAILED =
+  'ocode ran this check (agent.beforeDone) when you answered, and it failed: the work is not done. Fix what it reports, then answer again.';
 
 export async function runTurn(
   params: RunTurnParams,
@@ -246,6 +251,10 @@ export async function runTurn(
 
   const world = (): number => Number(workspaceState?.mutationCount ?? 0);
 
+  // agent.beforeDone runs when the model answers, on the files changed since it last ran (from the turn's start).
+  const beforeDone = typeof config.beforeDone === 'string' ? config.beforeDone.trim() : '';
+  let doneMark = changeMark(workspaceState);
+
   while (
     turnState.iteration <
     turnState.maxIterations
@@ -328,6 +337,29 @@ export async function runTurn(
       // off while it was still writing a tool call out as text is a call that never arrived: kept as the answer, it
       // went into the conversation and the model built on its own half-call.
       const halfCall = reply.finishReason === 'length' && startsToolCall(reply.content);
+      // The person's own check of "done", once per set of changes: a failure is recorded as the call ocode made, with
+      // the model's answer as what it said before it, and the turn goes on so the model can fix what it reports. With
+      // nothing changed since the last run there is nothing new to check, so a model that cannot fix it still answers.
+      const unchecked = beforeDone && !readOnly && toolsEnabled && !workspaceState?.planHeld && reply.finishReason !== 'length'
+        ? changedSince(workspaceState, doneMark)
+        : [];
+      if (unchecked.length > 0 && turnState.iteration < turnState.maxIterations) {
+        doneMark = changeMark(workspaceState);
+        const failed = await runBeforeDoneCheck({ command: beforeDone, root: workspaceState?.root ?? cwd, changed: unchecked, toolRunner, callbacks, signal });
+        if (signal?.aborted) {
+          turnState.stopReason = STOP_REASONS.CANCELLED;
+          break;
+        }
+        if (failed.length > 0) {
+          const limit = Number(config.maxToolOutput) || 8000;
+          failed.forEach((run, k) => {
+            const call = { id: '', type: 'function' as const, function: { name: TOOL_NAME.EXEC_SHELL, arguments: run.args } };
+            const result = { ...run.result, modelNote: [run.result.modelNote, BEFORE_DONE_FAILED].filter(Boolean).join('\n') };
+            recordExchange(history, call, result, limit, k === 0 ? reply.content : '');
+          });
+          continue;
+        }
+      }
       if (reply.content.trim() && !halfCall) turnState.answer = reply.content;
       // Cut off at the length limit, with or without text so far: the answer can be picked up where it stopped.
       turnState.stopReason =

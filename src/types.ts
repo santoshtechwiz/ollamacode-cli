@@ -180,6 +180,8 @@ export interface StackInfo {
   run?: string[];
   dev?: string[];
   lint?: string[];
+  /** The linter run on given files, for files with these extensions: a check after an edit lints only what changed. */
+  lintFiles?: { argv: string[]; extensions: string[] };
   marker?: string;
 }
 

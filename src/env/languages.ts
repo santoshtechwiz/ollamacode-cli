@@ -198,6 +198,28 @@ async function languageFromProjectDoc(root: string): Promise<'js' | 'ts' | null>
   return js > ts ? 'js' : ts > js ? 'ts' : null;
 }
 
+const ESLINT_SCRIPT_EXTENSIONS = ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts'];
+
+/**
+ * Framework files ESLint reads only through a plugin, by the package that adds it. Without the plugin ESLint skips such
+ * a file with a warning, so it is linted only where the plugin is installed. One more framework is one more row.
+ */
+const ESLINT_PLUGIN_EXTENSIONS: ReadonlyArray<{ plugin: string; extensions: string[] }> = [
+  { plugin: 'eslint-plugin-vue', extensions: ['.vue'] },
+  { plugin: 'eslint-plugin-svelte', extensions: ['.svelte'] },
+  { plugin: 'eslint-plugin-astro', extensions: ['.astro'] },
+  { plugin: 'angular-eslint', extensions: ['.html'] },
+  { plugin: '@angular-eslint/eslint-plugin-template', extensions: ['.html'] },
+];
+
+/** ESLint run on given files, when the project has ESLint: its script extensions and its plugins' framework files. */
+function eslintFiles(pkg: any): StackInfo['lintFiles'] {
+  const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+  if (!deps.eslint) return undefined;
+  const extra = ESLINT_PLUGIN_EXTENSIONS.filter((p) => deps[p.plugin]).flatMap((p) => p.extensions);
+  return { argv: ['npx', 'eslint'], extensions: [...new Set([...ESLINT_SCRIPT_EXTENSIONS, ...extra])] };
+}
+
 async function detectNode(root: string): Promise<StackInfo | null> {
   const pkg = await readJson(path.join(root, 'package.json'));
   if (!pkg) return null;
@@ -217,6 +239,7 @@ async function detectNode(root: string): Promise<StackInfo | null> {
     // Its own type check if it names one; else the compiler's, for TypeScript; plain JavaScript has no compile step.
     check: scripts.typecheck ? script('typecheck') : hasTs ? ['npx', 'tsc', '--noEmit'] : scripts.lint ? script('lint') : undefined,
     lint: scripts.lint ? script('lint') : undefined,
+    lintFiles: eslintFiles(pkg),
     run: scripts.dev ? script('dev') : scripts.start ? (pm === 'npm' ? ['npm', 'start'] : [pm, 'start']) : undefined,
     dev: scripts.dev ? script('dev') : undefined,
   };
