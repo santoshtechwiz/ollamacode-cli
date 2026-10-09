@@ -11,6 +11,7 @@ import { createWorkspaceState } from '../src/context/workspace-state';
 import { createAgentState } from '../src/agent/state';
 import { applyApprovalPolicy } from '../src/tool/policy/permission-policy';
 import { syntaxBreak } from '../src/tool/filesystem/_syntax';
+import { createApproveFn } from '../src/cli/chat/turn/approval-service';
 
 describe('syntax check for JavaScript and TypeScript', () => {
   it('accepts what the TypeScript compiler accepts, such as a bare & in JSX text', async () => {
@@ -66,6 +67,37 @@ describe('delete_file and files it has not read', () => {
       }
     } finally {
       fs.rmSync(w.cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('edit_file and an edit that changes nothing', () => {
+  it('answers "no change" without asking anyone to approve it', async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-noop-'));
+    fs.writeFileSync(path.join(cwd, 'index.html'), '<h1>Lens &amp; Light</h1>\n');
+    const state: any = createWorkspaceState(cwd);
+    const agentState = createAgentState();
+    state.permissions = agentState.permissions;
+    const asked: string[] = [];
+    const host = { workspace: { cwd, root: cwd, state }, agentState, interactive: true, cfg: { permissions: { risky: 'ask' } }, flags: {} } as any;
+    const approve = createApproveFn(host, async (question) => {
+      asked.push(String(question));
+      return 'no';
+    });
+    const ex = createExecutor({ root: cwd, state, approve });
+    try {
+      await ex.run('read_file', { path: 'index.html' });
+      const r: any = (await ex.run('edit_file', { path: 'index.html', search: '<h1>Lens &amp; Light</h1>', replace: '<h1>Lens &amp; Light</h1>' })).result;
+      assert.equal(r.ok, true, r.error);
+      assert.match(r.display, /No change — index\.html already reads that way/);
+      assert.match(r.modelNote, /Nothing changed/);
+      assert.deepEqual(asked, [], 'nobody was asked');
+
+      const real: any = (await ex.run('edit_file', { path: 'index.html', search: 'Lens', replace: 'Lens and' })).result;
+      assert.equal(real.ok, false, 'a real change is still asked about, and this one was declined');
+      assert.equal(asked.length, 1);
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
     }
   });
 });
