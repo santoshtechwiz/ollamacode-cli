@@ -407,6 +407,28 @@ async function openEdit(
   return { failure: null, rel, opened, outcome, stamp };
 }
 
+/** The answer to an edit whose replace gives back the text already there: nothing to write, and nothing to approve. */
+function noChange(rel: string, outcome: { replacements: number; exact: boolean; note?: string }): ToolResult {
+  // Only the fact: replace gives back the text that is there. Guessing at a cause elsewhere sent a model that meant
+  // to delete lines (and copied them into replace again) away from its own edit, round and round.
+  return {
+    ...ok({
+      kind: 'file',
+      display: `No change — ${rel} already reads that way, nothing was written.`,
+      data: {
+        path: rel,
+        replacements: outcome.replacements,
+        matched: outcome.replacements,
+        changed: 0,
+        exact: outcome.exact,
+        note: outcome.note || 'no change (already in desired state)',
+      },
+    }),
+    modelNote: 'Nothing changed: replace gives the same text that is already there, so resending this edit changes nothing. ' +
+      'replace is what the matched text becomes — to remove lines, leave them out of replace.',
+  };
+}
+
 export default defineTool({
   name: 'edit_file',
   aliases: ['update_file', 'patch_file', 'replace_in_file'],
@@ -484,7 +506,10 @@ export default defineTool({
     }
     const planned = await openEdit(abs, args, ctx);
     if (planned.failure) return planned.failure;
-    return planned.outcome && planned.outcome.status === 'fail' ? planned.outcome.result : null;
+    if (!planned.outcome) return null;
+    if (planned.outcome.status === 'fail') return planned.outcome.result;
+    // An edit that changes nothing is answered here, before approval: nobody should be asked to allow a no-op.
+    return planned.outcome.content === planned.opened?.content ? noChange(planned.rel, planned.outcome) : null;
   },
 
   async execute(args, ctx) {
@@ -509,26 +534,7 @@ export default defineTool({
       const { content: updated, replacements: totalReplacements, exact: allExact, note } = outcome;
 
       // Detect a no-op even when replace_all matched N times but produced byte-identical content — the previous check missed that case.
-      if (content === updated) {
-        // Only the fact: replace gives back the text that is there. Guessing at a cause elsewhere sent a model that meant
-        // to delete lines (and copied them into replace again) away from its own edit, round and round.
-        return {
-          ...ok({
-            kind: 'file',
-            display: `No change — ${rel} already reads that way, nothing was written.`,
-            data: {
-            path: rel,
-            replacements: totalReplacements,
-            matched: totalReplacements,
-            changed: 0,
-            exact: allExact,
-            note: note || 'no change (already in desired state)',
-          },
-          }),
-          modelNote: 'Nothing changed: replace gives the same text that is already there, so resending this edit changes nothing. ' +
-            'replace is what the matched text becomes — to remove lines, leave them out of replace.',
-        };
-      }
+      if (content === updated) return noChange(rel, outcome);
 
       if (jsonFile) {
         const checked = validateJson(updated, rel);

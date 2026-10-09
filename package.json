@@ -9,6 +9,7 @@
   "files": [
     "bin",
     "src",
+    "skills",
     "ollama.md"
   ],
   "publishConfig": {
@@ -24,6 +25,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node scripts/test.mjs",
     "eval": "node scripts/eval.mjs",
+    "replay": "tsx scripts/replay.mts",
+    "eval:today": "node scripts/eval.mjs --only plan-own-folder,done-typecheck,done-page,dotnet-while-running",
     "bench:edit": "node --import tsx scripts/edit-bench.ts",
     "prepare": "node scripts/install-hooks.mjs"
   },
@@ -88,6 +91,8 @@
     "yaml": "^2.9.1"
   },
   "optionalDependencies": {
+    "axe-core": "^4.10.3",
+    "playwright-core": "^1.56.1",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   }
 }

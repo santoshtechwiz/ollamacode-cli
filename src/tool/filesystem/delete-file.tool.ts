@@ -4,7 +4,12 @@ import { TOOL_ERROR_CODE, TOOL_RESULT_STATUS } from '../../protocol';
 import { defineTool } from '../core/defineTool';
 import { ok, fail, fromError } from '../core/tool-result';
 import { statType, noteChange } from './_fs';
+import { hasSeen } from './_seen';
+import { workspaceFor } from '../../agent/workspace/manager';
 import { FOLDER_UNDO_MAX_FILES, hasMoreFilesThan, snapshotPaths } from '../../core/session-recovery';
+
+/** How much of a file is looked at to tell text from binary. */
+const SNIFF_BYTES = 8192;
 
 export default defineTool({
   name: 'delete_file',
@@ -19,7 +24,7 @@ export default defineTool({
   description:
     'Delete a file, or a directory with recursive:true. Refuses the workspace root and non-empty directories unless recursive is set. ' +
     'If the path is already gone, the result is NOT_FOUND with existedBefore:false — never a claimed deletion. ' +
-    'A file with content must be read in this turn first. Check nothing still references it, and afterwards verify the project still builds.',
+    'A text file with content must be read in this session first. Check nothing still references it, and afterwards verify the project still builds.',
   parameters: {
     type: 'object',
     properties: {
@@ -38,6 +43,39 @@ export default defineTool({
 
   preview(args) {
     return `delete ${args?.path}${args?.recursive ? ' (recursive)' : ''}`;
+  },
+
+  // A text file with content is deleted only once the model has read it, as write_file overwrites one: refused before
+  // any approval prompt, so the person is never asked about a delete made without looking.
+  async cannotRun(args, ctx) {
+    let abs: string;
+    let rel: string;
+    try {
+      const ws = workspaceFor(ctx);
+      abs = ws.resolveLexical(String(args?.path ?? ''));
+      rel = ws.rel(abs);
+    } catch {
+      return null;
+    }
+    if (hasSeen(ctx?.state, rel) || (await statType(abs))?.type !== 'file') return null;
+    let head: Buffer;
+    try {
+      const handle = await fsp.open(abs, 'r');
+      try {
+        const { buffer, bytesRead } = await handle.read(Buffer.alloc(SNIFF_BYTES), 0, SNIFF_BYTES, 0);
+        head = buffer.subarray(0, bytesRead);
+      } finally {
+        await handle.close();
+      }
+    } catch {
+      return null;
+    }
+    // Binary files (images, fonts) have nothing read_file could show, and an empty file nothing to lose.
+    if (head.includes(0) || head.toString('utf8').trim() === '') return null;
+    return fail(`${rel} has not been read in this session — nothing was deleted.`, {
+      code: TOOL_ERROR_CODE.EINVAL,
+      hint: `Read ${rel} with read_file first and check nothing still uses it. A file that is only no longer needed can stay.`,
+    });
   },
 
   async execute(args, ctx) {

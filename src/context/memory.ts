@@ -4,7 +4,7 @@ import path from 'node:path';
 import { MEMORY_VERSION, STORAGE } from '../protocol';
 import { MEMORY_BLOCK_HEADER } from '../prompts/memory';
 import { writeJsonAtomic } from '../core/config';
-import { isProjectMarker } from '../env/languages';
+import { isProjectMarker } from '../env/project-layout';
 
 const MAX_CONVENTIONS = 30;
 const MAX_FACTS = 20;
@@ -21,7 +21,13 @@ interface ProjectMemory {
   project: { name?: string; stacks: string[]; commands: Record<string, string>; initFingerprint?: string; };
   conventions: string[];
   facts: MemoryFact[];
-  agentState: { lastCwd?: string | null; lastSessionAt?: number | null; turns: number; };
+  agentState: {
+    lastCwd?: string | null;
+    lastSessionAt?: number | null;
+    turns: number;
+    /** How long each check took in each project folder, ms: what agent.afterEdit "auto" decides by. */
+    checkMs?: Record<string, number>;
+  };
 }
 
 export function memoryDirName(): string {
@@ -126,6 +132,9 @@ function normalize(parsed: any, name: string = ''): ProjectMemory {
       lastSessionAt:
         typeof parsed.agentState?.lastSessionAt === 'number' ? parsed.agentState.lastSessionAt : null,
       turns: typeof parsed.agentState?.turns === 'number' ? parsed.agentState.turns : 0,
+      checkMs: parsed.agentState?.checkMs && typeof parsed.agentState.checkMs === 'object'
+        ? Object.fromEntries(Object.entries(parsed.agentState.checkMs).filter(([, ms]) => typeof ms === 'number' && Number.isFinite(ms) && ms >= 0)) as Record<string, number>
+        : {},
     },
   };
 }

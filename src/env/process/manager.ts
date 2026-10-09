@@ -1,13 +1,13 @@
-import { killProcessTree } from './kill';
+import { killTreeSync } from './kill';
 
-/** Tracks externally-spawned children so the process-exit handler still cleans them up. */
+/** Every child ocode started that may still be running, so none outlives ocode: background jobs, checks, commands. */
 class ProcessManager {
   private external = new Set<import('node:child_process').ChildProcess>();
 
   constructor() {
     process.on('exit', () => {
       for (const child of this.external) {
-        try { killProcessTree(child); } catch {}
+        if (child.exitCode === null && child.signalCode === null) killTreeSync(child.pid);
       }
     });
   }

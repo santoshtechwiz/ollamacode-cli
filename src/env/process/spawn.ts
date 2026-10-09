@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { logger } from '../../core/logger';
 import { killProcessTree } from './kill';
+import { processManager } from './manager';
 import type { ChildOutcome, RunOptions } from './types';
 
 const DRAIN_GRACE_MS = 1_500;
@@ -25,6 +26,8 @@ export function runChild({
       windowsHide: true,
       ...(process.platform !== 'win32' ? { detached: true } : {}),
     });
+    // A command still running when ocode exits (a build mid-check) is stopped with it.
+    processManager.trackExternal(child);
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];

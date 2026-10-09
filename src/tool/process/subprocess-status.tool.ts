@@ -1,3 +1,4 @@
+import { describeListening, listeningPorts } from './analysis/listening-ports';
 import { TOOL_ERROR_CODE } from '../../protocol';
 import { defineTool } from '../core/defineTool';
 import { ok, fail } from '../core/tool-result';
@@ -18,7 +19,8 @@ export default defineTool({
   activity: 'Checking a process',
   label: 'Subprocess Status',
   description:
-    'Check whether a background subprocess is still running and read its recent stdout/stderr. ' +
+    'Check whether a background subprocess is still running, which ports it listens on, and read its recent stdout/stderr. ' +
+    'The address to give anyone is the one it says it is listening on. ' +
     'Use this after exec_shell with background: true to wait for a server to be ready or to inspect logs. ' +
     'Pass clear:true once you have read the output so the next poll returns only what is new. ' +
     'Do not poll the same id in a tight loop: if two checks show it running with no new output, stop polling and do other work instead.',
@@ -82,12 +84,16 @@ export default defineTool({
       };
     }
 
+    // A running job's ports, asked of the system: the address to give anyone is the one it really listens on.
+    const ports = sub.exited ? null : await listeningPorts(sub.process.pid);
+    const listening = describeListening(ports);
     return ok({
       kind: 'command',
       display:
         `Subprocess "${id}" ${sub.exited ? `exited (code ${sub.exitCode}${sub.signal ? `, signal ${sub.signal}` : ''})` : `running (pid ${sub.process.pid})`}\n` +
+        (listening ? `${listening}\n` : '') +
         (output || '(no output buffered)'),
-      data,
+      data: { ...data, ...(ports ? { ports } : {}) },
     });
   },
 });

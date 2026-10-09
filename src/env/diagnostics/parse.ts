@@ -1,5 +1,5 @@
 import { isEditableSource } from './paths';
-import { parseForStack } from '../languages';
+import { parseForStack } from '../parsers';
 import type { Diagnostic } from '../../types';
 
 // ESC (0x1b) built without a literal so no control character sits in source.
