@@ -81,7 +81,7 @@ export function bridgeTool(client: McpClient, tool: import('./client.ts').McpToo
     // "always". (The MCP default for destructiveHint is true, which would make every such tool ask every time.)
     risky: tool.annotations?.readOnlyHint !== true,
     ...(tool.annotations?.destructiveHint === true && tool.annotations?.readOnlyHint !== true
-      ? { confirmReason: () => 'the server marks this tool as destructive' }
+      ? { confirmReason: () => 'is marked destructive by its server' }
       : {}),
     async execute(args, ctx) {
       try {
