@@ -4,17 +4,21 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it } from 'node:test';
+import test, { describe, it } from 'node:test';
 import '../src/tool/index';
 import { runTurn } from '../src/agent/turn/turn';
 import { ContextStore } from '../src/context/store';
 import { createExecutor } from '../src/tool/execution/executor';
-import { createWorkspaceState } from '../src/context/workspace-state';
+import { createWorkspaceState, workingProject } from '../src/context/workspace-state';
 import { selectToolDefs } from '../src/context/tool-surface';
 import { reportChatTurn } from '../src/cli/chat/turn/index';
 import { STOP_REASONS } from '../src/protocol';
 import presentPlan from '../src/agent/planning/present-plan.tool';
 import todoWrite from '../src/agent/planning/todo-write.tool';
+import enterPlanMode from '../src/agent/planning/enter-plan-mode.tool';
+import { buildSystemPrompt } from '../src/prompts/system';
+import { renderToolResult } from '../src/agent/router/render';
+
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-plan-'));
 
 /** A turn whose model makes the given calls, one per step, then answers; the tools run for real. */
@@ -176,4 +180,91 @@ describe('the task list', () => {
 });
 
 describe('what the screen never shows', () => {
+});
+
+describe('enter-plan-mode', () => {
+  describe('enter_plan_mode', () => {
+
+    it('in Ask or Review mode it changes nothing', async () => {
+      const state: any = { reviewOnly: true };
+      await enterPlanMode.execute({}, { state } as any);
+      assert.equal(state.planExploring, undefined);
+    });
+  });
+});
+
+describe('plan-ask-prompt', () => {
+  test('asked for a plan in Agent mode, the model presents it, waits, and carries it out once approved', () => {
+    for (const brief of [false, true]) {
+      const prompt = buildSystemPrompt({ cwd: '/tmp/project', toolsEnabled: true, brief });
+      assert.match(prompt, /change nothing[^.]*present_plan[^.]*whether to start\.\s+If\s+they\s+approve,\s+carry\s+it\s+out\s+in\s+the\s+same\s+turn/, `brief: ${brief}`);
+      // "The plan is the whole answer" read as "stop after the plan", even once it was approved.
+      assert.doesNotMatch(prompt, /the plan is the whole answer/, `brief: ${brief}`);
+    }
+  });
+});
+
+describe('present-plan-agent', () => {
+  // present_plan shows the plan and asks whether to start, in Agent mode and in Plan mode alike.
+  const plan = 'Goal: add security headers.\nImplementation:\n1. Add helmet; File: index.js\nValidation:\n1. Run: npm test';
+
+  describe('present_plan in agent mode', () => {
+    it('asks the person whether to start, and an approval tells the model to carry it out', async () => {
+      const asked: string[] = [];
+      const state: any = {};
+      const result: any = await presentPlan.execute({ plan }, { state, ask: async (q: string, options: string[], opts: any) => { asked.push(`${opts?.detail}\n${q} [${options.join(' / ')}]`); return 'Yes, start now'; } } as any);
+      assert.equal(asked.length, 1);
+      assert.match(asked[0], /^\*\*Where:\*\* the workspace root\n\nGoal: add security headers[\s\S]*\nStart this plan now\? \[Yes, start now \/ Change something \/ Not yet\]$/, 'where, then the plan, above a one-line question');
+      assert.equal(result.data.approved, true);
+      assert.match(renderToolResult(result, 'present_plan'), /The user approved this plan\. Carry it out now/);
+    });
+
+    it('in Ask or Review mode it offers no start: the plan is the answer', async () => {
+      let asked = 0;
+      const result: any = await presentPlan.execute({ plan }, { state: { reviewOnly: true }, ask: async () => { asked += 1; return 'Yes, start now'; } } as any);
+      assert.equal(asked, 0);
+      assert.equal(result.data.approved, false);
+      assert.match(renderToolResult(result, 'present_plan'), /cannot change files.*Give the plan as your answer/);
+    });
+
+    it('an approved folder is made, and becomes where commands with no folder run once something is in it', async () => {
+      const fs = await import('node:fs');
+      const os = await import('node:os');
+      const path = await import('node:path');
+      const { createWorkspaceState, workingProject } = await import('../src/context/workspace-state');
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-plan-folder-'));
+      try {
+        const state: any = createWorkspaceState(root);
+        await presentPlan.execute({ plan, folder: 'e-hailing-service' }, { state, root, cwd: root, ask: async () => 'Yes, start now' } as any);
+        assert.ok(fs.existsSync(path.join(root, 'e-hailing-service')));
+        // Still empty: a scaffolder given the folder's name runs from the root and fills it, instead of nesting a copy.
+        assert.equal(workingProject(state), null);
+        fs.writeFileSync(path.join(root, 'e-hailing-service', 'package.json'), '{}');
+        assert.equal(workingProject(state), path.join(root, 'e-hailing-service'));
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+});
+
+describe('working-project', () => {
+  describe('where commands run when no folder is given', () => {
+    it('a project whose name matches the request is not where a new one is built', () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-wp-'));
+      try {
+        const todo = path.join(root, 'todo-app');
+        fs.mkdirSync(todo);
+        // "create a todo app": the index matched the existing todo-app, but no work has happened there.
+        assert.equal(workingProject({ root, workedProject: null, activeProject: { id: 1, root: todo, name: 'todo-app' } } as any), null);
+        // Once files are changed in a project, that is where the work is.
+        const fresh = path.join(root, 'e-hailing-service');
+        fs.mkdirSync(fresh);
+        fs.writeFileSync(path.join(fresh, 'package.json'), '{}');
+        assert.equal(workingProject({ root, workedProject: { root: fresh, name: 'e-hailing-service' } } as any), fresh);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
 });

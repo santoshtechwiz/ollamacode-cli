@@ -6,6 +6,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { detectStacks } from '../src/env/tooling/detector';
 import { OUTPUT_PARSERS } from '../src/env/parsers';
+import { eslintFiles, frameworksOf } from '../src/env/frameworks';
 
 function project(files: Record<string, string>): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-lang-'));
@@ -80,4 +81,31 @@ describe('the OUTPUT_PARSERS registry', () => {
       assert.ok(match, `${c.parser} found ${JSON.stringify(found)}`);
     });
   }
+});
+
+describe('frameworks', () => {
+  // Front-end frameworks are rows in one table: detected from package.json, they name the stack and widen what ESLint reads.
+  const labels = (deps: Record<string, string>, dev: Record<string, string> = {}) => frameworksOf({ dependencies: deps, devDependencies: dev }).map((f) => f.label);
+
+  describe('frameworksOf', () => {
+    it('names the most specific framework, not the one it is built on', () => {
+      assert.deepEqual(labels({ next: '16', react: '19' }), ['Next.js']);
+      assert.deepEqual(labels({ nuxt: '3', vue: '3' }), ['Nuxt']);
+      assert.deepEqual(labels({}, { '@sveltejs/kit': '2', svelte: '5' }), ['SvelteKit']);
+      assert.deepEqual(labels({ react: '19' }), ['React']);
+      assert.deepEqual(labels({ '@angular/core': '20' }), ['Angular']);
+      assert.deepEqual(labels({ express: '5' }), []);
+    });
+  });
+
+  describe('eslintFiles', () => {
+    it('lints scripts, and a framework\'s own files only when its ESLint plugin is installed', () => {
+      assert.equal(eslintFiles({ dependencies: { vue: '3' } }), undefined, 'no ESLint, nothing to run');
+      const plain = eslintFiles({ dependencies: { vue: '3' }, devDependencies: { eslint: '9' } })!;
+      assert.deepEqual(plain.argv, ['npx', 'eslint']);
+      assert.equal(plain.extensions.includes('.vue'), false);
+      const withPlugins = eslintFiles({ devDependencies: { eslint: '9', 'eslint-plugin-vue': '9', 'angular-eslint': '20' } })!;
+      assert.ok(withPlugins.extensions.includes('.vue') && withPlugins.extensions.includes('.html') && withPlugins.extensions.includes('.tsx'));
+    });
+  });
 });

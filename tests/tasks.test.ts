@@ -7,13 +7,14 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import todoWrite from '../src/agent/planning/todo-write.tool';
 import presentPlan from '../src/agent/planning/present-plan.tool';
-import { createWorkspaceState, notePassed, passedNow } from '../src/context/workspace-state';
-import { describeSession } from '../src/context/workspace-state';
+import { createWorkspaceState, notePassed, passedNow, describeSession } from '../src/context/workspace-state';
 import { ToolExecutor } from '../src/tool/core/tool-runtime';
 import { reportChatTurn } from '../src/cli/chat/turn/index';
 import { runTurn } from '../src/agent/turn/turn';
 import { ContextStore } from '../src/context/store';
 import { STOP_REASONS } from '../src/protocol';
+import '../src/tool/index';
+import { prepareCall } from '../src/tool/execution/prepare';
 
 const write = (state: any, args: Record<string, unknown>) => todoWrite.execute(args, { state } as any) as Promise<any>;
 const names = (state: any) => state.todos.map((t: any) => `${t.status}: ${t.content}`);
@@ -260,5 +261,41 @@ describe('an answer over open tasks after changing files', () => {
     const t = await turn([{ toolCalls: [LIST] }, { toolCalls: [EDIT] }, { content: 'All done.' }, { content: 'All done, really.' }]);
     assert.equal(t.requests.length, 4);
     assert.equal(t.result.answer, 'All done, really.');
+  });
+});
+
+describe('task-list-shown', () => {
+  const LIST = [
+    { content: 'Implement the Result pattern', status: 'completed' as const },
+    { content: 'Validate configuration on start', status: 'in_progress' as const },
+    { content: 'Test UserService', status: 'pending' as const },
+  ];
+
+  describe('the task list', () => {
+
+    it('the session record shows the model its list every request', () => {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-todos-'));
+      try {
+        const state: any = createWorkspaceState(cwd);
+        state.todos = LIST;
+        assert.match(describeSession(state), /Your task list.*\n\[x\] Implement the Result pattern\n\[~\] Validate configuration on start\n\[ \] Test UserService/);
+        state.reset?.();
+      } finally {
+        fs.rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+      }
+    });
+  });
+});
+
+describe('array-item-errors', () => {
+  const errorOf = (name: string, args: Record<string, unknown>) => {
+    const r: any = prepareCall(name, args);
+    return r.ok ? null : String(r.result.error);
+  };
+
+  describe('a wrong list item says what an item is, from the schema', () => {
+    it('an object item names its fields and what was sent', () => {
+      assert.equal(errorOf('todo_write', { todos: ['Install deps'] }), 'todos[0] must be an object {content, status}, received a string');
+    });
   });
 });
