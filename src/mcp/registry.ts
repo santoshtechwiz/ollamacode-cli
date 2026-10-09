@@ -76,13 +76,12 @@ export function bridgeTool(client: McpClient, tool: import('./client.ts').McpToo
     label: `${client.name}: ${tool.name}`,
     description: `[MCP:${client.name}] ${tool.description ?? tool.name}`,
     parameters: schema,
-    // A tool the server declares read-only changes nothing, so it is not asked about; one it declares destructive
-    // is asked about every time, like a delete. Without a declaration it stays risky: asked once, coverable by
-    // "always". (The MCP default for destructiveHint is true, which would make every such tool ask every time.)
+    // A tool the server declares read-only changes nothing, so it is not asked about. One it declares destructive is
+    // asked about until the person allows that server's tools for the session: asked every time, a browser server's
+    // every click and key press waited for a yes. "Always allow routine changes" does not cover it. Without a
+    // declaration it stays risky: asked once, coverable by "always". (The MCP default for destructiveHint is true.)
     risky: tool.annotations?.readOnlyHint !== true,
-    ...(tool.annotations?.destructiveHint === true && tool.annotations?.readOnlyHint !== true
-      ? { confirmReason: () => 'is marked destructive by its server' }
-      : {}),
+    ...(tool.annotations?.destructiveHint === true && tool.annotations?.readOnlyHint !== true ? { grantGroup: client.name } : {}),
     async execute(args, ctx) {
       try {
         // A server that stopped is started again, a bounded number of times, before its tool is called.

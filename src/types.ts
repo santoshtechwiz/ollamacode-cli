@@ -75,6 +75,11 @@ export interface ToolDef {
   shellCommand?: string;
   /** What this call would destroy that no standing approval may cover, or null. */
   dangerReason?: (args: any, where: { cwd: string; root: string }) => string | null;
+  /**
+   * A group whose own "always" is the only standing approval that covers this tool (an MCP server's tools). The session's
+   * "always allow routine changes" does not: the server says the tool changes things ocode cannot see.
+   */
+  grantGroup?: string;
   /** Why this call is asked about every time, even after "always allow" — recoverable but consequential (deletes, git writes). */
   /** `state` is the session's, when the asker has it: what a call would do can depend on it (the working project). */
   confirmReason?: (args: any, where: { cwd: string; root: string; state?: any }) => string | null;
