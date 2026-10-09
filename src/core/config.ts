@@ -112,6 +112,9 @@ export const DEFAULTS = Object.freeze({
     thinking: (THINKING_MODE.AUTO as ThinkingMode),
     memory: { enabled: true, maxChars: undefined },
     subagents: true,
+    // Before the agent says it is done with changed files, ocode checks the work itself (see agent/turn/check-plan.ts):
+    // a model's "the site is ready" was too often unchecked. "off" turns it off; a verb list or a command replaces it.
+    beforeDone: 'auto' as string,
   },
 });
 

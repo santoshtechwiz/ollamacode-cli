@@ -8,8 +8,10 @@ import { ROLE, TOOL_ERROR_CODE, TOOL_NAME } from '../../protocol';
 import { holdsProjectMarker, projectFolderOf as nearestProjectFolder } from '../../env/project-layout';
 import { CHECK_VERBS, type Verb } from '../../env/languages';
 import { detectStacks } from '../../env/tooling/detector';
-import { autoVerbs, type CheckPhase } from './check-plan';
+import { autoSteps, PAGE, type CheckPhase, type Step } from './check-plan';
+import { checkPages } from './page-check';
 import { passedSinceChange } from '../../context/workspace-state';
+import { loadMemory, updateMemory } from '../../context/memory';
 import type { ToolExecutor } from '../../tool/execution/executor';
 import type { TurnCallbacks } from './turn';
 
@@ -35,14 +37,20 @@ export function projectFolderOf(root: string, rel: string): string {
 
 /** A project's own command, by name: "check", "build", "test" or "lint" is the one ocode detected for its stack. */
 const isCheckVerb = (word: string): word is Verb => (CHECK_VERBS as readonly string[]).includes(word);
+/** A word a setting can name: a project's check, or its page opened in a browser. */
+const isStep = (word: string): word is Step => word === PAGE || isCheckVerb(word);
+
+/** The setting that turns a check off; agent.beforeDone is "auto" unless set. */
+export const OFF = 'off';
 
 /**
- * The commands a setting names: words that are all verbs ("check lint") are one command each, run in that order;
- * anything else is one command as written ("npm test", "pytest -q").
+ * The commands a setting names: words that are all steps ("check lint page") are one each, run in that order;
+ * anything else is one command as written ("npm test", "pytest -q"). "off" names none.
  */
 export function checkCommands(setting: string): string[] {
   const words = setting.trim().split(/\s+/).filter(Boolean);
-  return words.length > 0 && words.every(isCheckVerb) ? words : setting.trim() ? [setting.trim()] : [];
+  if (words.length === 1 && words[0] === OFF) return [];
+  return words.length > 0 && words.every(isStep) ? words : setting.trim() ? [setting.trim()] : [];
 }
 
 /**
@@ -70,11 +78,34 @@ export const AUTO = 'auto';
  * commands passed on the files as they are now (workspace-state notePassed), whoever ran them.
  */
 export interface CheckMemory {
-  /** Last duration of a verb in a project folder, ms; key `${folder}\0${verb}`. */
+  /**
+   * Last duration of a verb in a project folder, ms; key `${folder}\0${verb}`. Read from the project's memory the first
+   * time a session needs it and written back after each run, so auto knows a slow check from the first edit of the next
+   * session too, instead of finding out again.
+   */
   checkMs?: Record<string, number>;
   root?: string;
   changeSeq?: number;
   passedAt?: Record<string, number>;
+  /** The session's background jobs: a dev server already running for a project serves its page check. */
+  subprocesses?: Map<string, { cwd: string; pid?: number; exited?: boolean; error?: string }>;
+}
+
+/** The check durations this session knows: the project's remembered ones until a check runs here. */
+function knownDurations(memory: CheckMemory, root: string): Record<string, number> {
+  if (!memory.checkMs) {
+    let remembered: Record<string, number> = {};
+    try { remembered = loadMemory(root).agentState.checkMs ?? {}; } catch { /* none */ }
+    memory.checkMs = { ...remembered };
+  }
+  return memory.checkMs;
+}
+
+function rememberDuration(memory: CheckMemory, root: string, key: string, ms: number): void {
+  knownDurations(memory, root)[key] = ms;
+  try {
+    updateMemory(root, (mem) => { mem.agentState.checkMs = { ...mem.agentState.checkMs, [key]: ms }; });
+  } catch { /* a read-only project still runs its checks */ }
 }
 
 /**
@@ -87,8 +118,11 @@ const AFTER_EDIT_TIMEOUT_MS = 90_000;
 const BEFORE_DONE_TIMEOUT_MS = 300_000;
 
 export interface CheckRun {
-  /** The tool call made, as the model and the person see it. */
-  args: { command: string; cwd?: string; timeout_ms: number };
+  /** The tool call made, as the model and the person see it: exec_shell for a command, check_page for a page. */
+  tool: string;
+  args: Record<string, unknown>;
+  /** How the person reads it: the command, or the page opened. */
+  label: string;
   result: import('../../types.ts').ToolResult;
   passed: boolean;
   /** It ran out of time or was moved to the background: its result is not known. */
@@ -124,16 +158,34 @@ async function runChecks({ command, phase, memory, setting, name, timeoutMs, roo
   const notes: string[] = [];
   const runs: CheckRun[] = [];
   for (const [folder, allFiles] of byFolder) {
+    if (signal?.aborted) break;
     const where = folder ? ` in ${folder}` : '';
     const files = allFiles.filter((f) => fs.existsSync(path.resolve(root, folder, f)));
     const stacks = await detectStacks(path.resolve(root, folder)).catch((): import('../../types.ts').StackInfo[] => []);
     const timeKey = (verb: string) => `${folder}\u0000${verb}`;
-    const verbs = auto
-      ? [...new Set(stacks.flatMap((stack) => autoVerbs(phase, stack, files, (verb) => memory?.checkMs?.[timeKey(verb)])))]
+    const steps = auto
+      ? autoSteps(phase, stacks, files, (verb) => (memory ? knownDurations(memory, root)[timeKey(verb)] : undefined))
       : checkCommands(command);
     // Two words can name one command (Go's check and lint are both go vet): it runs once per folder.
     const ran = new Set<string>();
-    for (const each of verbs) {
+    const folderRuns: CheckRun[] = [];
+    for (const each of steps) {
+      // Stopped (Ctrl+C): nothing more starts.
+      if (signal?.aborted) break;
+      if (each === PAGE) {
+        // A page is worth opening once the project's own checks pass: a failing build is what to fix first.
+        if (folderRuns.some((r) => !r.passed)) continue;
+        for (const page of await checkPages({ root, folder, files, stacks, jobs: memory?.subprocesses, toolRunner, callbacks, signal })) {
+          const note = page.unfinished
+            ? `${name} ${page.label}${where} (${setting}) could not run: ${page.result.error ?? 'unknown reason'}; the page is unchecked.`
+            : page.passed
+              ? `${name} ${page.label}${where} (${setting}) passed.`
+              : `${name} ${page.label}${where} (${setting}) failed:\n${String(page.result.display ?? page.result.error ?? '').trim()}`;
+          notes.push(note);
+          runs.push({ ...page, note });
+        }
+        continue;
+      }
       const run = projectCommand(each, stacks, files);
       if (run === '' || (run && ran.has(run))) continue;
       if (!run) {
@@ -146,7 +198,9 @@ async function runChecks({ command, phase, memory, setting, name, timeoutMs, roo
       if (memory?.root && passedSinceChange(memory as { root: string }, path.resolve(root, folder), run)) {
         const note = `${name} \`${run}\`${where} (${setting}) already passed after the last change; not run again.`;
         notes.push(note);
-        runs.push({ args, result: { ok: true, kind: 'command' }, passed: true, unfinished: false, note });
+        const skipped: CheckRun = { tool: TOOL_NAME.EXEC_SHELL, args, label: run, result: { ok: true, kind: 'command' }, passed: true, unfinished: false, note };
+        runs.push(skipped);
+        folderRuns.push(skipped);
         continue;
       }
       callbacks.onToolStart?.(TOOL_NAME.EXEC_SHELL, args);
@@ -159,9 +213,9 @@ async function runChecks({ command, phase, memory, setting, name, timeoutMs, roo
       const timedOut = result.code === TOOL_ERROR_CODE.ETIMEDOUT;
       const unfinished = Boolean(data?.background) || timedOut;
       const passed = !unfinished && result.ok && (exit === undefined || exit === 0);
-      if (memory && isCheckVerb(each)) {
+      if (memory && isCheckVerb(each) && !signal?.aborted) {
         // A check that ran out of time took at least that long: it is not fast, whatever it would have taken.
-        (memory.checkMs ??= {})[timeKey(each)] = unfinished ? Math.max(durationMs ?? 0, timeoutMs) : durationMs ?? 0;
+        rememberDuration(memory, root, timeKey(each), unfinished ? Math.max(durationMs ?? 0, timeoutMs) : durationMs ?? 0);
       }
       const note = data?.background
         ? `${name} \`${run}\`${where} (${setting}) did not finish: it kept running, so it was moved to the background${data.id ? ` as ${data.id}` : ''}; its result is not known.`
@@ -171,7 +225,9 @@ async function runChecks({ command, phase, memory, setting, name, timeoutMs, roo
           ? `${name} \`${run}\`${where} (${setting}) passed.`
           : `${name} \`${run}\`${where} (${setting}) failed${exit !== undefined ? ` with exit ${exit}` : ''}:\n${output}`;
       notes.push(note);
-      runs.push({ args, result, passed, unfinished, note });
+      const done: CheckRun = { tool: TOOL_NAME.EXEC_SHELL, args, label: run, result, passed, unfinished, note };
+      runs.push(done);
+      folderRuns.push(done);
     }
   }
   return { notes, runs };

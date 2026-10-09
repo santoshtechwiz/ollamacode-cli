@@ -1,5 +1,5 @@
 import { defineTool } from '../tool/core/defineTool';
-import { killProcessTree } from '../env/process/index';
+import { killTreeSync } from '../env/process/index';
 import { ok, fail } from '../tool/core/tool-result';
 import { mcpServersConfig } from '../core/config';
 import { logger } from '../core/logger';
@@ -233,9 +233,6 @@ export async function closeMcpServers() {
 process.on('exit', () => {
   for (const client of connected) {
     if (!client.child) continue;
-    try {
-      killProcessTree(client.child);
-    } catch {
-    }
+    if (client.child.exitCode === null && client.child.signalCode === null) killTreeSync(client.child.pid);
   }
 });

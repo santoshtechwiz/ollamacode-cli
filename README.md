@@ -267,6 +267,12 @@ it ends, its output shows up in the chat and goes to the agent on its own; you
 don't need to type anything. A long command asks after 2 minutes whether to keep
 waiting.
 
+Everything ocode started stops when ocode does: background servers, a check
+still running, MCP servers. That includes `/exit`, Ctrl+C twice, and closing
+the terminal window, so a dev server never outlives the session holding its
+port. Only a process killed from outside (Task Manager, `kill -9`) cannot clean
+up after itself.
+
 ### Checks after every edit
 
 Have ocode check the agent's work whenever it changes files, so it cannot say "done" over code that does not build:
@@ -316,11 +322,11 @@ configured it.
 
 ### Letting ocode choose the checks
 
-The easiest setting is `auto`, for both:
+`agent.beforeDone` is `auto` unless you set it: when the agent answers after changing files, ocode checks the work
+before the answer counts as done. It can be set for after each edit too:
 
 ```sh
 ocode config set agent.afterEdit auto
-ocode config set agent.beforeDone auto
 ```
 
 ocode then decides from what changed, what the project is, and how long each check took in this project before:
@@ -330,10 +336,19 @@ ocode then decides from what changed, what the project is, and how long each che
 | After an edit | only checks that took under 10 seconds here last time (a fast type check, lint on the changed files); a slow one waits for the end |
 | Before "done" | a framework whose build checks more than types (Next.js, Nuxt, Angular, SvelteKit, Astro, Remix): lint on the changed files, then the build, which includes the type check |
 | | any other project: the type check when code changed, and lint on the changed files |
+| | then, for a web front end (a framework above, React, Vue or Svelte, with a `dev` script), its page: see below |
+| | a site with no project around it: its changed `.html` files, opened with `check_page` |
 | | nothing when only documentation changed, and never a check that already passed on the same files |
 
-The first turn in a session runs everything at the end; once ocode knows what is fast, those checks also run after
-each edit. A dev server is never started as a check: it is for looking at the page with `check_page`.
+How long each check took is kept in the project's `.ocode/memory.json`, so the next session knows what is fast from
+its first edit. A project ocode has never checked runs everything at the end the first time.
+
+The page check opens the page the way you will: in the session's dev server for that project, or, when none is
+running, one it starts in the background (it stays running for you, and stops with ocode). The address is the port
+the system says the server listens on, never one guessed from its output. `check_page` then loads it at mobile,
+tablet, desktop and dark mode. A script error, a failed request or sideways scrolling sends the agent back to fix
+it; accessibility advice is reported without holding the answer back. It runs only after the build passed, and
+without a browser installed it is reported as unchecked, not failed.
 
 ### A check before "done"
 
@@ -348,7 +363,8 @@ ocode config set agent.beforeDone build
 It runs only when files changed since it last ran, in each changed project's folder, and takes the same words
 (`check`, `build`, `test`, `lint`, several at once) or a command of your own. If it fails, the agent reads the
 failure and keeps working instead of saying "done"; when it can't fix it and changes nothing more, its answer
-stands, so a failure it can't fix never loops. `ocode config unset agent.beforeDone` turns it off.
+stands, so a failure it can't fix never loops. `ocode config set agent.beforeDone off` turns it off. Add `page` to
+the words to open the page too (`"build page"`).
 
 Each check has a time limit: 90 seconds after an edit, 5 minutes before "done". A check that runs out of time is
 stopped and reported as unfinished, not as a failure the agent must fix. `ocode config set agent.checkTimeoutMs

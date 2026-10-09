@@ -66,5 +66,6 @@ Follow these steps in order. Change only what makes the UI more consistent or ea
    - Give the person only an address the result or subprocess_status says it is listening on. "Not listening on any port yet" means check again; never guess a port.
    - check_page cannot see states it does not reach: check loading, empty and error states by reading the code.
    - Say only what you checked. Do not call a page responsive or accessible unless check_page passed.
+   - When you answer, ocode itself checks the project (its build or type check, then its page) with agent.beforeDone: what fails comes back to you. Checking first saves that round.
 
 When you report, list what you changed with file and line, and what you left as suggestions.

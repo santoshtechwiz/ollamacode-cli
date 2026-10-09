@@ -8,6 +8,13 @@ import type { StackInfo } from '../../types';
 
 export type CheckPhase = 'edit' | 'done';
 
+/** Opening the project's page in a browser (check_page), the way a person would see the work: not a project command. */
+export const PAGE = 'page';
+export type Step = Verb | typeof PAGE;
+
+/** Pages a browser opens straight from disk: a site with no dev server is checked through these files. */
+const PAGE_EXTENSIONS = new Set(['.html', '.htm']);
+
 /** A check that took longer than this last time waits for the end of the turn instead of running after each edit. */
 export const FAST_CHECK_MS = 10_000;
 
@@ -46,3 +53,21 @@ export function autoVerbs(phase: CheckPhase, stack: StackInfo, files: string[], 
     return ms !== undefined && ms < FAST_CHECK_MS;
   });
 }
+
+/**
+ * Everything auto runs in one project folder, in order: each stack's verbs, then, once before "done", its page when
+ * the project is a web front end (a framework ocode knows and a dev script that serves it) or, with no project around
+ * them, changed .html files. The page comes last: it is worth opening only once the build passes.
+ */
+export function autoSteps(phase: CheckPhase, stacks: StackInfo[], files: string[], lastMs: (verb: Verb) => number | undefined): Step[] {
+  const steps: Step[] = [...new Set(stacks.flatMap((stack) => autoVerbs(phase, stack, files, lastMs)))];
+  if (phase !== 'done') return steps;
+  const touchesProject = files.some((f) => !DOC_EXTENSIONS.has(extOf(f)));
+  const servesPages = stacks.some((stack) => stack.dev && stack.frameworks?.length);
+  const staticPages = stacks.length === 0 && files.some((f) => PAGE_EXTENSIONS.has(extOf(f)));
+  if ((servesPages && touchesProject) || staticPages) steps.push(PAGE);
+  return steps;
+}
+
+/** The changed files a browser can open as they are, for a site with no dev server. */
+export const pageFiles = (files: string[]): string[] => files.filter((f) => PAGE_EXTENSIONS.has(extOf(f)));

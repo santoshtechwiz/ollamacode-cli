@@ -131,11 +131,11 @@ function recordTelemetry(
 const CHECKING_STATUS = 'Checking the work before finishing';
 
 /** What the person reads once agent.beforeDone has run, under the answer it checked. */
-function doneCheckNote(runs: Array<{ args: { command: string }; passed: boolean; unfinished: boolean }>, failed: boolean): [string, 'warn' | 'success'] | null {
-  const names = (list: typeof runs) => list.map((r) => `\`${r.args.command}\``).join(', ');
+function doneCheckNote(runs: Array<{ label: string; passed: boolean; unfinished: boolean }>, failed: boolean): [string, 'warn' | 'success'] | null {
+  const names = (list: typeof runs) => list.map((r) => `\`${r.label}\``).join(', ');
   if (failed) return [`Not done yet: ${names(runs.filter((r) => !r.passed && !r.unfinished))} failed after that answer, so the agent keeps working on what it reports.`, 'warn'];
   const unfinished = runs.filter((r) => r.unfinished);
-  if (unfinished.length) return [`Checked before finishing: ${names(unfinished)} did not finish in time, so that part of the answer is unchecked.`, 'warn'];
+  if (unfinished.length) return [`Checked before finishing: ${names(unfinished)} could not finish, so that part of the answer is unchecked.`, 'warn'];
   return runs.length ? [`Checked before finishing: ${names(runs)} passed.`, 'success'] : null;
 }
 
@@ -264,7 +264,8 @@ export async function runTurn(
   const world = (): number => Number(workspaceState?.mutationCount ?? 0);
 
   // agent.beforeDone runs when the model answers, on the files changed since it last ran (from the turn's start).
-  const beforeDone = typeof config.beforeDone === 'string' ? config.beforeDone.trim() : '';
+  // A subagent's work is checked with the rest of the turn, when the agent that answers the person says it is done.
+  const beforeDone = typeof config.beforeDone === 'string' && !params.subagentDepth ? config.beforeDone.trim() : '';
   let doneMark = changeMark(workspaceState);
   // How long a configured check may run; unset, each kind keeps its own default.
   const checkTimeoutMs = Number(config.checkTimeoutMs) > 0 ? Number(config.checkTimeoutMs) : undefined;
@@ -373,7 +374,7 @@ export async function runTurn(
         if (failed.length > 0) {
           const limit = Number(config.maxToolOutput) || 8000;
           failed.forEach((run, k) => {
-            const call = { id: '', type: 'function' as const, function: { name: TOOL_NAME.EXEC_SHELL, arguments: run.args } };
+            const call = { id: '', type: 'function' as const, function: { name: run.tool, arguments: run.args } };
             const result = { ...run.result, modelNote: [run.result.modelNote, BEFORE_DONE_FAILED].filter(Boolean).join('\n') };
             recordExchange(history, call, result, limit, k === 0 ? reply.content : '');
           });
