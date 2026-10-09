@@ -97,7 +97,7 @@ describe('use_skill', () => {
     const r = await run({ name: 'ui-ux' });
     assert.equal(r.ok, true, r.error);
     assert.match(r.display, /^Follow these steps in order\./);
-    assert.match(r.display, /Files in this skill \(read one with use_skill file\): tokens\.css$/);
+    assert.match(r.display, /Files in this skill \(read one with use_skill file\): motion\.css, tokens\.css$/);
   });
 
   it('reads one of the skill\'s files', async () => {
@@ -109,7 +109,7 @@ describe('use_skill', () => {
   it('names what exists when asked for something that does not', async () => {
     const noFile = await run({ name: 'ui-ux', file: '../../package.json' });
     assert.equal(noFile.ok, false);
-    assert.match(noFile.hint, /Its files: tokens\.css/);
+    assert.match(noFile.hint, /Its files: motion\.css, tokens\.css/);
   });
 });
 
