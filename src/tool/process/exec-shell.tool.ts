@@ -14,7 +14,7 @@ import { executeShell } from './execution/execute';
 import { runsToEnd } from './analysis/runs-to-end';
 import { detachReason } from './analysis/detach';
 import { projectDirsIn, projectFolderOf } from '../../env/project-layout';
-import { noteWorkIn } from '../../context/workspace-state';
+import { notePassed, noteWorkIn } from '../../context/workspace-state';
 import { parseShellDiagnostics } from './analysis/diagnostics';
 import { formatOutput } from './output/presentation';
 import { runInBackground, keepServingInBackground, SERVING } from './background';
@@ -205,6 +205,7 @@ export default defineTool({
     if (execution.exitCode === 0) {
       // A passing build, test, lint or type-check checks every change made before it.
       if (endsOnItsOwn && ctx?.state) ctx.state.verifiedAt = ctx.state.changeSeq ?? 0;
+      notePassed(ctx?.state, request.cwd, command);
       return ok({
         kind: 'command',
         display: presentation,

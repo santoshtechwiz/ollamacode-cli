@@ -10,6 +10,7 @@ import { ContextStore } from '../src/context/store';
 import { ROLE } from '../src/protocol';
 import { autoVerbs, FAST_CHECK_MS } from '../src/agent/turn/check-plan';
 import type { StackInfo } from '../src/types';
+import { createWorkspaceState, notePassed, passedSinceChange } from '../src/context/workspace-state';
 
 const ESLINT = { argv: ['npx', 'eslint'], extensions: ['.ts', '.tsx', '.js'] };
 const next: StackInfo = { id: 'node', label: 'TypeScript', root: '.', frameworks: ['Next.js'], check: ['tsc'], build: ['npm', 'run', 'build'], fileScoped: { lint: ESLINT } };
@@ -74,12 +75,15 @@ async function turn(root: string, state: any, replies: any[], durations: Record<
         if (name === 'write_file') {
           fs.writeFileSync(path.join(root, args.path), String(args.content));
           state.changes = [...state.changes, { path: args.path }];
+          state.changeSeq = (state.changeSeq ?? 0) + 1;
           state.mutationCount += 1;
           ran.push('write_file');
           return { result: { ok: true, kind: 'text', display: 'ok' } };
         }
         const verb = /eslint/.test(args.command) ? 'lint' : /build/.test(args.command) ? 'build' : 'check';
         ran.push(`${verb}: ${args.command}`);
+        // As exec_shell does: a passing command is recorded against the files as they are now.
+        notePassed(state, path.resolve(root, args.cwd ?? '.'), args.command);
         return { result: { ok: true, kind: 'command', display: 'ok', data: { execution: { exitCode: 0 } } }, durationMs: durations[verb] };
       },
     } as any,
@@ -89,10 +93,46 @@ async function turn(root: string, state: any, replies: any[], durations: Record<
 
 const write = (id: string, file: string) => ({ toolCalls: [{ id, type: 'function', function: { name: 'write_file', arguments: { path: file, content: id } } }] });
 
+describe('passedSinceChange', () => {
+  it('holds until any file changes, the same file edited again included', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-passed-'));
+    try {
+      const state: any = createWorkspaceState(root);
+      state.note('write', 'site/a.ts', 'file');
+      notePassed(state, path.join(root, 'site'), 'npm run build');
+      assert.equal(passedSinceChange(state, path.join(root, 'site'), 'npm run build'), true);
+      assert.equal(passedSinceChange(state, path.join(root, 'other'), 'npm run build'), false, 'another folder');
+      assert.equal(passedSinceChange(state, path.join(root, 'site'), 'npm test'), false, 'another command');
+      state.note('write', 'site/a.ts', 'file');
+      assert.equal(passedSinceChange(state, path.join(root, 'site'), 'npm run build'), false, 'the same file again is a change');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('a check the model already ran', () => {
+  it('is not run again before done when it passed with nothing changed since', async () => {
+    const root = project();
+    const state: any = { root, changes: [], mutationCount: 0, changeSeq: 0 };
+    try {
+      const ran = await turn(root, state, [
+        write('1', 'site/src/page.tsx'),
+        { toolCalls: [{ id: 'b', type: 'function', function: { name: 'exec_shell', arguments: { command: 'npm run build', cwd: 'site' } } }] },
+        { content: 'Done: the build passes.' },
+      ], { lint: 4_000, build: 110_000 });
+      assert.deepEqual(ran, ['ask model', 'write_file', 'ask model', 'build: npm run build', 'ask model', 'lint: npx eslint src/page.tsx'],
+        'the model\'s own passing build counts; only lint, which it did not run, runs before done');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('auto in a session', () => {
   it('checks once at the end at first, then after edits only what proved fast, and never repeats a check that passed on the same files', async () => {
     const root = project();
-    const state: any = { root, changes: [], mutationCount: 0 };
+    const state: any = { root, changes: [], mutationCount: 0, changeSeq: 0 };
     try {
       const first = await turn(root, state, [write('1', 'site/src/page.tsx'), { content: 'Done.' }], { lint: 4_000, build: 110_000 });
       assert.deepEqual(first, ['ask model', 'write_file', 'ask model', 'lint: npx eslint src/page.tsx', 'build: npm run build'],

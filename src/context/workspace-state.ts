@@ -73,6 +73,8 @@ export interface WorkspaceState {
   changeSeq?: number;
   turnStartChanges?: number;
   verifiedAt?: number;
+  /** The change count each command last passed at, by folder (see notePassed): a passing run is good until a change. */
+  passedAt?: Record<string, number>;
   /** The project this conversation last changed files in (the nearest folder with a project marker), kept by the system. */
   workedProject?: { root: string; name: string } | null;
   index: import('./workspace-index/_shared.ts').IndexHandle | null;
@@ -259,6 +261,21 @@ export function replaceSession(state: WorkspaceState, id: string, reason: string
 export function uncheckedChanges(state: Pick<WorkspaceState, 'changes' | 'verifiedAt' | 'turnStartChanges'>, { thisTurn = false } = {}): FsChange[] {
   const after = Math.max(Number(state.verifiedAt ?? 0), thisTurn ? Number(state.turnStartChanges ?? 0) : 0);
   return (state.changes ?? []).filter((c) => Number(c.seq ?? 0) > after);
+}
+
+const passedKey = (root: string, cwd: string, command: string) =>
+  `${path.relative(path.resolve(root), path.resolve(cwd)).split(path.sep).join('/')}\u0000${command.trim()}`;
+
+/** A command exited 0 in this folder: it holds for the files as they are now, whoever ran it (the model or a check). */
+export function notePassed(state: Pick<WorkspaceState, 'root' | 'changeSeq' | 'passedAt'> | null | undefined, cwd: string, command: string): void {
+  if (!state?.root) return;
+  (state.passedAt ??= {})[passedKey(state.root, cwd, command)] = Number(state.changeSeq ?? 0);
+}
+
+/** Whether this command already passed in this folder with no file changed since. */
+export function passedSinceChange(state: Pick<WorkspaceState, 'root' | 'changeSeq' | 'passedAt'> | null | undefined, cwd: string, command: string): boolean {
+  if (!state?.root) return false;
+  return state.passedAt?.[passedKey(state.root, cwd, command)] === Number(state.changeSeq ?? 0);
 }
 
 /** Work happened in this project folder (absolute): it becomes the working project, unless it is the workspace root. */

@@ -9,6 +9,7 @@ import { holdsProjectMarker, projectFolderOf as nearestProjectFolder } from '../
 import { CHECK_VERBS, type Verb } from '../../env/languages';
 import { detectStacks } from '../../env/tooling/detector';
 import { autoVerbs, type CheckPhase } from './check-plan';
+import { passedSinceChange } from '../../context/workspace-state';
 import type { ToolExecutor } from '../../tool/execution/executor';
 import type { TurnCallbacks } from './turn';
 
@@ -64,13 +65,16 @@ function projectCommand(command: string, stacks: import('../../types.ts').StackI
 /** The setting that lets ocode choose the checks (see check-plan.ts). */
 export const AUTO = 'auto';
 
-/** What a session remembers about its checks: how long each took per project, and which passed on the current files. */
+/**
+ * What a session knows about its checks: how long each took per project (for auto), and, through exec_shell, which
+ * commands passed on the files as they are now (workspace-state notePassed), whoever ran them.
+ */
 export interface CheckMemory {
   /** Last duration of a verb in a project folder, ms; key `${folder}\0${verb}`. */
   checkMs?: Record<string, number>;
-  /** The change count a command last passed at; key `${folder}\0${command}`. */
-  checkPassedAt?: Record<string, number>;
-  changes?: unknown[];
+  root?: string;
+  changeSeq?: number;
+  passedAt?: Record<string, number>;
 }
 
 /**
@@ -117,8 +121,6 @@ async function runChecks({ command, phase, memory, setting, name, timeoutMs, roo
     byFolder.set(folder, [...(byFolder.get(folder) ?? []), ...(rel === '.' ? [] : [inFolder])]);
   }
   const auto = command.trim() === AUTO;
-  // The files as they are now: a check that passed on them need not run again until something changes.
-  const stamp = memory?.changes?.length;
   const notes: string[] = [];
   const runs: CheckRun[] = [];
   for (const [folder, allFiles] of byFolder) {
@@ -139,8 +141,14 @@ async function runChecks({ command, phase, memory, setting, name, timeoutMs, roo
         continue;
       }
       ran.add(run);
-      if (auto && stamp !== undefined && memory?.checkPassedAt?.[timeKey(run)] === stamp) continue;
       const args = folder ? { command: run, cwd: folder, timeout_ms: timeoutMs } : { command: run, timeout_ms: timeoutMs };
+      // Already passed on the files as they are now (the model ran the build itself after its last fix): not again.
+      if (memory?.root && passedSinceChange(memory as { root: string }, path.resolve(root, folder), run)) {
+        const note = `${name} \`${run}\`${where} (${setting}) already passed after the last change; not run again.`;
+        notes.push(note);
+        runs.push({ args, result: { ok: true, kind: 'command' }, passed: true, unfinished: false, note });
+        continue;
+      }
       callbacks.onToolStart?.(TOOL_NAME.EXEC_SHELL, args);
       const { result, durationMs } = await toolRunner.run(TOOL_NAME.EXEC_SHELL, args, { signal, approve: async () => true });
       callbacks.onToolResult?.(TOOL_NAME.EXEC_SHELL, args, result);
@@ -155,7 +163,6 @@ async function runChecks({ command, phase, memory, setting, name, timeoutMs, roo
         // A check that ran out of time took at least that long: it is not fast, whatever it would have taken.
         (memory.checkMs ??= {})[timeKey(each)] = unfinished ? Math.max(durationMs ?? 0, timeoutMs) : durationMs ?? 0;
       }
-      if (memory && passed && stamp !== undefined) (memory.checkPassedAt ??= {})[timeKey(run)] = stamp;
       const note = data?.background
         ? `${name} \`${run}\`${where} (${setting}) did not finish: it kept running, so it was moved to the background${data.id ? ` as ${data.id}` : ''}; its result is not known.`
         : timedOut
