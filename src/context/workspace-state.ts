@@ -6,7 +6,7 @@ import { classifyFailure, EPHEMERAL_SESSION } from '../protocol';
 import { failureImplication } from '../prompts/recovery';
 import { logger } from '../core/logger';
 import { normalizeRelPath } from '../core/paths';
-import { existsSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { holdsProjectMarker, projectFolderOf } from '../env/project-layout';
 import { isInside } from '../tool/core/paths';
 import { BackgroundInbox, describeExitsForModel } from '../tool/process/background-inbox';
@@ -287,15 +287,27 @@ export function noteWorkIn(state: Pick<WorkspaceState, 'root' | 'workedProject'>
   state.workedProject = { root: abs, name: path.basename(abs) };
 }
 
+/** A folder with nothing in it yet (or gone). */
+function emptyFolder(dir: string): boolean {
+  try {
+    return readdirSync(dir).length === 0;
+  } catch {
+    return true;
+  }
+}
+
 /**
  * The folder commands and git run in when given none: the project this conversation last changed files in, but only
  * when the workspace root is not a project itself (then the root is the place). Never a guess from the request's
  * words: "create a todo app" matched an existing todo-app folder and put a new project's installs inside it.
+ * An empty folder is not a place to run yet: an approved plan makes its folder before anything is in it, and a
+ * scaffolder given that folder's name from there (`dotnet new … -o todo-app`, `npm create vite@latest todo-app`) built
+ * the project in todo-app/todo-app. Run from the root, it fills the folder, which then becomes the working project.
  */
 export function workingProject(state: Pick<WorkspaceState, 'root' | 'workedProject'> | null | undefined): string | null {
   if (!state?.root) return null;
-  // A project deleted since is no place to run.
-  const project = [state.workedProject?.root].find((p) => p && existsSync(p)) ?? null;
+  // A project deleted since, or not started yet, is no place to run.
+  const project = [state.workedProject?.root].find((p) => p && !emptyFolder(p)) ?? null;
   if (!project || isInside(project, state.root)) return null;
   return holdsProjectMarker(state.root) ? null : project;
 }

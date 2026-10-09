@@ -67,7 +67,7 @@ describe('present_plan in agent mode', () => {
     }
   });
 
-  it('an approved folder is made and becomes where commands with no folder run', async () => {
+  it('an approved folder is made, and becomes where commands with no folder run once something is in it', async () => {
     const fs = await import('node:fs');
     const os = await import('node:os');
     const path = await import('node:path');
@@ -77,6 +77,9 @@ describe('present_plan in agent mode', () => {
       const state: any = createWorkspaceState(root);
       await presentPlan.execute({ plan, folder: 'e-hailing-service' }, { state, root, cwd: root, ask: async () => 'Yes, start now' } as any);
       assert.ok(fs.existsSync(path.join(root, 'e-hailing-service')));
+      // Still empty: a scaffolder given the folder's name runs from the root and fills it, instead of nesting a copy.
+      assert.equal(workingProject(state), null);
+      fs.writeFileSync(path.join(root, 'e-hailing-service', 'package.json'), '{}');
       assert.equal(workingProject(state), path.join(root, 'e-hailing-service'));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

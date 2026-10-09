@@ -17,6 +17,7 @@ describe('where commands run when no folder is given', () => {
       // Once files are changed in a project, that is where the work is.
       const fresh = path.join(root, 'e-hailing-service');
       fs.mkdirSync(fresh);
+      fs.writeFileSync(path.join(fresh, 'package.json'), '{}');
       assert.equal(workingProject({ root, workedProject: { root: fresh, name: 'e-hailing-service' } } as any), fresh);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
