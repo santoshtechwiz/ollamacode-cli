@@ -1,6 +1,5 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { parseDotnet } from '../parsers/dotnet';
 import type { StackInfo } from '../../types';
 import type { Language } from './types';
 
@@ -37,8 +36,6 @@ export const DOTNET: Language = {
   extensions: ['.cs'],
   outputDirs: ['bin', 'obj'],
   detect: detectDotnet,
-  commandPattern: /dotnet\b/,
-  parse: parseDotnet,
   source: {
     symbols: [
       /^\s*(?:public|internal|private|protected)?\s*(?:static\s+|sealed\s+|abstract\s+|partial\s+)*?(?:class|interface|enum|record|struct)\s+([A-Za-z_]\w*)/gm,

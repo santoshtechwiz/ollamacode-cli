@@ -1,4 +1,3 @@
-import { parseTerraform } from '../parsers/terraform';
 import type { Language } from './types';
 
 export const TERRAFORM: Language = {
@@ -14,6 +13,4 @@ export const TERRAFORM: Language = {
     lint: (tf) => [tf, 'validate'],
     run: (tf) => [tf, 'plan'],
   },
-  commandPattern: /terraform\b/,
-  parse: parseTerraform,
 };

@@ -1,4 +1,3 @@
-import { parsePytest } from '../parsers/python';
 import type { Language } from './types';
 
 export const PYTHON: Language = {
@@ -19,8 +18,6 @@ export const PYTHON: Language = {
     check: (py) => [py, '-m', 'compileall', '-q', '-x', 'venv|site-packages|node_modules|__pycache__', '.'],
     lint: (py) => [py, '-m', 'ruff', 'check', '.'],
   },
-  commandPattern: /pytest|python/,
-  parse: parsePytest,
   source: {
     symbols: [/^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)/gm, /^\s*class\s+([A-Za-z_]\w*)/gm],
     imports: [/^\s*from\s+([\w.]+)\s+import\b/gm, /^\s*import\s+([\w.]+)/gm],

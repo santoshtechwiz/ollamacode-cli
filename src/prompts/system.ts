@@ -44,7 +44,7 @@ function projectRuntimes(
   const names = new Set(
     LANGUAGES.filter((language) => {
       const projectKind = Boolean(language.markers || language.markerPattern || language.extensions || language.detect);
-      return !projectKind || ids.has(language.id) || (language.stackAliases ?? []).some((alias) => ids.has(alias));
+      return !projectKind || ids.has(language.id);
     }).flatMap((language) => language.runtimes.map((runtime) => runtime.name)),
   );
   return Object.fromEntries(Object.entries(runtimes).filter(([name]) => names.has(name)));

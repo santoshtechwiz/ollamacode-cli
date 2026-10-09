@@ -2,7 +2,6 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { exists, readJson, detectPackageManager } from '../tooling/probe';
 import { eslintFiles } from '../frameworks';
-import { parseJest, parseMocha, parseNodeRuntime, parseNodeTest, parseTypeScript, parseVitest } from '../parsers/javascript';
 import type { StackInfo } from '../../types';
 import type { Language } from './types';
 
@@ -26,8 +25,9 @@ async function detectNode(root: string): Promise<StackInfo | null> {
   const usesTsc = Object.values(scripts).some((cmd) => /\btsc\b/.test(String(cmd)));
   const hasTs = !usesTsc && (await languageFromProjectDoc(root)) === 'js' ? false : tsSignal;
   return {
-    id: hasTs ? 'typescript' : 'node',
+    id: 'node',
     label: hasTs ? 'TypeScript' : 'Node.js',
+    typescript: hasTs,
     root,
     marker: 'package.json',
     test: scripts.test ? (pm === 'npm' ? ['npm', 'test'] : [pm, 'test']) : undefined,
@@ -55,9 +55,6 @@ export const NODE: Language = {
   manifests: ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock'],
   extensions: ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts'],
   detect: detectNode,
-  commandPattern: /\b(?:node|npm|npx|pnpm|yarn|tsc|jest|vitest|mocha)\b/,
-  stackAliases: ['typescript'],
-  parse: (t) => [...parseTypeScript(t), ...parseNodeTest(t), ...parseJest(t), ...parseVitest(t), ...parseMocha(t), ...parseNodeRuntime(t)],
   source: {
     symbols: [
       /^\s*export\s+(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/gm,

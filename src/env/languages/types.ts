@@ -1,4 +1,4 @@
-import type { Diagnostic, StackInfo, ToolchainProvider } from '../../types';
+import type { StackInfo, ToolchainProvider } from '../../types';
 
 /**
  * What a project can be asked to do, by name. The one list of them: a language fills the ones it has, the detector
@@ -26,14 +26,8 @@ export interface Language extends ToolchainProvider {
   commands?: Commands;
   /** Custom project detection when markers and commands are not enough. */
   detect?: (root: string) => Promise<StackInfo | null>;
-  /** Commands whose output this language's parser understands, whatever the detected stack. */
-  commandPattern?: RegExp;
-  /** Other stack ids whose output this parser also reads. */
-  stackAliases?: string[];
   /** Folders a build writes inside the project (`bin/`, `obj/`, `dist/`): generated, never the project's own source. */
   outputDirs?: string[];
-  /** Turns tool output into file/line diagnostics. */
-  parse?: (output: string) => Diagnostic[];
   /** Patterns the workspace index uses to find symbols and imports in source files. */
   source?: { symbols: RegExp[]; imports: RegExp[]; exportRe?: RegExp };
 }

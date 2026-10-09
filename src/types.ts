@@ -173,6 +173,8 @@ export interface StackInfo {
   id: string;
   label: string;
   root: string;
+  /** A Node project written in TypeScript. */
+  typescript?: boolean;
   test?: string[];
   build?: string[];
   /** The fastest command that proves the code still compiles or parses, without running the app. */

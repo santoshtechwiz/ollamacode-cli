@@ -1,4 +1,3 @@
-import { parseGo } from '../parsers/go';
 import type { Language } from './types';
 
 export const GO: Language = {
@@ -15,8 +14,6 @@ export const GO: Language = {
     lint: (go) => [go, 'vet', './...'],
     run: (go) => [go, 'run', '.'],
   },
-  commandPattern: /\bgo\s+(?:test|build|vet|run)\b/,
-  parse: parseGo,
   source: {
     symbols: [/^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)/gm, /^\s*type\s+([A-Za-z_]\w*)\s+(?:struct|interface)/gm],
     imports: [/import\s*\(\s*([\s\S]*?)\)/g, /^\s*"([^"]+)"/gm],
