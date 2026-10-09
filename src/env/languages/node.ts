@@ -1,19 +1,8 @@
 import path from 'node:path';
-import fs from 'node:fs/promises';
 import { exists, readJson, detectPackageManager } from '../tooling/probe';
 import { eslintFiles, frameworksOf } from '../frameworks';
 import type { StackInfo } from '../../types';
 import type { Language } from './types';
-
-/** OLLAMACODE.md naming mostly .js or mostly .ts files says which the project really is. */
-async function languageFromProjectDoc(root: string): Promise<'js' | 'ts' | null> {
-  const content = await fs.readFile(path.join(root, 'OLLAMACODE.md'), 'utf8').catch((): null => null);
-  if (!content) return null;
-  const names = [...content.matchAll(/`([\w./-]+\.(?:js|jsx|mjs|cjs|ts|tsx))`/g)].map((m) => m[1]);
-  const js = names.filter((f) => /\.(?:js|jsx|mjs|cjs)$/i.test(f)).length;
-  const ts = names.filter((f) => /\.(?:ts|tsx)$/i.test(f)).length;
-  return js > ts ? 'js' : ts > js ? 'ts' : null;
-}
 
 async function detectNode(root: string): Promise<StackInfo | null> {
   const pkg = await readJson(path.join(root, 'package.json'));
@@ -21,10 +10,11 @@ async function detectNode(root: string): Promise<StackInfo | null> {
   const pm = await detectPackageManager(root);
   const scripts = pkg.scripts ?? {};
   const script = (name: string) => (pm === 'npm' ? ['npm', 'run', name] : [pm, name]);
-  const tsSignal = (await exists(path.join(root, 'tsconfig.json'))) || Boolean(pkg.devDependencies?.typescript || pkg.dependencies?.typescript);
+  // Written in TypeScript: it has a tsconfig.json, or its scripts run tsc. A typescript dependency alone is not enough:
+  // JavaScript projects pull it in for editor types, and tsc --noEmit over them checks nothing they wrote.
   const usesTsc = Object.values(scripts).some((cmd) => /\btsc\b/.test(String(cmd)));
+  const hasTs = usesTsc || (await exists(path.join(root, 'tsconfig.json')));
   const eslint = eslintFiles(pkg);
-  const hasTs = !usesTsc && (await languageFromProjectDoc(root)) === 'js' ? false : tsSignal;
   return {
     id: 'node',
     label: hasTs ? 'TypeScript' : 'Node.js',
