@@ -1,9 +1,10 @@
-import { LANGUAGES, type Language } from '../languages';
+import { TOOLCHAINS } from '../toolchains';
+import type { ToolchainProvider } from '../../types';
 
-export function getProviders(): Language[] {
-  return [...LANGUAGES];
+export function getProviders(): ToolchainProvider[] {
+  return [...TOOLCHAINS];
 }
 
-export function getProvider(id: string): Language | null {
-  return LANGUAGES.find((l) => l.id === id) ?? null;
+export function getProvider(id: string): ToolchainProvider | null {
+  return TOOLCHAINS.find((p) => p.id === id) ?? null;
 }

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { ROLE } from '../protocol';
 
 import { resolveShell } from '../tool/process/shell/runtime';
+import { TOOLS } from '../env/toolchains';
 import { LANGUAGES } from '../env/languages';
 import { skills } from '../skills/loader';
 
@@ -42,10 +43,7 @@ function projectRuntimes(
   if (stacks.length === 0) return runtimes;
   const ids = new Set(stacks.map((stack) => stack.id));
   const names = new Set(
-    LANGUAGES.filter((language) => {
-      const projectKind = Boolean(language.markers || language.markerPattern || language.extensions || language.detect);
-      return !projectKind || ids.has(language.id);
-    }).flatMap((language) => language.runtimes.map((runtime) => runtime.name)),
+    [...TOOLS, ...LANGUAGES.filter((language) => ids.has(language.id))].flatMap((provider) => provider.runtimes.map((runtime) => runtime.name)),
   );
   return Object.fromEntries(Object.entries(runtimes).filter(([name]) => names.has(name)));
 }

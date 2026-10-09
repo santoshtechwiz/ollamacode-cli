@@ -5,7 +5,7 @@ import { logger } from '../../core/logger';
 
 import { detectOne, exists } from './probe';
 import { getProviders } from './registry';
-import { VERBS, type Language } from '../languages';
+import { LANGUAGES, VERBS, type Language } from '../languages';
 import { isProjectMarker } from '../project-layout';
 import { walkFiles } from '../../tool/filesystem/_fs';
 import type { StackInfo } from '../../types';
@@ -87,7 +87,7 @@ async function detectByMarkers(root: string, lang: Language): Promise<StackInfo 
 
 export async function detectStacks(root: string): Promise<StackInfo[]> {
   const stacks: StackInfo[] = [];
-  for (const lang of getProviders()) {
+  for (const lang of LANGUAGES) {
     const found = lang.detect ? await lang.detect(root) : lang.markers || lang.extensions ? await detectByMarkers(root, lang) : null;
     if (found) stacks.push(found);
   }
