@@ -145,7 +145,7 @@ describe('the task list', () => {
 
   it('is what the model last wrote, shown line by line', async () => {
     const state: any = {};
-    const result = await write(state, [{ content: 'Add the parser', status: 'completed' }, { content: 'Run the tests', status: 'in_progress' }]);
+    const result = await write(state, [{ content: 'Add the parser', status: 'completed', evidence: 'parses the sample file' }, { content: 'Run the tests', status: 'in_progress' }]);
     assert.equal(result.ok, true);
     assert.deepEqual(state.todos.map((t: any) => t.status), ['completed', 'in_progress']);
     assert.equal(result.display, '[x] Add the parser\n[~] Run the tests');

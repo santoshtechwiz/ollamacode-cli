@@ -10,7 +10,7 @@ import { readdirSync } from 'node:fs';
 import { holdsProjectMarker, projectFolderOf } from '../env/project-layout';
 import { isInside } from '../tool/core/paths';
 import { BackgroundInbox, describeExitsForModel } from '../tool/process/background-inbox';
-import { todoLines, type TodoItem } from '../agent/todos';
+import { reopenFailed, todoLines, type TodoItem } from '../agent/todos';
 
 const MAX_CHANGES = 50;
 
@@ -272,6 +272,24 @@ export function notePassed(state: Pick<WorkspaceState, 'root' | 'changeSeq' | 'p
   (state.passedAt ??= {})[passedKey(state.root, cwd, command)] = Number(state.changeSeq ?? 0);
 }
 
+/** Whether this command passed, in any folder, with no file changed since: the evidence a task's verify asks for. */
+export function passedNow(state: Pick<WorkspaceState, 'root' | 'changeSeq' | 'passedAt'> | null | undefined, command: string): boolean {
+  const suffix = `\u0000${command.trim()}`;
+  const now = Number(state?.changeSeq ?? 0);
+  return Object.entries(state?.passedAt ?? {}).some(([key, at]) => key.endsWith(suffix) && at === now);
+}
+
+/**
+ * A command failed in this folder: whatever passed before no longer holds for the files as they are, and a completed
+ * task it proves is open again.
+ */
+export function noteFailed(state: Pick<WorkspaceState, 'root' | 'passedAt' | 'todos'> | null | undefined, cwd: string, command: string): void {
+  if (!state?.root) return;
+  if (state.passedAt) delete state.passedAt[passedKey(state.root, cwd, command)];
+  const reopened = reopenFailed(state.todos ?? [], command);
+  if (reopened) state.todos = reopened;
+}
+
 /** Whether this command already passed in this folder with no file changed since. */
 export function passedSinceChange(state: Pick<WorkspaceState, 'root' | 'changeSeq' | 'passedAt'> | null | undefined, cwd: string, command: string): boolean {
   if (!state?.root) return false;
@@ -338,8 +356,8 @@ export function describeSession(state: WorkspaceState, { exits = true }: { exits
   }
 
   if (todos.length > 0) {
-    lines.push('Your task list (todo_write with the full list replaces it):');
-    lines.push(...todoLines(todos));
+    lines.push('Your task list (todo_write update changes the tasks it names; a full list replaces it):');
+    lines.push(...todoLines(todos, (command) => passedNow(state, command)));
   }
 
   if (running.length > 0) {

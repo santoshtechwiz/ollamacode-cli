@@ -76,6 +76,15 @@ Use it for anything bigger than a one-file change.
 4. Once approved it switches to Agent and the same turn carries the plan out,
    keeping a task list as it goes.
 
+The task list holds outcomes ("the page adds and deletes tasks"), not typing
+steps. Each task can say when it is done and which command proves it, and wait
+for the tasks it depends on. A task is marked done only on evidence: its command
+passed on the files as they are now (a command that already passed is not run
+again), or the agent says what showed it works. If that command fails later,
+the task opens again. As the agent learns more it changes only the tasks
+concerned: it splits, adds, reorders or drops them, and the rest stay as they
+were.
+
 If the work stops part way (the step limit, you pressed `Ctrl+C`), `/continue`
 picks it up.
 
