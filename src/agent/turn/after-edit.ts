@@ -5,7 +5,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROLE, TOOL_NAME } from '../../protocol';
-import { isProjectMarker } from '../../env/project-layout';
+import { holdsProjectMarker, projectFolderOf as nearestProjectFolder } from '../../env/project-layout';
+import { CHECK_VERBS, type Verb } from '../../env/languages';
 import { detectStacks } from '../../env/tooling/detector';
 import type { ToolExecutor } from '../../tool/execution/executor';
 import type { TurnCallbacks } from './turn';
@@ -24,26 +25,14 @@ const FAILURE_TAIL_LINES = 40;
  */
 export function projectFolderOf(root: string, rel: string): string {
   const top = path.resolve(root);
-  if (holdsMarker(top)) return '';
-  let dir = path.dirname(path.resolve(top, rel));
-  while (dir.startsWith(top)) {
-    if (holdsMarker(dir)) return path.relative(top, dir).split(path.sep).join('/');
-    if (dir === top) break;
-    dir = path.dirname(dir);
-  }
-  return '';
-}
-
-function holdsMarker(dir: string): boolean {
-  try {
-    return fs.readdirSync(dir).some((name) => isProjectMarker(name));
-  } catch {
-    return false; // a folder the step deleted: look above it
-  }
+  if (holdsProjectMarker(top)) return '';
+  // A folder the step deleted holds no marker, so the search goes on above it.
+  const found = nearestProjectFolder(top, path.resolve(top, rel));
+  return found ? path.relative(top, found).split(path.sep).join('/') : '';
 }
 
 /** A project's own command, by name: "check", "build", "test" or "lint" is the one ocode detected for its stack. */
-const PROJECT_VERBS = new Set(['check', 'build', 'test', 'lint']);
+const isCheckVerb = (word: string): word is Verb => (CHECK_VERBS as readonly string[]).includes(word);
 
 /**
  * The commands a setting names: words that are all verbs ("check lint") are one command each, run in that order;
@@ -51,7 +40,7 @@ const PROJECT_VERBS = new Set(['check', 'build', 'test', 'lint']);
  */
 export function checkCommands(setting: string): string[] {
   const words = setting.trim().split(/\s+/).filter(Boolean);
-  return words.length > 0 && words.every((w) => PROJECT_VERBS.has(w)) ? words : setting.trim() ? [setting.trim()] : [];
+  return words.length > 0 && words.every(isCheckVerb) ? words : setting.trim() ? [setting.trim()] : [];
 }
 
 /**
@@ -60,7 +49,7 @@ export function checkCommands(setting: string): string[] {
  * to run after every step. '' when there is nothing for it to look at.
  */
 async function projectCommand(command: string, folder: string, files: string[]): Promise<string | null> {
-  if (!PROJECT_VERBS.has(command)) return command;
+  if (!isCheckVerb(command)) return command;
   const stacks = await detectStacks(folder).catch((): import('../../types.ts').StackInfo[] => []);
   const quote = (argv: string[]) => argv.map((a) => (/^[\w@./:=-]+$/.test(a) ? a : JSON.stringify(a))).join(' ');
   if (command === 'lint') {
@@ -70,7 +59,7 @@ async function projectCommand(command: string, folder: string, files: string[]):
       return lintable.length ? quote([...byFile.argv, ...lintable]) : '';
     }
   }
-  const argv = stacks.map((stack) => stack[command as 'check' | 'build' | 'test' | 'lint']).find((a) => Array.isArray(a) && a.length);
+  const argv = stacks.map((stack) => stack[command]).find((a) => Array.isArray(a) && a.length);
   return argv ? quote(argv) : null;
 }
 
@@ -105,11 +94,14 @@ async function runChecks({ command, setting, name, root, changed, toolRunner, ca
   }
   const notes: string[] = [];
   const runs: CheckRun[] = [];
+  // Two words can name one command (Go's check and lint are both go vet): it runs once per folder.
+  const ran = new Set<string>();
   for (const each of checkCommands(command)) {
     for (const [folder, files] of byFolder) {
       const where = folder ? ` in ${folder}` : '';
       const run = await projectCommand(each, path.resolve(root, folder), files.filter((f) => fs.existsSync(path.resolve(root, folder, f))));
-      if (run === '') continue;
+      if (run === '' || (run && ran.has(`${folder}\u0000${run}`))) continue;
+      if (run) ran.add(`${folder}\u0000${run}`);
       if (!run) {
         notes.push(`${name} (${setting} "${each}")${where} did not run: this project has no ${each} command ocode knows.`);
         continue;

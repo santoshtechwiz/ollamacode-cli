@@ -85,6 +85,18 @@ describe('agent.afterEdit with several checks', () => {
     }
   });
 
+  it('runs a command two words name only once (Go\'s check and lint are both go vet)', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-go-'));
+    try {
+      fs.mkdirSync(path.join(root, 'svc'));
+      fs.writeFileSync(path.join(root, 'svc/go.mod'), 'module svc\n\ngo 1.22\n');
+      const t = await turn(root, [{ toolCalls: [call('1', 'write_file', { path: 'svc/main.go', content: 'package main' })] }, { content: 'Done.' }], { afterEdit: 'check lint' }, []);
+      assert.deepEqual(t.ran.filter((r) => r !== 'write_file').map((r) => r.replace(/^\S*go(?:\.exe)? /, 'go ')), ['go vet ./... in svc']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('skips lint when no changed file is one the linter reads', async () => {
     const root = project();
     try {
