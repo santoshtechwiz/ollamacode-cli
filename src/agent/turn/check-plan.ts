@@ -25,12 +25,14 @@ const extOf = (file: string) => path.extname(file).toLowerCase();
 
 /**
  * The verbs to run in one project, in order, for the files it changed. `lastMs` is how long a verb took in this project
- * before (undefined: never run). After an edit, only checks known to be fast run; once before "done", every check the
- * change calls for:
- *   - a build, when the project uses a framework whose build verifies more than types (it prerenders pages or compiles
- *     templates) and something other than documentation changed; it includes the type check;
- *   - otherwise the type check, when the language's own files changed;
- *   - lint, on the changed files its linter reads.
+ * before (undefined: never run).
+ *   - Before "done", what shows the work works: the build, when the project uses a framework whose build verifies more
+ *     than types (it prerenders pages or compiles templates) and something other than documentation changed (it
+ *     includes the type check); otherwise the type check, when the language's own files changed. Lint on the changed
+ *     files goes first, unless it proved slow here: it reports style, and ESLint on a Next.js project, which loads the
+ *     whole TypeScript project to read three files, held a finished answer for over a minute. Its first run is what
+ *     says how long it takes, and that is remembered for the project.
+ *   - After an edit, the type check and lint on the changed files, each only when it took under FAST_CHECK_MS here.
  */
 export function autoVerbs(phase: CheckPhase, stack: StackInfo, files: string[], lastMs: (verb: Verb) => number | undefined): Verb[] {
   const languageFiles = LANGUAGES.find((l) => l.id === stack.id)?.extensions ?? [];
@@ -38,20 +40,20 @@ export function autoVerbs(phase: CheckPhase, stack: StackInfo, files: string[], 
   const touchesProject = files.some((f) => !DOC_EXTENSIONS.has(extOf(f)));
   const lintable = stack.fileScoped?.lint ? files.some((f) => stack.fileScoped!.lint!.extensions.includes(extOf(f))) : false;
   const buildVerifies = Boolean(stack.build) && (stack.frameworks ?? []).some((label) => FRAMEWORKS.find((f) => f.label === label)?.buildVerifies);
-
-  const wanted: Verb[] = [];
-  if (phase === 'done' && buildVerifies && touchesProject) {
-    if (lintable) wanted.push('lint');
-    wanted.push('build');
-    return wanted;
-  }
-  if (touchesCode && stack.check) wanted.push('check');
-  if (lintable) wanted.push('lint');
-  if (phase === 'done') return wanted;
-  return wanted.filter((verb) => {
+  const fast = (verb: Verb) => {
     const ms = lastMs(verb);
     return ms !== undefined && ms < FAST_CHECK_MS;
-  });
+  };
+
+  if (phase === 'done') {
+    const lint: Verb[] = lintable && (lastMs('lint') === undefined || fast('lint')) ? ['lint'] : [];
+    if (buildVerifies && touchesProject) return [...lint, 'build'];
+    return [...(touchesCode && stack.check ? (['check'] as Verb[]) : []), ...lint];
+  }
+  const wanted: Verb[] = [];
+  if (touchesCode && stack.check) wanted.push('check');
+  if (lintable) wanted.push('lint');
+  return wanted.filter(fast);
 }
 
 /**

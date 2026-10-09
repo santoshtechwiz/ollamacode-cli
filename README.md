@@ -336,6 +336,7 @@ ocode then decides from what changed, what the project is, and how long each che
 | After an edit | only checks that took under 10 seconds here last time (a fast type check, lint on the changed files); a slow one waits for the end |
 | Before "done" | a framework whose build checks more than types (Next.js, Nuxt, Angular, SvelteKit, Astro, Remix): lint on the changed files, then the build, which includes the type check |
 | | any other project: the type check when code changed, and lint on the changed files |
+| | lint is left out once it took 10 seconds or more in this project (ESLint on a Next.js app often does); `"lint build"` keeps it |
 | | then, for a web front end (a framework above, React, Vue or Svelte, with a `dev` script), its page: see below |
 | | a site with no project around it: its changed `.html` files, opened with `check_page` |
 | | nothing when only documentation changed, and never a check that already passed on the same files |

@@ -27,6 +27,12 @@ describe('autoVerbs before done', () => {
     assert.deepEqual(autoVerbs('done', plainTs, ['src/a.ts'], never), ['check', 'lint']);
   });
 
+  it('leaves out lint once it proved slow here, and still builds', () => {
+    const slowLint = (verb: string) => (verb === 'lint' ? 60_000 : undefined);
+    assert.deepEqual(autoVerbs('done', next, ['src/app/page.tsx'], slowLint), ['build']);
+    assert.deepEqual(autoVerbs('done', plainTs, ['src/a.ts'], slowLint), ['check']);
+  });
+
   it('runs nothing for documentation', () => {
     assert.deepEqual(autoVerbs('done', next, ['README.md'], never), []);
     assert.deepEqual(autoVerbs('done', plainTs, ['docs/notes.md'], never), []);
