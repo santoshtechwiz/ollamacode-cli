@@ -22,9 +22,10 @@ export interface TodoItem {
   reopened?: string;
 }
 
-/** A change to one task, named by its outcome; a name not in the list adds a task. */
+/** A change to one task, named by its outcome; with add, a new task. */
 export interface TodoUpdate extends Partial<Omit<TodoItem, 'content' | 'reopened'>> {
   task: string;
+  add?: boolean;
   /** New wording for the outcome. */
   content?: string;
   remove?: boolean;
@@ -71,14 +72,27 @@ export function todoLines(todos: readonly TodoItem[] | null | undefined, passed?
 const clean = (text: unknown) => String(text ?? '').trim();
 const cleanList = (list: unknown) => (Array.isArray(list) ? list.map(clean).filter(Boolean) : undefined);
 
+/**
+ * Evidence is what showed a finished task works, so it is kept only on a completed task: written ahead, before the work
+ * existed, it would complete the task later with nothing new shown.
+ */
+function settled(todo: TodoItem): TodoItem {
+  if (todo.status === 'completed' || !todo.evidence) return todo;
+  const { evidence: _ahead, ...rest } = todo;
+  return rest;
+}
+
 /** A task as sent, with only the fields it carries. */
 export function todoFrom(raw: any): TodoItem {
   const todo: TodoItem = { content: clean(raw?.content), status: raw?.status };
   for (const key of ['doneWhen', 'verify', 'evidence'] as const) if (clean(raw?.[key])) todo[key] = clean(raw[key]);
   const deps = cleanList(raw?.dependsOn);
   if (deps?.length) todo.dependsOn = deps;
-  return todo;
+  return settled(todo);
 }
+
+/** The fields an update sends empty ("" or []): it takes them off the task. */
+const CLEARABLE = ['doneWhen', 'verify', 'dependsOn', 'evidence'] as const;
 
 /** The list after these changes, or what is wrong with them. Tasks no change names stay exactly as they were. */
 export function applyUpdates(list: readonly TodoItem[], updates: readonly any[]): TodoItem[] | string {
@@ -86,15 +100,23 @@ export function applyUpdates(list: readonly TodoItem[], updates: readonly any[])
   let next = [...list];
   for (const raw of updates) {
     const name = clean(raw?.task);
-    if (!name) return 'Each update needs task: the outcome of the task it changes, or of a new one';
+    if (!name) return 'Each update needs task: the outcome of the task it changes, or of a new one with add: true';
     const at = next.findIndex((todo) => todo.content === name);
+    const tasks = () => next.map((t) => `"${t.content}"`).join(', ') || 'none';
+    // A name that matches no task is a mistyped name far more often than a new task: adding is said, not guessed.
+    if (at < 0 && raw?.add !== true) return `No task "${name}". The tasks are: ${tasks()}. Name one exactly, or pass add: true to add it.`;
+    if (at >= 0 && raw?.add === true) return `There is already a task "${name}"`;
     if (raw?.remove === true) {
-      if (at < 0) return `No task "${name}" to remove. The tasks are: ${next.map((t) => `"${t.content}"`).join(', ') || 'none'}`;
       next.splice(at, 1);
       continue;
     }
     const given = todoFrom({ ...raw, content: raw?.content ?? name, status: raw?.status ?? next[at]?.status ?? 'pending' });
-    const todo: TodoItem = at >= 0 ? { ...next[at], ...given } : given;
+    let todo: TodoItem = at >= 0 ? { ...next[at], ...given } : given;
+    for (const key of CLEARABLE) {
+      const sent = raw?.[key];
+      if (sent !== undefined && (Array.isArray(sent) ? sent.length === 0 : !clean(sent))) delete todo[key];
+    }
+    todo = settled(todo);
     // A new status, or new work on it, settles why it was opened again.
     if (raw?.status) delete todo.reopened;
     if (at >= 0) next.splice(at, 1);
@@ -137,10 +159,12 @@ export function checkTodos(next: readonly TodoItem[], before: readonly TodoItem[
     }
     if (todo.status !== 'completed' || wasDone.has(todo.content)) continue;
     if (todo.verify && !passed(todo.verify)) {
-      return `"${todo.content}" is not completed: \`${todo.verify}\` has not passed on the files as they are now. Run it; once it passes, mark the task completed.`;
+      return `"${todo.content}" is not completed: \`${todo.verify}\` has not passed on the files as they are now. ` +
+        'Run that command; once it passes, mark the task completed. If no command proves this task, ' +
+        'send verify: "" with status completed and evidence saying what showed it works.';
     }
     if (!todo.verify && !todo.evidence) {
-      return `"${todo.content}" is not completed: give its evidence (what showed it works), or a verify command that proves it.`;
+      return `"${todo.content}" is not completed: send evidence with it (what showed it works), or a verify command that proves it.`;
     }
   }
   return null;
@@ -151,6 +175,6 @@ export function reopenFailed(todos: readonly TodoItem[], command: string): TodoI
   const failed = command.trim();
   if (!todos.some((todo) => todo.status === 'completed' && todo.verify === failed)) return null;
   return todos.map((todo) => (todo.status === 'completed' && todo.verify === failed
-    ? { ...todo, status: 'pending' as const, reopened: `\`${failed}\` failed after it was completed` }
+    ? settled({ ...todo, status: 'pending' as const, reopened: `\`${failed}\` failed after it was completed` })
     : todo));
 }

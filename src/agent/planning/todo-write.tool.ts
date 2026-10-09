@@ -6,9 +6,9 @@ import { applyUpdates, checkTodos, todoFrom, todoLines, TODO_STATUSES, type Todo
 
 const TASK_FIELDS = {
   doneWhen: { type: 'string', description: 'What must be true for it to count as done' },
-  verify: { type: 'string', description: 'A command whose pass proves it, e.g. "npm test" or "dotnet build"' },
+  verify: { type: 'string', description: 'A shell command whose exit 0 proves it, run as written ("npm test", "dotnet build"); "" takes it off. Not a description of how to check' },
   dependsOn: { type: 'array', items: { type: 'string' }, description: 'Outcomes of the tasks that must be completed first' },
-  evidence: { type: 'string', description: 'For a task with no verify command: what showed it works' },
+  evidence: { type: 'string', description: 'For a task with no verify command, sent when you complete it: what showed it works' },
 } as const;
 
 export default defineTool({
@@ -21,11 +21,12 @@ export default defineTool({
   description:
     'Track work of three or more steps (or any the user wants tracked) as a list the user sees. Each task is an outcome ' +
     '(what will work), not a step of typing: "the /todo page adds and deletes tasks", not "edit Todo.razor". Give it ' +
-    'doneWhen, and verify when a command proves it. Change tasks with update, naming each by its outcome: set a status, ' +
-    'add, split (add the parts, remove the whole), reorder (after), or remove one when what you learn changes the plan; ' +
-    'tasks you do not name stay as they are. todos replaces the whole list. One task in_progress at a time. A task is ' +
-    'completed only on evidence: its verify command passed on the files as they are now (run it first), or, with no ' +
-    'command, evidence saying what showed it works. A verify command that fails later opens its task again. ' +
+    'doneWhen, and verify when a shell command proves it. Change tasks with update, naming each exactly as listed: set a ' +
+    'status, add one (add: true), split (add the parts, remove the whole), reorder (after), or remove one when what you ' +
+    'learn changes the plan; tasks you do not name stay as they are. todos replaces the whole list. One task ' +
+    'in_progress at a time. A task is completed only on evidence: its verify command passed on the files as they are ' +
+    'now (run it first), or, with no command, evidence sent with the completion saying what showed it works. A verify ' +
+    'command that fails later opens its task again. ' +
     'Skip this for a one-step request.',
   parameters: {
     type: 'object',
@@ -45,7 +46,7 @@ export default defineTool({
       },
       update: {
         type: 'array',
-        description: 'Changes to tasks named by their outcome; a name not in the list adds a task. The others stay as they are.',
+        description: 'Changes to tasks named by their outcome exactly as listed, or new tasks with add: true. The others stay as they are.',
         items: {
           type: 'object',
           properties: {
@@ -53,6 +54,7 @@ export default defineTool({
             status: { type: 'string', enum: TODO_STATUSES as TodoStatus[] },
             content: { type: 'string', description: 'New wording for the outcome' },
             ...TASK_FIELDS,
+            add: { type: 'boolean', description: 'Add task as a new task' },
             after: { type: 'string', description: 'Move it after this task (by outcome)' },
             remove: { type: 'boolean', description: 'Remove the task: no longer needed, or split into others' },
           },

@@ -10,6 +10,8 @@ import presentPlan from '../src/agent/planning/present-plan.tool';
 import { createWorkspaceState, notePassed, passedNow } from '../src/context/workspace-state';
 import { describeSession } from '../src/context/workspace-state';
 import { ToolExecutor } from '../src/tool/core/tool-runtime';
+import { reportChatTurn } from '../src/cli/chat/turn/index';
+import { STOP_REASONS } from '../src/protocol';
 
 const write = (state: any, args: Record<string, unknown>) => todoWrite.execute(args, { state } as any) as Promise<any>;
 const names = (state: any) => state.todos.map((t: any) => `${t.status}: ${t.content}`);
@@ -35,8 +37,8 @@ describe('update', () => {
   it('adds, places, splits, renames and removes when what was found changes the plan', async () => {
     const state: any = { todos: [{ content: 'Auth works', status: 'pending' }, { content: 'Deploy', status: 'pending', dependsOn: ['Auth works'] }] };
     const r = await write(state, { update: [
-      { task: 'Users can sign in', after: 'Auth works' },
-      { task: 'Tokens refresh', after: 'Users can sign in' },
+      { task: 'Users can sign in', add: true, after: 'Auth works' },
+      { task: 'Tokens refresh', add: true, after: 'Users can sign in' },
       { task: 'Deploy', content: 'The app is deployed' },
       { task: 'Auth works', remove: true },
     ] });
@@ -45,7 +47,7 @@ describe('update', () => {
     assert.deepEqual(names(state), ['pending: Auth works', 'pending: Deploy'], 'a refused change keeps the list as it was');
 
     const ok = await write(state, { update: [
-      { task: 'Users can sign in', after: 'Auth works' },
+      { task: 'Users can sign in', add: true, after: 'Auth works' },
       { task: 'Auth works', content: 'Sessions are stored' },
       { task: 'Deploy', content: 'The app is deployed' },
     ] });
@@ -54,10 +56,12 @@ describe('update', () => {
     assert.deepEqual(state.todos[2].dependsOn, ['Sessions are stored'], 'a renamed task keeps the tasks that wait for it');
   });
 
-  it('names the tasks there are when one is not found', async () => {
-    const state: any = { todos: [{ content: 'A', status: 'pending' }] };
-    const r = await write(state, { update: [{ task: 'B', remove: true }] });
-    assert.match(r.error, /No task "B" to remove\. The tasks are: "A"/);
+  it('never adds a task for a name it does not know: it names the tasks there are', async () => {
+    const state: any = { todos: [{ content: 'Scaffold the project', status: 'in_progress', verify: 'ls' }] };
+    // Seen in a session: a name with something appended added a second copy of the task.
+    const r = await write(state, { update: [{ task: 'Scaffold the project, verify: Get-ChildItem', status: 'pending' }] });
+    assert.match(r.error, /No task "Scaffold the project, verify: Get-ChildItem"\. The tasks are: "Scaffold the project"\. Name one exactly, or pass add: true/);
+    assert.equal(state.todos.length, 1);
   });
 });
 
@@ -68,7 +72,7 @@ describe('completed only on evidence', () => {
       state.todos = [{ content: 'The tests pass', status: 'in_progress', verify: 'npm test' }];
       const early = await write(state, { update: [{ task: 'The tests pass', status: 'completed' }] });
       assert.equal(early.ok, false);
-      assert.match(early.error, /`npm test` has not passed on the files as they are now\. Run it/);
+      assert.match(early.error, /`npm test` has not passed on the files as they are now\. Run that command/);
 
       notePassed(state, path.join(root, 'app'), 'npm test');
       const done = await write(state, { update: [{ task: 'The tests pass', status: 'completed' }] });
@@ -85,7 +89,7 @@ describe('completed only on evidence', () => {
   it('a task no command proves needs what showed it works', async () => {
     const state: any = { todos: [{ content: 'The folder is chosen', status: 'in_progress' }] };
     const bare = await write(state, { update: [{ task: 'The folder is chosen', status: 'completed' }] });
-    assert.match(bare.error, /give its evidence/);
+    assert.match(bare.error, /send evidence with it/);
     const r = await write(state, { update: [{ task: 'The folder is chosen', status: 'completed', evidence: 'the user picked ./shop' }] });
     assert.equal(r.ok, true, r.error);
   });
@@ -142,5 +146,35 @@ describe('an approved plan', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('what the session showed', () => {
+  it('a verify that is no command can be taken off, and the task completed on evidence', async () => {
+    const state: any = { todos: [{ content: 'The hook saves notes', status: 'in_progress', verify: 'Read `src/hooks/useNotes.ts`' }] };
+    const stuck = await write(state, { update: [{ task: 'The hook saves notes', status: 'completed' }] });
+    assert.match(stuck.error, /If no command proves this task, send verify: "" with status completed and evidence/);
+    const r = await write(state, { update: [{ task: 'The hook saves notes', status: 'completed', verify: '', evidence: 'a saved note is still there after reload' }] });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(state.todos[0].verify, undefined);
+  });
+
+  it('evidence written before the work is not kept, so it cannot complete the task later', async () => {
+    const state: any = {};
+    await write(state, { todos: [{ content: 'Scaffolded', status: 'in_progress', evidence: 'ls ./notes-app' }] });
+    assert.equal(state.todos[0].evidence, undefined);
+    const r = await write(state, { update: [{ task: 'Scaffolded', status: 'completed' }] });
+    assert.equal(r.ok, false);
+  });
+
+  it('an answer over open tasks says on screen which are not done', async () => {
+    const notes: string[] = [];
+    const state: any = { todos: [{ content: 'Notes persist', status: 'completed', evidence: 'reload kept them' }, { content: 'Search filters notes', status: 'in_progress' }] };
+    const host: any = {
+      render: { text: '', markdown: () => {}, note: (text: string) => notes.push(text), commitTasks: () => {} },
+      workspace: { state }, interactive: false, flags: {},
+    };
+    await reportChatTurn(host, { content: 'All tasks are done.', toolResults: [], iterations: 3, stopReason: STOP_REASONS.COMPLETE } as any, {});
+    assert.ok(notes.includes('Not finished: 1 of 2 tasks are still open (Search filters notes).'), notes.join(' | '));
   });
 });
