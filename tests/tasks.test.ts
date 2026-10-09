@@ -170,16 +170,6 @@ describe('what the session showed', () => {
     assert.equal(r.ok, false);
   });
 
-  it('an answer over open tasks says on screen which are not done', async () => {
-    const notes: string[] = [];
-    const state: any = { todos: [{ content: 'Notes persist', status: 'completed', evidence: 'reload kept them' }, { content: 'Search filters notes', status: 'in_progress' }] };
-    const host: any = {
-      render: { text: '', markdown: () => {}, note: (text: string) => notes.push(text), commitTasks: () => {} },
-      workspace: { state }, interactive: false, flags: {},
-    };
-    await reportChatTurn(host, { content: 'All tasks are done.', toolResults: [], iterations: 3, stopReason: STOP_REASONS.COMPLETE } as any, {});
-    assert.ok(notes.includes('Not finished: 1 of 2 tasks are still open (Search filters notes).'), notes.join(' | '));
-  });
 });
 
 describe('the list follows the work', () => {
@@ -198,69 +188,91 @@ describe('the list follows the work', () => {
     }
   });
 
-  it('starting the next task is never refused: the one in progress goes back to pending', async () => {
-    const state: any = { todos: [{ content: 'NoteList is accessible', status: 'in_progress' }, { content: 'The editor saves', status: 'pending' }] };
-    const r = await write(state, { update: [{ task: 'The editor saves', status: 'in_progress' }] });
-    assert.equal(r.ok, true, r.error);
-    assert.deepEqual(names(state), ['pending: NoteList is accessible', 'in_progress: The editor saves']);
-  });
 });
 
-describe('an answer over open tasks after changing files', () => {
-  const call = (id: string, name: string, args: Record<string, unknown>) => ({ id, type: 'function', function: { name, arguments: args } });
-
-  async function turn(replies: any[]) {
+describe('a session like the notes-app polish run', () => {
+  // The run that showed the list never moving: UI tasks no command proves, a refused completion, the build and page
+  // checks passing, and the answer "all done" over six open tasks. Each step here is where that run went wrong.
+  it('keeps the list honest from the first task to the answer', async () => {
     const { root, state } = session();
-    const requests: any[] = [];
-    const notes: string[] = [];
-    const history = new ContextStore({ messages: [{ role: 'user', content: 'polish the notes page' }], budgetTokens: 8000 });
-    const result: any = await (runTurn as any)({
-      model: 'test', history, toolsEnabled: true, state, config: { maxIterations: 10 },
-      callbacks: { note: (text: string) => notes.push(text) },
-      gateway: {
-        model: 'test', provider: { id: 'test' },
-        async stream(request: any) {
-          requests.push(request);
-          const next = replies[requests.length - 1] ?? { content: 'Done.' };
-          return { result: { content: next.content ?? '', toolCalls: next.toolCalls ?? [], finishReason: 'stop' }, attempt: 1, retries: 0, startedAt: Date.now() };
-        },
-      },
-      toolRunner: {
-        async run(name: string, args: any) {
-          if (name === 'todo_write') return { result: await todoWrite.execute(args, { state } as any) };
-          state.note('write', String(args.path), 'file');
-          return { result: { ok: true, kind: 'text', display: 'ok' } };
-        },
-      },
-    });
-    fs.rmSync(root, { recursive: true, force: true });
-    return { requests, notes, result, state };
-  }
-
-  const LIST = call('1', 'todo_write', { todos: [{ content: 'The list has dark mode', status: 'in_progress' }, { content: 'Notes fade in', status: 'pending' }] });
-  const EDIT = call('2', 'write_file', { path: 'notes-app/src/NoteList.tsx', content: 'x' });
-
-  it('goes back once with the list, and a settled list lets the answer stand', async () => {
-    const t = await turn([
-      { toolCalls: [LIST] }, { toolCalls: [EDIT] }, { content: 'All done.' },
-      { toolCalls: [call('3', 'todo_write', { update: [
-        { task: 'The list has dark mode', status: 'completed', evidence: 'the page check passed in dark mode' },
-        { task: 'Notes fade in', remove: true },
+    fs.mkdirSync(path.join(root, 'notes-app'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'notes-app', 'package.json'), JSON.stringify({ scripts: { build: 'next build' } }));
+    const call = (id: string, name: string, args: Record<string, unknown>) => ({ id, type: 'function', function: { name, arguments: args } });
+    const update = (id: string, ...changes: Record<string, unknown>[]) => ({ toolCalls: [call(id, 'todo_write', { update: changes })] });
+    const replies: any[] = [
+      { toolCalls: [call('1', 'todo_write', { todos: [
+        { content: 'NoteList works in dark mode', status: 'in_progress' },
+        { content: 'NoteEditor works in dark mode', status: 'pending' },
+        { content: 'The app builds', status: 'pending', verify: 'npm run build' },
       ] })] },
-      { content: 'Dark mode is done; I did not add the fade-in.' },
-    ]);
-    const seen = t.requests[3].messages.filter((m: any) => m.role === 'tool').map((m: any) => String(m.content)).at(-1);
-    assert.match(seen, /Your answer leaves 2 tasks open/);
-    assert.match(seen, /\[~\] The list has dark mode/);
-    assert.equal(t.result.answer, 'Dark mode is done; I did not add the fade-in.');
-    assert.deepEqual(names(t.state), ['completed: The list has dark mode']);
-    assert.ok(t.notes.some((n) => /2 tasks are still open after that answer/.test(n)));
-  });
+      { toolCalls: [call('2', 'write_file', { path: 'notes-app/src/NoteList.tsx', content: 'a' })] },
+      update('3', { task: 'NoteList works in dark mode', status: 'completed' }),
+      update('4', { task: 'NoteEditor works in dark mode', status: 'in_progress' }),
+      { toolCalls: [call('5', 'write_file', { path: 'notes-app/src/NoteEditor.tsx', content: 'b' })] },
+      { content: 'All done.' },
+      update('6',
+        { task: 'NoteList works in dark mode', status: 'completed', evidence: 'the page check passed in dark mode' },
+        { task: 'NoteEditor works in dark mode', status: 'completed', evidence: 'the page check passed in dark mode' }),
+      { content: 'Done: both lists work in dark mode.' },
+    ];
+    const requests: any[] = [];
+    const results: Record<string, any> = {};
+    const notes: string[] = [];
+    const history = new ContextStore({ messages: [{ role: 'user', content: 'polish the notes app' }], budgetTokens: 16000 });
+    try {
+      const result: any = await (runTurn as any)({
+        model: 'test', history, toolsEnabled: true, state, config: { maxIterations: 12, beforeDone: 'build' },
+        callbacks: { note: (text: string) => notes.push(text) },
+        gateway: {
+          model: 'test', provider: { id: 'test' },
+          async stream(request: any) {
+            requests.push(request);
+            const next = replies[requests.length - 1] ?? { content: 'Done.' };
+            return { result: { content: next.content ?? '', toolCalls: next.toolCalls ?? [], finishReason: 'stop' }, attempt: 1, retries: 0, startedAt: Date.now() };
+          },
+        },
+        toolRunner: {
+          async run(name: string, args: any) {
+            let r: any;
+            if (name === 'todo_write') r = await todoWrite.execute(args, { state } as any);
+            else if (name === 'exec_shell') {
+              // The build passes, as exec_shell records it: for the files as they are now.
+              notePassed(state, path.resolve(root, args.cwd ?? '.'), args.command);
+              r = { ok: true, kind: 'command', display: 'Compiled successfully', data: { execution: { exitCode: 0 } } };
+            } else {
+              state.note('write', String(args.path), 'file');
+              r = { ok: true, kind: 'text', display: 'ok' };
+            }
+            results[requests.length] = r;
+            return { result: r };
+          },
+        },
+      });
 
-  it('asks once: a model that answers again over an open list is not sent back again', async () => {
-    const t = await turn([{ toolCalls: [LIST] }, { toolCalls: [EDIT] }, { content: 'All done.' }, { content: 'All done, really.' }]);
-    assert.equal(t.requests.length, 4);
-    assert.equal(t.result.answer, 'All done, really.');
+      // A UI task no command proves is not completed on the model's word.
+      assert.match(results[3].error, /"NoteList works in dark mode" is not completed: send evidence/);
+      // Starting the next task is not refused: the one in progress waits again.
+      assert.equal(results[4].ok, true, results[4].error);
+      // The checks before done ran and passed, then the answer over open tasks went back once, naming them as evidence.
+      assert.ok(notes.includes('Checked before finishing: `npm run build` passed.'), notes.join(' | '));
+      assert.ok(notes.some((n) => /3 tasks are still open after that answer/.test(n)), notes.join(' | '));
+      const settle = requests[6].messages.filter((m: any) => m.role === 'tool').map((m: any) => String(m.content)).at(-1);
+      assert.match(settle, /leaves 3 tasks open \(listed below\)[\s\S]*these checks passed when you answered: `npm run build`/);
+      assert.match(settle, /\[ \] The app builds/);
+      // Settled on evidence; the build task the model left alone stays open, and it is not sent back a second time.
+      assert.equal(results[7].ok, true, results[7].error);
+      assert.equal(requests.length, 8);
+      assert.equal(result.answer, 'Done: both lists work in dark mode.');
+      assert.deepEqual(names(state), ['completed: NoteList works in dark mode', 'completed: NoteEditor works in dark mode', 'pending: The app builds']);
+
+      // The person reads which task is still open, whatever the answer says.
+      const shown: string[] = [];
+      const host: any = { render: { text: '', markdown: () => {}, note: (t: string) => shown.push(t), commitTasks: () => {} }, workspace: { state }, interactive: false, flags: {} };
+      await reportChatTurn(host, { content: result.answer, toolResults: [], iterations: 8, stopReason: STOP_REASONS.COMPLETE } as any, {});
+      assert.ok(shown.includes('Not finished: 1 of 3 tasks are still open (The app builds).'), shown.join(' | '));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
