@@ -25,6 +25,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node scripts/test.mjs",
     "eval": "node scripts/eval.mjs",
+    "eval:today": "node scripts/eval.mjs --only plan-own-folder,done-typecheck,done-page,dotnet-while-running",
     "bench:edit": "node --import tsx scripts/edit-bench.ts",
     "prepare": "node scripts/install-hooks.mjs"
   },

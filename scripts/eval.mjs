@@ -1,4 +1,5 @@
 // `npm run eval -- --model <name>`: drive real ocode chat turns through fixed tasks and score how the model behaved.
+// `npm run eval:today -- --model <name>`: the plan, task-list, check-before-done and .NET tasks only; needs no lab repos.
 // `npm run eval -- --mine <dir...>`: group the tool errors in saved sessions, so the next argument fix comes from data.
 import { spawn, spawnSync } from 'node:child_process';
 import { cpSync, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -359,6 +360,22 @@ const FORMAT_APP = {
   ].join('\n'),
 };
 
+// The task list as the run left it: the last todo_write that was accepted, one "[x] …" line per task. Empty: never kept.
+function taskList(cwd) {
+  const session = sessionOf(cwd);
+  const messages = session?.messages ?? [];
+  const names = new Map(messages.flatMap((m) => (m.tool_calls ?? []).map((c) => [c.id, c.function?.name])));
+  const last = [...messages].reverse().find((m) => m.role === 'tool' && names.get(m.tool_call_id) === 'todo_write' && /^OK todo_write/.test(String(m.content ?? '')));
+  return last ? String(last.content).replace(/^OK todo_write — /, '').split('\n').filter((line) => /^\[[x~ ]\]/.test(line)) : [];
+}
+// Every task ticked, which todo_write allows only on evidence.
+const allTicked = (cwd) => {
+  const tasks = taskList(cwd);
+  return tasks.length > 0 && tasks.every((line) => line.startsWith('[x]'));
+};
+const has = (command) => sh(`${command} --version`, undefined, 30_000).status === 0;
+const TSC = JSON.stringify(join(root, 'node_modules', 'typescript', 'bin', 'tsc'));
+
 const SCENARIOS = [
   {
     id: 'node-rename',
@@ -568,7 +585,60 @@ const SCENARIOS = [
     setup: (cwd) => writeAll(cwd, PRICING),
     prompt: 'Delegate this to a coding subagent with delegate_task: in src/pricing.js rename the parameter rate to taxRate everywhere, without changing behaviour, and run node test.js. Then tell me what it changed.',
     check: (cwd, run) => run.tools.includes('delegate_task') && sh('node test.js', cwd).status === 0 && !/\brate\b/.test(read(join(cwd, 'src/pricing.js'))),
-  },  // Web UI from nothing: passes when check_page finds no errors (overflow, WCAG A/AA, script errors, failed loads) and
+  },  // What a plan should do: a new project lands in its own folder, not a copy nested inside it; the work passes its tests;
+  // and every task ends ticked, which takes evidence (a command that passed, or what showed it works).
+  {
+    id: 'plan-own-folder',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, { 'README.md': '# workspace\n' }),
+    args: ['--plan'],
+    prompt:
+      'Build a small notes command-line tool in Node.js in its own folder named notes-cli: `node notes.js add <text>`, ' +
+      '`node notes.js list` and `node notes.js delete <n>`, with notes kept in notes.json. Add tests with node:test ' +
+      '(no dependencies) and make `npm test` pass.',
+    check: (cwd) => existsSync(join(cwd, 'notes-cli', 'package.json')) && !existsSync(join(cwd, 'notes-cli', 'notes-cli')) &&
+      sh('npm test', join(cwd, 'notes-cli')).status === 0 && allTicked(cwd),
+  },
+  // The check before "done" (agent.beforeDone auto) type-checks a TypeScript project; the work passes it in the end.
+  {
+    id: 'done-typecheck',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, {
+      'package.json': JSON.stringify({ name: 'stats', private: true, scripts: { typecheck: `node ${TSC} --noEmit` } }, null, 2),
+      'tsconfig.json': JSON.stringify({ compilerOptions: { strict: true, target: 'es2022', module: 'nodenext', noEmit: true }, include: ['src'] }, null, 2),
+      'src/index.ts': "export const greeting: string = 'stats';\n",
+    }),
+    prompt:
+      'Make a todo list for this, then work through it: add a function average(nums: number[]): number to src/stats.ts ' +
+      'that returns 0 for an empty array, and a function median(nums: number[]): number beside it; use both in ' +
+      'src/index.ts to export the average and median of [3, 1, 2].',
+    check: (cwd) => sh('npm run typecheck', cwd).status === 0 && /export function average/.test(read(join(cwd, 'src/stats.ts'))) && allTicked(cwd),
+  },
+  // A static page: checked in a browser before "done" (the page step of auto), and the task list ends ticked.
+  {
+    id: 'done-page',
+    repo: null,
+    setup: (cwd) => writeAll(cwd, { 'README.md': '# site\n' }),
+    prompt:
+      'Make a todo list, then build a one-page portfolio as index.html with styles.css (no frameworks): a header with ' +
+      'navigation, an about section, three project cards, and a contact form with name and email fields.',
+    check: (cwd, run) => existsSync(join(cwd, 'index.html')) && run.tools.includes('check_page') &&
+      sh(`node "${join(root, 'scripts', 'check-page.mjs')}" index.html`, cwd, 120_000).status === 0 && allTicked(cwd),
+  },
+  // .NET while the app runs: the check before "done" builds away from bin/, so the running app's locked files never fail it.
+  {
+    id: 'dotnet-while-running',
+    repo: null,
+    needs: 'dotnet',
+    setup: (cwd) => {
+      sh('dotnet new web -o api', cwd, 300_000);
+      commitAll(cwd);
+    },
+    inputs: ['run the api in the background and tell me its address', 'add a GET /version endpoint that returns "1.0"'],
+    check: (cwd, run) => /\/version/.test(read(join(cwd, 'api', 'Program.cs'))) && sh('dotnet build -p:BaseOutputPath=obj/eval-check/', join(cwd, 'api'), 300_000).status === 0 &&
+      !/Could not copy/.test(read(run.logFile)),
+  },
+  // Web UI from nothing: passes when check_page finds no errors (overflow, WCAG A/AA, script errors, failed loads) and
   // the asked-for parts are there. Whether the model loaded the ui-ux skill shows in the run's tools, not in the score.
   {
     id: 'web-landing-page',
@@ -747,6 +817,7 @@ async function runScenario(model, scenario, base, timeoutMs) {
   const modelCalls = Number(/(\d+) model calls?/.exec(out)?.[1] ?? 0);
   const result = {
     id: scenario.id,
+    logFile,
     seconds: Math.round((Date.now() - started) / 1000),
     timedOut: run.timedOut,
     exit: run.code,
@@ -774,6 +845,10 @@ async function evaluate() {
   // One live run at a time: the backend cannot take parallel sessions.
   const results = [];
   for (const scenario of picked) {
+    if (scenario.needs && !has(scenario.needs)) {
+      console.log(`  ${scenario.id} skipped: needs ${scenario.needs}`);
+      continue;
+    }
     process.stdout.write(`  ${scenario.id} … (up to ${Math.round((timeoutMs * (scenario.inputs?.length ?? 1)) / 1000)}s; follow ${join(base, `${scenario.id}.out.txt`)}) `);
     const r = await runScenario(model, scenario, base, timeoutMs);
     results.push(r);
