@@ -40,12 +40,12 @@ export function frameworksOf(pkg: PackageJson): Framework[] {
 const ESLINT_SCRIPT_EXTENSIONS = ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts'];
 
 /**
- * ESLint run on given files, when the project has ESLint: script files, and a framework's own files when its ESLint
+ * ESLint run on given files (`run` is how to start it), when the project has ESLint: script files, and a framework's own files when its ESLint
  * plugin is installed (without the plugin ESLint skips such a file with a warning).
  */
-export function eslintFiles(pkg: PackageJson): FileScopedCommand | undefined {
+export function eslintFiles(pkg: PackageJson, run: string[] = ['npx', 'eslint']): FileScopedCommand | undefined {
   const deps = dependenciesOf(pkg);
   if (!deps.eslint) return undefined;
   const extra = FRAMEWORKS.flatMap((f) => (f.eslint?.plugins.some((p) => deps[p]) ? f.eslint.extensions : []));
-  return { argv: ['npx', 'eslint'], extensions: [...new Set([...ESLINT_SCRIPT_EXTENSIONS, ...extra])] };
+  return { argv: run, extensions: [...new Set([...ESLINT_SCRIPT_EXTENSIONS, ...extra])] };
 }

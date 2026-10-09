@@ -4,6 +4,21 @@ import { eslintFiles, frameworksOf } from '../frameworks';
 import type { StackInfo } from '../../types';
 import type { Language } from './types';
 
+/**
+ * A command a package installs, run with node from the project's own node_modules: `node node_modules/typescript/bin/tsc`.
+ * npx finds the same file, but it starts a node of its own to look for it first, which costs seconds per check on
+ * Windows. npx stays the fallback when the package is not installed here.
+ */
+async function localBin(root: string, pkgName: string, binName: string): Promise<string[]> {
+  const pkgDir = path.join(root, 'node_modules', pkgName);
+  const manifest = await readJson(path.join(pkgDir, 'package.json'));
+  const bin = typeof manifest?.bin === 'string' ? manifest.bin : manifest?.bin?.[binName];
+  if (typeof bin === 'string' && (await exists(path.join(pkgDir, bin)))) {
+    return ['node', path.posix.join('node_modules', pkgName, bin.split(path.sep).join('/'))];
+  }
+  return ['npx', binName];
+}
+
 async function detectNode(root: string): Promise<StackInfo | null> {
   const pkg = await readJson(path.join(root, 'package.json'));
   if (!pkg) return null;
@@ -14,7 +29,8 @@ async function detectNode(root: string): Promise<StackInfo | null> {
   // JavaScript projects pull it in for editor types, and tsc --noEmit over them checks nothing they wrote.
   const usesTsc = Object.values(scripts).some((cmd) => /\btsc\b/.test(String(cmd)));
   const hasTs = usesTsc || (await exists(path.join(root, 'tsconfig.json')));
-  const eslint = eslintFiles(pkg);
+  const tsc = [...(await localBin(root, 'typescript', 'tsc')), '--noEmit'];
+  const eslint = eslintFiles(pkg, await localBin(root, 'eslint', 'eslint'));
   return {
     id: 'node',
     label: hasTs ? 'TypeScript' : 'Node.js',
@@ -23,9 +39,9 @@ async function detectNode(root: string): Promise<StackInfo | null> {
     root,
     marker: 'package.json',
     test: scripts.test ? (pm === 'npm' ? ['npm', 'test'] : [pm, 'test']) : undefined,
-    build: scripts.build ? script('build') : hasTs ? ['npx', 'tsc', '--noEmit'] : undefined,
+    build: scripts.build ? script('build') : hasTs ? tsc : undefined,
     // Its own type check if it names one; else the compiler's, for TypeScript; plain JavaScript has no compile step.
-    check: scripts.typecheck ? script('typecheck') : hasTs ? ['npx', 'tsc', '--noEmit'] : scripts.lint ? script('lint') : undefined,
+    check: scripts.typecheck ? script('typecheck') : hasTs ? tsc : scripts.lint ? script('lint') : undefined,
     lint: scripts.lint ? script('lint') : undefined,
     fileScoped: eslint ? { lint: eslint } : undefined,
     run: scripts.dev ? script('dev') : scripts.start ? (pm === 'npm' ? ['npm', 'start'] : [pm, 'start']) : undefined,

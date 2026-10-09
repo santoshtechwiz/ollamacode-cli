@@ -37,6 +37,36 @@ describe('a Node project', () => {
   });
 });
 
+describe('a Node project\'s own tools', () => {
+  it('runs tsc and eslint from its node_modules with node, not through npx, when they are installed', async () => {
+    const root = project({ 'package.json': JSON.stringify({ devDependencies: { eslint: '9', typescript: '5' } }), 'tsconfig.json': '{}' });
+    try {
+      for (const [name, bin] of [['typescript', { tsc: 'bin/tsc' }], ['eslint', { eslint: './bin/eslint.js' }]] as const) {
+        const dir = path.join(root, 'node_modules', name);
+        fs.mkdirSync(path.join(dir, 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name, bin }));
+        fs.writeFileSync(path.join(dir, Object.values(bin)[0]), '');
+      }
+      const [stack] = await detectStacks(root);
+      assert.deepEqual(stack.check, ['node', 'node_modules/typescript/bin/tsc', '--noEmit']);
+      assert.deepEqual(stack.fileScoped?.lint?.argv, ['node', 'node_modules/eslint/bin/eslint.js']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to npx when they are not installed', async () => {
+    const root = project({ 'package.json': JSON.stringify({ devDependencies: { eslint: '9' } }), 'tsconfig.json': '{}' });
+    try {
+      const [stack] = await detectStacks(root);
+      assert.deepEqual(stack.check, ['npx', 'tsc', '--noEmit']);
+      assert.deepEqual(stack.fileScoped?.lint?.argv, ['npx', 'eslint']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('the LANGUAGES table', () => {
   it('every entry has a unique id, a label, a runtime, a way to be found, and only known verbs', () => {
     const ids = LANGUAGES.map((l) => l.id);
