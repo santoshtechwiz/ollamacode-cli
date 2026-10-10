@@ -104,7 +104,8 @@ export default defineTool({
     'python, powershell, bash when installed. ' +
     'Use it when an answer would take many read/search calls (discovery with conditions, JSON/config or dependency ' +
     'analysis, bulk search/replace, log analysis) and print the findings. For one read, search or edit use those ' +
-    'tools; for builds and tests use exec_shell.',
+    'tools; for builds and tests use exec_shell. The script must end by itself: start a server with exec_shell ' +
+    '(background: true), not inside a script.',
   parameters: {
     type: 'object',
     properties: {
@@ -211,7 +212,10 @@ export default defineTool({
         return fail(`Script timed out after ${request.timeoutMs}ms`, {
           code: TOOL_ERROR_CODE.ETIMEDOUT,
           display: presentation,
-          hint: 'Narrow what the script scans, or pass a larger timeout_ms.',
+          // A server, a listener or an open connection keeps a script alive forever: more time only waits longer.
+          hint: 'A script must end by itself. If it starts a server or keeps a connection or timer open, it never ends: ' +
+            'start the server with exec_shell (background: true) and check it from a separate script. ' +
+            'If it was still working through data, narrow what it scans, or pass a larger timeout_ms.',
           data,
         });
       }

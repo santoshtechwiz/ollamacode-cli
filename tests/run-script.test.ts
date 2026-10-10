@@ -81,6 +81,8 @@ describe('run_script', () => {
     assert.equal(result.ok, false);
     assert.equal(result.code, TOOL_ERROR_CODE.ETIMEDOUT);
     assert.equal(result.data.timedOut, true);
+    // A script held open by a server or timer never ends: "more time" would only wait longer, so the way out is named.
+    assert.match(String(result.hint), /background: true/);
     assert.equal(fs.existsSync(result.data.scriptPath), false);
   });
 
