@@ -78,7 +78,8 @@ Desktop.ini
 $RECYCLE.BIN/
 
 # IDE / editors
-.vscode/
+.vscode/*
+!.vscode/launch.json
 .idea/
 *.swp
 *.swo

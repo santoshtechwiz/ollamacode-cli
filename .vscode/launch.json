@@ -1,0 +1,69 @@
+{
+  // F5 in VS Code. ocode runs from source through tsx, so breakpoints in src/**/*.ts hit directly.
+  // Good places to stop for plan mode:
+  //   src/agent/planning/present-plan.tool.ts  execute()            the plan prompt and your answer
+  //   src/tool/execution/runtime.ts           lookOnlyReason()     why a change is refused, and the hint the model gets
+  //   src/agent/turn/index.ts                 switchWhenApproved() the switch from Plan to Agent mode
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "ocode: plan mode",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/cli.js",
+      "args": ["--plan", "--new", "--model", "${input:model}"],
+      "cwd": "${input:folder}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      "name": "ocode: agent mode",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/cli.js",
+      "args": ["--new", "--model", "${input:model}"],
+      "cwd": "${input:folder}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // No model, no tokens: the plan-mode tests, with a scripted model.
+      "name": "test: plan mode (no model)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/tests/plan-flow.test.ts",
+      "runtimeArgs": ["--import", "tsx", "--import", "./tests/setup.ts"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // Open any tests/*.test.ts file, then start this.
+      "name": "test: current file",
+      "type": "node",
+      "request": "launch",
+      "program": "${file}",
+      "runtimeArgs": ["--import", "tsx", "--import", "./tests/setup.ts"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // A saved session's plan and task-list calls, answered again by today's code. No model, no tokens.
+      "name": "replay: a saved session",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/replay.mts",
+      "args": ["${input:session}"],
+      "runtimeArgs": ["--import", "tsx"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    }
+  ],
+  "inputs": [
+    { "id": "model", "type": "promptString", "description": "Ollama model (as `ollama list` shows it)", "default": "qwen3-coder:30b" },
+    { "id": "folder", "type": "promptString", "description": "Folder ocode works in (it must exist; use a scratch folder)", "default": "C:\\projects\\ocode-lab" },
+    { "id": "session", "type": "promptString", "description": "Path to a saved session .json" }
+  ]
+}
