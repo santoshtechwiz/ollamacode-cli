@@ -306,8 +306,10 @@ describe('array-item-errors', () => {
   };
 
   describe('a wrong list item says what an item is, from the schema', () => {
-    it('an object item names its fields and what was sent', () => {
+    it('an object item names its fields and what was sent; an argument the tool does not take is named beside the ones it does', () => {
       assert.equal(errorOf('todo_write', { todos: ['Install deps'] }), 'todos[0] must be an object {content, status}, received a string');
+      // Told only that `command` was missing, a model sent `code` again and again: the mistake is the argument it sent.
+      assert.equal(errorOf('exec_shell', { code: 'ls' }), 'Missing required argument(s): command. It does not take code; its arguments are command, cwd, timeout_ms, background');
     });
   });
 });
