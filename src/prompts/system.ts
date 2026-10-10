@@ -77,8 +77,8 @@ function environmentSection(
 
   lines.push(
     '- Execution: each exec_shell starts in a fresh shell, so cd does not carry over to the next command. ' +
-      'Given no cwd, a command runs in the working project when there is one (its result says "(in folder/)"), otherwise in the workspace root; ' +
-      'paths in the command are relative to that folder. Pass cwd only when the command must run from a different directory.',
+      'Given no cwd, a command runs in the workspace root, so paths in it start there, as file paths do. ' +
+      'Pass cwd to run inside a project folder (npm install, npm test, dotnet build in that project).',
   );
 
   if (runtimes.python?.available) {

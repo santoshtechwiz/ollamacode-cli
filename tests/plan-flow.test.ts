@@ -64,6 +64,8 @@ describe('plan mode', () => {
       const [early, shown, late] = result.toolResults;
       assert.equal(early.result.ok, false, 'the write before approval is refused');
       assert.match(String(early.result.error), /plan mode/);
+      // The way out is named: a yes typed in chat never approves, so a model told only to "answer" asks again forever.
+      assert.match(String(early.result.hint), /present_plan/);
       assert.equal(shown.result.ok, true);
       assert.match(asked[0], /Create a\.txt[\s\S]*Start this plan now\?/);
       assert.equal(late.result.ok, true, 'the write after approval runs');
@@ -95,10 +97,11 @@ describe('plan mode', () => {
   it("an approved plan's steps are the task list, and the model is told to mark them", async () => {
     const root = tmp();
     try {
-      const steps = ['Create a.txt', 'Check it with cat'];
+      // Each step is an outcome, with the command that proves it when one does: the task it becomes is ticked when that passes.
+      const steps = [{ outcome: 'Create a.txt' }, { outcome: 'Check it with cat', verify: 'cat a.txt' }];
       const { result, state } = await planTurn(root, [['present_plan', { plan: 'Create a.txt; check it.', folder: '.', steps }]], () => 'Yes, start now');
-      assert.deepEqual(state.todos, steps.map((content) => ({ content, status: 'pending' })));
-      assert.match(String(result.toolResults[0].result.modelNote), /task list now:\n\[ \] Create a\.txt\n\[ \] Check it with cat\n[\s\S]*todo_write/);
+      assert.deepEqual(state.todos, [{ content: 'Create a.txt', status: 'pending' }, { content: 'Check it with cat', status: 'pending', verify: 'cat a.txt' }]);
+      assert.match(String(result.toolResults[0].result.modelNote), /task list now:\n\[ \] Create a\.txt\n\[ \] Check it with cat — verify: `cat a\.txt`\n[\s\S]*todo_write/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -227,7 +230,7 @@ describe('present-plan-agent', () => {
       assert.match(renderToolResult(result, 'present_plan'), /cannot change files.*Give the plan as your answer/);
     });
 
-    it('an approved folder is made, and becomes where commands with no folder run once something is in it', async () => {
+    it('an approved folder is made and becomes the working project once something is in it; a command with no folder still starts at the root', async () => {
       const fs = await import('node:fs');
       const os = await import('node:os');
       const path = await import('node:path');
@@ -241,6 +244,11 @@ describe('present-plan-agent', () => {
         assert.equal(workingProject(state), null);
         fs.writeFileSync(path.join(root, 'e-hailing-service', 'package.json'), '{}');
         assert.equal(workingProject(state), path.join(root, 'e-hailing-service'));
+        // The paths the model writes start at the root, as file paths do: `ls e-hailing-service` must find the folder, not
+        // look for e-hailing-service/e-hailing-service. Seen with `ls ./notes-app` and `dotnet run --project todo-app/…`.
+        const ran: any = (await createExecutor({ root, state: Object.assign(state, { autoFixAuthorized: true }) }).run('exec_shell', { command: 'node -e "console.log(require(\'fs\').existsSync(\'e-hailing-service/package.json\'))"' })).result;
+        assert.equal(ran.ok, true, ran.error);
+        assert.match(String(ran.display), /\btrue\b/);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

@@ -171,9 +171,10 @@ export default defineTool({
     }
 
     // A project in a subfolder is its own repository: the call runs there — the folder given, else the working project
-    // when the workspace root is no project itself (resolveCallCwd decides, as for shell commands).
+    // when the workspace root is no project itself.
     {
-      const where = await resolveCallCwd(args, ctx);
+      const working = args?.cwd ? undefined : workingProject(ctx.state ? { ...ctx.state, root: ctx.root ?? ctx.cwd } : null);
+      const where = await resolveCallCwd(working ? { ...args, cwd: working } : args, ctx);
       if (where.result) return where.result;
       ctx = { ...ctx, cwd: where.cwd };
     }

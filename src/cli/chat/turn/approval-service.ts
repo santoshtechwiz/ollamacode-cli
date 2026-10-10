@@ -1,5 +1,5 @@
 import { APPROVAL, type ApprovalVerdict } from '../../../protocol';
-import { PermissionPolicy, confirmOf, type ApproveFn } from '../../../tool/policy/permission-policy';
+import { PermissionPolicy, confirmOf, groupGrant, type ApproveFn } from '../../../tool/policy/permission-policy';
 import { confirmRisky } from '../../../ui/prompts';
 import { describeCall } from '../../../tool/core/tool-call';
 import { resolveYes } from '../../flags';
@@ -8,7 +8,7 @@ import { holdingTerminal } from './holding-terminal';
 import type { ChatTurnContext } from './context';
 import type { ToolDef } from '../../../types';
 
-type PromptCall = { name: string; args: Record<string, unknown>; dangerous?: string; confirm?: string };
+type PromptCall = { name: string; args: Record<string, unknown>; dangerous?: string; confirm?: string; group?: string };
 
 type PromptFn = (question: string, call: PromptCall) => Promise<string>;
 
@@ -21,9 +21,13 @@ export function createPromptFn(host: ChatTurnContext, signal: AbortSignal): Prom
     const [, ...why] = question.split('\n');
     const shown = preview?.question ? [preview.question, ...why].join('\n') : question;
     const ans = await holdingTerminal(host, () =>
-      confirmRisky(shown, { danger: call.dangerous, confirm: call.confirm, alwaysScope: 'routine changes this session', signal })
+      confirmRisky(shown, { danger: call.dangerous, confirm: call.confirm, alwaysScope: call.group ? `${call.group} tools this session` : 'routine changes this session', signal })
     );
-    if (ans === 'always') render.note('→ won\'t ask again this session for routine changes; deletes, git pushes and merges, and risky commands still ask', 'dim');
+    if (ans === 'always') {
+      render.note(call.group
+        ? `→ won't ask again this session for ${call.group} tools; other changes still ask as before`
+        : '→ won\'t ask again this session for routine changes; deletes, git pushes and merges, and risky commands still ask', 'dim');
+    }
     if (ans === 'no') render.note('→ declined; the model is told the call did not run', 'dim');
     return ans;
   };
@@ -78,7 +82,13 @@ export function createApproveFn(host: ChatTurnContext, promptFn: PromptFn): Appr
     // A path outside the workspace is asked about every time: an "always" there would open more than this one call.
     const confirm = confirmOf(def ?? ({ name } as ToolDef), args, { cwd: workspace.cwd, root: workspace.state?.root ?? workspace.cwd, state: workspace.state })
       ?? (reason?.outside ? 'reaches outside the workspace' : undefined);
-    const ans = await promptFn(question, { name, args, dangerous: reason?.dangerous ?? undefined, confirm });
+    const group = def?.grantGroup;
+    const ans = await promptFn(question, { name, args, dangerous: reason?.dangerous ?? undefined, confirm, ...(group ? { group } : {}) });
+    if (ans === 'always' && group) {
+      // That server's tools, and nothing more: the routine approval would not cover them anyway.
+      agentState.permissions.alwaysAllowTools.add(groupGrant(group));
+      return true;
+    }
     if (ans === 'always') {
       agentState.permissions.alwaysAllowTools.add(name);
       agentState.permissions.alwaysAllowAll = true;
