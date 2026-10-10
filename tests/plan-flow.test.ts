@@ -64,6 +64,8 @@ describe('plan mode', () => {
       const [early, shown, late] = result.toolResults;
       assert.equal(early.result.ok, false, 'the write before approval is refused');
       assert.match(String(early.result.error), /plan mode/);
+      // The way out is named: a yes typed in chat never approves, so a model told only to "answer" asks again forever.
+      assert.match(String(early.result.hint), /present_plan/);
       assert.equal(shown.result.ok, true);
       assert.match(asked[0], /Create a\.txt[\s\S]*Start this plan now\?/);
       assert.equal(late.result.ok, true, 'the write after approval runs');

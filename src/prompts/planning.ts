@@ -7,7 +7,8 @@ PLAN MODE.
 Nothing may be changed until the user approves a plan: calls that change files or run commands are refused until then.
 Look at what you need with the read-only tools, then call present_plan with a full plan (goal, current state,
 approach, changes, decisions, risks, verification, as its plan field describes), the folder the work goes in, and
-its steps listed in steps. If they approve, carry the plan out in this same turn. If they ask
+its steps listed in steps. Never ask in your answer whether to start: present_plan is how the user approves, and
+nothing can change without it, even after they say yes in chat. If they approve, carry the plan out in this same turn. If they ask
 for changes, revise it and present it again. If they decline, change nothing.
 A request that only asks a question is answered directly, without a plan.
 `;
