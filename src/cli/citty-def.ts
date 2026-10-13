@@ -67,7 +67,7 @@ export const CLI_HELP = `
 
   ${bold('Options')}
     ${cyan('--model <name>')}                 pick a model
-    ${cyan('--provider <ollama|hf>')}         force a provider
+    ${cyan('--provider <name>')}              ollama, ollama-cloud, hf or openrouter
     ${cyan('--plan')}                         plan and approve before acting
     ${cyan('-y, --yes')}                      auto-approve risky tools
     ${cyan('--scope <path>')}                 work outside the current directory

@@ -602,6 +602,15 @@ token with Inference Providers enabled, from
 ocode init --provider hf --model openai/gpt-oss-20b --token hf_...
 ```
 
+**OpenRouter.** One key for many hosted models (Qwen, DeepSeek, GLM, Kimi, and
+free ones whose id ends in `:free`). Get a key at
+[openrouter.ai/settings/keys](https://openrouter.ai/settings/keys), or set
+`OPENROUTER_API_KEY`. Only models that take tool calls are listed.
+
+```sh
+ocode init --provider openrouter --model qwen/qwen3-coder --token sk-or-...
+```
+
 Tokens are saved with restricted file permissions, hidden in output, and never
 passed to commands the agent runs.
 

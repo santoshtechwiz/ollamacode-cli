@@ -58,7 +58,9 @@ export async function run(flags: any) {
           `                   ocode init --provider ollama-cloud --token <key>\n` +
           `    ${cyan('HuggingFace')}   create a token at huggingface.co/settings/tokens\n` +
           `                   (enable "Make calls to Inference Providers"), then:\n` +
-          `                   ocode init --provider hf --token hf_...\n\n`
+          `                   ocode init --provider hf --token hf_...\n` +
+          `    ${cyan('OpenRouter')}    create a key at openrouter.ai/settings/keys, then:\n` +
+          `                   ocode init --provider openrouter --token sk-or-...\n\n`
       );
       process.exitCode = 1;
       return;

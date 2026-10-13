@@ -6,6 +6,7 @@ import { validateProvider, looksLikeProvider } from './base';
 import { ollamaProvider } from './ollama';
 import { ollamaCloudProvider } from './ollama-cloud';
 import { huggingfaceProvider } from './huggingface';
+import { openrouterProvider } from './openrouter';
 import { logger } from '../../core/logger';
 
 const registry = new Map();
@@ -17,6 +18,7 @@ const ALIASES = new Map([
   ['ollama_cloud', 'ollama-cloud'],
   ['ollamacloud', 'ollama-cloud'],
   ['cloud', 'ollama-cloud'],
+  ['open-router', 'openrouter'],
 ]);
 
 function registerProvider(provider: import('../../types.ts').ProviderDef, { override = false }: any = {}) {
@@ -91,4 +93,5 @@ export async function discoverUserProviders({ force = false }: any = {}) {
 registerProvider(ollamaProvider);
 registerProvider(ollamaCloudProvider);
 registerProvider(huggingfaceProvider);
+registerProvider(openrouterProvider);
 
