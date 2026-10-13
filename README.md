@@ -605,7 +605,9 @@ ocode init --provider hf --model openai/gpt-oss-20b --token hf_...
 **OpenRouter.** One key for many hosted models (Qwen, DeepSeek, GLM, Kimi, and
 free ones whose id ends in `:free`). Get a key at
 [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys), or set
-`OPENROUTER_API_KEY`. Only models that take tool calls are listed.
+`OPENROUTER_API_KEY`. Only models that take tool calls are listed. To see or pick
+only the free ones (or only the paid ones): `ocode models --free`, `ocode init
+--provider openrouter --free`, or `/model free` in a chat (`--paid`, `/model paid`).
 
 ```sh
 ocode init --provider openrouter --model qwen/qwen3-coder --token sk-or-...

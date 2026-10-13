@@ -90,13 +90,35 @@ async function resolveProvider({ providerId, interactive = false, requireAvailab
   return available[0].provider;
 }
 
-export async function resolveModel(provider: import('../types.ts').ProviderDef, { model, interactive = false }: any = {}): Promise<string> {
+/** Only the free models, or only the paid ones: the person's choice in `ocode models` and `/model`. */
+export type PriceFilter = 'free' | 'paid';
+
+/** The models that match, and whether the provider says which models are free at all. */
+export function byPrice(models: import('../types.ts').ModelEntry[], price?: PriceFilter): { models: import('../types.ts').ModelEntry[]; priced: boolean } {
+  const priced = models.some((m) => m.free !== undefined);
+  if (!price) return { models, priced };
+  return { models: models.filter((m) => m.free === (price === 'free')), priced };
+}
+
+/** The picker's hint for a model: its size, and "free" where the provider says so. */
+export function modelHint(model: import('../types.ts').ModelEntry): string {
+  return [formatModelSize(model.size), model.free ? 'free' : ''].filter(Boolean).join(' · ');
+}
+
+export async function resolveModel(provider: import('../types.ts').ProviderDef, { model, interactive = false, price }: { model?: string; interactive?: boolean; price?: PriceFilter } = {}): Promise<string> {
   if (model) return model;
 
   const saved = loadConfig().models[provider.id];
-  if (saved && !interactive) return saved;
+  if (saved && !interactive && !price) return saved;
 
-  const models = await provider.listModels();
+  const all = await provider.listModels();
+  const { models, priced } = byPrice(all, price);
+  if (price && all.length > 0 && !priced) {
+    throw new TcError(`${provider.label} does not say which models are free; name one with --model`, { code: PROVIDER_ERROR_CODE.ENOMODELS });
+  }
+  if (price && all.length > 0 && models.length === 0) {
+    throw new TcError(`${provider.label} lists no ${price} models that ocode can use`, { code: PROVIDER_ERROR_CODE.ENOMODELS });
+  }
   if (models.length === 0) {
     throw new TcError(
       provider.id === 'ollama'
@@ -114,7 +136,7 @@ export async function resolveModel(provider: import('../types.ts').ProviderDef, 
       models.slice(0, 15).map((m) => ({
         label: m.name,
         value: m.name,
-        hint: formatModelSize(m.size),
+        hint: modelHint(m),
       }))
     );
     if (picked) return String(picked);

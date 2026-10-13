@@ -105,7 +105,8 @@ describe('openai-compatible providers', () => {
       if (req.url === '/api/v1/models') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ data: [
-          { id: 'qwen/qwen3-coder', context_length: 262144, supported_parameters: ['tools', 'reasoning'] },
+          { id: 'qwen/qwen3-coder', context_length: 262144, supported_parameters: ['tools', 'reasoning'], pricing: { prompt: '0.0000002', completion: '0.0000008' } },
+          { id: 'qwen/qwen3-coder:free', context_length: 262144, supported_parameters: ['tools'], pricing: { prompt: '0', completion: '0' } },
           { id: 'some/chat-only', context_length: 8192, supported_parameters: ['temperature'] },
         ] }));
       }
@@ -128,7 +129,12 @@ describe('openai-compatible providers', () => {
     const provider: any = getProvider('openrouter');
     try {
       provider.clearCache();
-      assert.deepEqual(await provider.listModels(), [{ name: 'qwen/qwen3-coder' }]);
+      const listed = await provider.listModels();
+      assert.deepEqual(listed, [{ name: 'qwen/qwen3-coder', free: false }, { name: 'qwen/qwen3-coder:free', free: true }]);
+      // Free or paid by its prices; a provider whose list has no prices says so instead of showing nothing.
+      const { byPrice } = await import('../src/model/session');
+      assert.deepEqual(byPrice(listed, 'free').models.map((m) => m.name), ['qwen/qwen3-coder:free']);
+      assert.deepEqual(byPrice(listed, 'paid').models.map((m) => m.name), ['qwen/qwen3-coder']);
       assert.equal((await provider.modelInfo('qwen/qwen3-coder')).contextLength, 262144);
       const reply = await provider.streamChat({ model: 'qwen/qwen3-coder', messages: [{ role: 'user', content: 'hi' }], tools: [{}] });
       assert.deepEqual(reply.toolCalls.map((c: any) => [c.function.name, c.function.arguments]), [['read_file', { path: 'a.txt' }]]);
@@ -139,7 +145,9 @@ describe('openai-compatible providers', () => {
 
       // NVIDIA's list says nothing about tools, so it keeps every model, and claims no window it was not told.
       const nvidia: any = getProvider('nvidia');
-      assert.equal((await nvidia.listModels()).length, 2);
+      const nvidiaModels = await nvidia.listModels();
+      assert.equal(nvidiaModels.length, 3);
+      assert.equal(byPrice(nvidiaModels, 'free').priced, false, 'its list gives no prices');
       assert.equal((await nvidia.modelInfo('qwen/qwen3-coder')).contextLength, undefined);
       const call = await nvidia.streamChat({ model: 'qwen/qwen3-coder', messages: [{ role: 'user', content: 'hi' }], tools: [{}] });
       assert.equal(call.toolCalls[0]?.function.name, 'read_file');

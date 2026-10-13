@@ -1,5 +1,5 @@
 import { dim, icons, red, yellow } from '../../../ui/ansi';
-import { rememberSession } from '../../../model/session';
+import { rememberSession, byPrice, type PriceFilter } from '../../../model/session';
 import { refreshModelCapabilities, describeCapabilities, modelFitOnce } from '../../../agent/workspace/profile';
 import { judgeModel } from '../../../agent/workspace/model-fit';
 import { formatModelFit } from '../../chat/render';
@@ -7,7 +7,7 @@ import { CmdResult } from './types';
 import { reportCard } from '../../eval-card';
 
 export async function runModel(ctx: any, arg: string): Promise<boolean | 'exit'> {
-  let models: { name: string; size?: number; }[];
+  let models: import('../../../types.ts').ModelEntry[];
   try {
     models = await ctx.session.provider.listModels();
   } catch (err) {
@@ -15,8 +15,19 @@ export async function runModel(ctx: any, arg: string): Promise<boolean | 'exit'>
     return CmdResult.HANDLED;
   }
   const names = models.map((m) => m.name);
+  // "/model free" and "/model paid" pick from those only, where the provider's list says which are which.
+  const price = (['free', 'paid'] as const).find((word) => word === arg.trim().toLowerCase()) as PriceFilter | undefined;
+  if (price) {
+    const { models: matching, priced } = byPrice(models, price);
+    const label = ctx.session.provider.label;
+    if (!priced || matching.length === 0) {
+      ctx.write(`${dim(`  ${!priced ? `${label} does not say which models are free` : `${label} lists no ${price} models`}`)}\n`);
+      return CmdResult.HANDLED;
+    }
+    models = matching;
+  }
   let picked: any = null;
-  if (arg.trim()) {
+  if (arg.trim() && !price) {
     const wanted = String(arg).trim();
     if (names.includes(wanted)) picked = wanted;
     else {
@@ -28,7 +39,7 @@ export async function runModel(ctx: any, arg: string): Promise<boolean | 'exit'>
     const fits = await pickerFits(ctx.session.provider, shown.map((m) => m.name));
     picked = await ctx.select(
       'Model:',
-      shown.map((m) => ({ label: m.name, value: m.name, hint: fits.get(m.name) }))
+      shown.map((m) => ({ label: m.name, value: m.name, hint: [m.free && price !== 'free' ? 'free' : '', fits.get(m.name)].filter(Boolean).join(' · ') }))
     );
   }
   if (picked) {

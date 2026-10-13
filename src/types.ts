@@ -164,12 +164,20 @@ export interface StreamChatResult {
   metrics?: { promptMs?: number; genMs?: number; loadMs?: number; promptTokensPerSec?: number; genTokensPerSec?: number; };
 }
 
+/** A model as a provider lists it. */
+export interface ModelEntry {
+  name: string;
+  size?: number;
+  /** Costs nothing to use: true or false only where the provider's list says so (OpenRouter's prices); else unset. */
+  free?: boolean;
+}
+
 export interface ProviderDef {
   id: string;
   label: string;
   detect: () => Promise<ProviderDetect>;
   ensureAuth: (opts?: { interactive?: boolean; token?: string; }) => Promise<boolean>;
-  listModels: () => Promise<{ name: string; size?: number; }[]>;
+  listModels: () => Promise<ModelEntry[]>;
   streamChat: (p: StreamChatParams) => Promise<StreamChatResult>;
   tokenEnvVar?: string;
 }

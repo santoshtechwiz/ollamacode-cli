@@ -15,7 +15,7 @@ import {
 } from '../../context/memory';
 import { select, confirm, isInteractive } from '../../ui/prompts';
 import { bold, dim, green, red, cyan, yellow, icons } from '../../ui/ansi';
-import { resolveWantProjectMemory } from '../flags';
+import { resolveWantProjectMemory, priceFlag } from '../flags';
 import { withProgress } from '../../ui/progress';
 import { TcError } from '../../core/errors';
 import { statType } from '../../tool/filesystem/_fs';
@@ -98,7 +98,7 @@ export async function run(flags: any) {
 
   let model;
   try {
-    model = await resolveModel(provider, { model: flags.model, interactive: interactive && !flags.model });
+    model = await resolveModel(provider, { model: flags.model, interactive: interactive && !flags.model, price: priceFlag(flags) });
   } catch (err) {
     process.stdout.write(`\n  ${red(icons.warn)} ${ (err as Error).message}\n`);
     process.exitCode = 1;

@@ -28,6 +28,15 @@ interface ListedModel {
   id: string;
   context_length?: number;
   supported_parameters?: string[];
+  /** USD per token, as strings ("0" for a free model). */
+  pricing?: { prompt?: string; completion?: string };
+}
+
+/** Free when both prices are listed and are zero; unset when the list gives no prices. */
+function isFree(model: ListedModel): boolean | undefined {
+  const { prompt, completion } = model.pricing ?? {};
+  if (prompt === undefined || completion === undefined) return undefined;
+  return Number(prompt) === 0 && Number(completion) === 0;
 }
 
 function assertAuthOk(res: Response) {
@@ -128,7 +137,10 @@ export const openrouterProvider = {
   },
 
   async listModels() {
-    return (await fetchModels(getToken())).map((m) => ({ name: m.id }));
+    return (await fetchModels(getToken())).map((m) => {
+      const free = isFree(m);
+      return free === undefined ? { name: m.id } : { name: m.id, free };
+    });
   },
 
   /** What the model list says about one model: its window and whether it takes tools and reasons. */
