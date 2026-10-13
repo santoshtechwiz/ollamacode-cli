@@ -102,9 +102,14 @@ function notFoundFailure(
         ? `\n…(${totalLines - HEADLESS_PREVIEW_LINES} more lines — pass a search that appears in the file, or read it first)`
         : '';
 
-  let hint =
-    'The file exists and was read; copy the target text verbatim from the listing below, ' +
-    'including line breaks and indentation.';
+  // A search that matched for a while and then parted ways was a long block retyped: asked to copy it again, models
+  // retyped the same block from the top with a new slip each time. The way out is a shorter search, or the whole file.
+  let hint = where.divergedAt !== undefined
+    ? `The search is right up to line ${where.divergedAt - 1} and wrong from line ${where.divergedAt}. Do not send the ` +
+      'long block again: keep search to the few lines you change, copied from the listing below, with just enough ' +
+      'around them to name one place. To change most of the file, write it whole with write_file.'
+    : 'The file exists and was read; copy the target text verbatim from the listing below, ' +
+      'including line breaks and indentation.';
 
   // An empty preview (file emptied since the plan) gets its own hint, distinct from a missing file.
   if (totalLines === 0) {

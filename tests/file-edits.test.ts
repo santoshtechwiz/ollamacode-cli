@@ -32,6 +32,10 @@ describe('edit-failure-wording', () => {
       assert.match(String(result.error), /differs at line 8: the file has “findAll\(\) \{” where the search has “getAll\(\) \{”/);
       assert.match(String(result.display), /^> +8: {3}findAll\(\) \{$/m, 'the listing shows the line the error names, marked');
       assert.doesNotMatch(String(result.hint), /Did you mean/, 'no second guess at where the search was meant to go');
+      // A long block retyped and wrong at one line: asked to copy it again, the model retyped it from the top with a
+      // new slip each time. The way out is a search of only the lines it changes, or the whole file.
+      assert.match(String(result.hint), /right up to line 7 and wrong from line 8/);
+      assert.match(String(result.hint), /few lines you change[\s\S]*write_file/);
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
