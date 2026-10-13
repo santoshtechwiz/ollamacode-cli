@@ -180,6 +180,15 @@ export interface FileScopedCommand {
   extensions: string[];
 }
 
+/** A tsconfig's file list as written: its patterns are relative to `base`, the folder it is in, project-relative. */
+export interface TsconfigScope {
+  base: string;
+  files: string[];
+  include: string[];
+  exclude: string[];
+  allowJs: boolean;
+}
+
 export interface StackInfo {
   id: string;
   label: string;
@@ -197,6 +206,8 @@ export interface StackInfo {
   lint?: string[];
   /** Verbs whose command also takes files: a check after an edit runs on only the changed files with these extensions. */
   fileScoped?: Partial<Record<import('./env/languages/types.ts').Verb, FileScopedCommand>>;
+  /** The files the type check reads, from the tsconfig it uses; unset when ocode cannot tell (see check-plan readsFile). */
+  checkReads?: TsconfigScope;
   marker?: string;
 }
 

@@ -25,6 +25,12 @@ describe('autoVerbs before done', () => {
 
   it('type-checks and lints a project whose build would add nothing', () => {
     assert.deepEqual(autoVerbs('done', plainTs, ['src/a.ts'], never), ['check', 'lint']);
+    // A file its tsconfig never reads (a script at the root of a project that checks src/) is not checked by tsc: the
+    // check ran anyway and the answer said "checked" for a file it never looked at.
+    const scoped: StackInfo = { ...plainTs, fileScoped: undefined, checkReads: { base: '', files: [], include: ['src/**/*.ts', 'bin/**/*.js'], exclude: ['node_modules'], allowJs: true } };
+    assert.deepEqual(autoVerbs('done', scoped, ['fizzbuzz.js'], never), []);
+    assert.deepEqual(autoVerbs('done', scoped, ['src/a.ts'], never), ['check']);
+    assert.deepEqual(autoVerbs('done', scoped, ['bin/cli.js'], never), ['check'], 'JavaScript it includes, with allowJs');
   });
 
   it('leaves out lint once it proved slow here, and still builds', () => {
