@@ -125,7 +125,7 @@ export function resolveShell(): ShellSpec {
 /** The environment every child gets: no agent credentials, no colour, CI set. */
 export function childEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
-  for (const key of ['HF_TOKEN', 'OPENROUTER_API_KEY', 'OLLAMACODE_HOME', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY']) {
+  for (const key of ['HF_TOKEN', 'OPENROUTER_API_KEY', 'NVIDIA_API_KEY', 'OLLAMACODE_HOME', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY']) {
     delete env[key];
   }
   env.NO_COLOR = '1';

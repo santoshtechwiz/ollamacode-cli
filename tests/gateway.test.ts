@@ -96,8 +96,8 @@ describe('reply-budget', () => {
   });
 });
 
-describe('openrouter', () => {
-  it('lists only tool-taking models, reads a streamed tool call and its usage, and names a bad key', async () => {
+describe('openai-compatible providers', () => {
+  it('openrouter lists only tool-taking models, reads a streamed tool call and its usage, and names a bad key; nvidia the same over its own key', async () => {
     const http = await import('node:http');
     const sse = (chunks: unknown[]) => chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') + ': keep-alive\n\ndata: [DONE]\n\n';
     const server = http.createServer((req, res) => {
@@ -120,9 +120,10 @@ describe('openrouter', () => {
       ]));
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const saved = { base: process.env.OPENROUTER_BASE_URL, key: process.env.OPENROUTER_API_KEY };
-    process.env.OPENROUTER_BASE_URL = `http://127.0.0.1:${(server.address() as any).port}/api/v1`;
-    process.env.OPENROUTER_API_KEY = 'sk-or-good';
+    const ENV = ['OPENROUTER_BASE_URL', 'OPENROUTER_API_KEY', 'NVIDIA_BASE_URL', 'NVIDIA_API_KEY'] as const;
+    const saved = Object.fromEntries(ENV.map((k) => [k, process.env[k]]));
+    process.env.OPENROUTER_BASE_URL = process.env.NVIDIA_BASE_URL = `http://127.0.0.1:${(server.address() as any).port}/api/v1`;
+    process.env.OPENROUTER_API_KEY = process.env.NVIDIA_API_KEY = 'sk-or-good';
     const { getProvider } = await import('../src/model/providers/registry');
     const provider: any = getProvider('openrouter');
     try {
@@ -135,10 +136,19 @@ describe('openrouter', () => {
       assert.equal(reply.usage?.promptTokens, 1200, 'usage after the finish chunk is read');
       process.env.OPENROUTER_API_KEY = 'sk-or-bad';
       await assert.rejects(provider.streamChat({ model: 'qwen/qwen3-coder', messages: [] }), /Invalid OpenRouter key/);
+
+      // NVIDIA's list says nothing about tools, so it keeps every model, and claims no window it was not told.
+      const nvidia: any = getProvider('nvidia');
+      assert.equal((await nvidia.listModels()).length, 2);
+      assert.equal((await nvidia.modelInfo('qwen/qwen3-coder')).contextLength, undefined);
+      const call = await nvidia.streamChat({ model: 'qwen/qwen3-coder', messages: [{ role: 'user', content: 'hi' }], tools: [{}] });
+      assert.equal(call.toolCalls[0]?.function.name, 'read_file');
+      process.env.NVIDIA_API_KEY = 'nvapi-bad';
+      await assert.rejects(nvidia.streamChat({ model: 'qwen/qwen3-coder', messages: [] }), /Invalid NVIDIA key/);
     } finally {
       provider.clearCache();
-      for (const [k, v] of [['OPENROUTER_BASE_URL', saved.base], ['OPENROUTER_API_KEY', saved.key]] as const) {
-        if (v === undefined) delete process.env[k]; else process.env[k] = v;
+      for (const k of ENV) {
+        if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
       }
       server.close();
     }

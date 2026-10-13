@@ -60,7 +60,9 @@ export async function run(flags: any) {
           `                   (enable "Make calls to Inference Providers"), then:\n` +
           `                   ocode init --provider hf --token hf_...\n` +
           `    ${cyan('OpenRouter')}    create a key at openrouter.ai/settings/keys, then:\n` +
-          `                   ocode init --provider openrouter --token sk-or-...\n\n`
+          `                   ocode init --provider openrouter --token sk-or-...\n` +
+          `    ${cyan('NVIDIA')}        create a key at build.nvidia.com, then:\n` +
+          `                   ocode init --provider nvidia --token nvapi-...\n\n`
       );
       process.exitCode = 1;
       return;

@@ -611,6 +611,15 @@ free ones whose id ends in `:free`). Get a key at
 ocode init --provider openrouter --model qwen/qwen3-coder --token sk-or-...
 ```
 
+**NVIDIA.** NVIDIA's hosted models from [build.nvidia.com](https://build.nvidia.com)
+(a free account gets credits). Create a key there (it starts with `nvapi-`), or set
+`NVIDIA_API_KEY`. Its model list does not say which models take tool calls; pick
+one whose page lists tool calling.
+
+```sh
+ocode init --provider nvidia --model qwen/qwen3-coder-480b-a35b-instruct --token nvapi-...
+```
+
 Tokens are saved with restricted file permissions, hidden in output, and never
 passed to commands the agent runs.
 
