@@ -16,19 +16,23 @@ function project(files: Record<string, string>): string {
 
 describe('a Node project', () => {
   it('is TypeScript when it has a tsconfig.json or its scripts run tsc, not for a typescript dependency alone', async () => {
-    const cases: Array<[Record<string, string>, boolean]> = [
+    const plain = ['npx', 'tsc', '--noEmit'];
+    // Vite's tsconfig only points at others: plain tsc reads nothing there and exited 0 over a file full of type errors.
+    const solution = '{\n  // the app and its tooling\n  "files": [],\n  "references": [{ "path": "./tsconfig.app.json" },],\n}';
+    const cases: Array<[Record<string, string>, boolean, string[]?]> = [
       [{ 'package.json': JSON.stringify({ devDependencies: { typescript: '5' } }) }, false],
-      [{ 'package.json': '{}', 'tsconfig.json': '{}' }, true],
-      [{ 'package.json': JSON.stringify({ scripts: { build: 'tsc -p .' } }) }, true],
+      [{ 'package.json': '{}', 'tsconfig.json': '{}' }, true, plain],
+      [{ 'package.json': JSON.stringify({ scripts: { build: 'tsc -p .' } }) }, true, plain],
+      [{ 'package.json': '{}', 'tsconfig.json': solution }, true, ['npx', 'tsc', '-b', '--noEmit']],
     ];
-    for (const [files, ts] of cases) {
+    for (const [files, ts, check] of cases) {
       const root = project(files);
       try {
         const [stack] = await detectStacks(root);
         assert.equal(stack.id, 'node');
         assert.equal(stack.typescript, ts, JSON.stringify(files));
         assert.equal(stack.label, ts ? 'TypeScript' : 'Node.js');
-        assert.deepEqual(stack.check, ts ? ['npx', 'tsc', '--noEmit'] : undefined);
+        assert.deepEqual(stack.check, check);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

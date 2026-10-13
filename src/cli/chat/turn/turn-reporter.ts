@@ -193,7 +193,7 @@ function reportUnchecked(host: ChatTurnContext, result: TurnResult): void {
   const touched = [...new Set(uncheckedChanges(state, { thisTurn: true }).map((c: { path: string }) => c.path))];
   if (touched.length === 0) return;
   const what = touched.length ? `${touched.length} file${touched.length === 1 ? '' : 's'}` : 'files';
-  host.render.note(`Changed ${what} — no build or test ran after the changes, so they are not checked yet.`, 'dim');
+  host.render.note(`Changed ${what} — no build, test or type check has passed since, so the changes are not checked yet.`, 'dim');
 }
 
 /** History this full (of the room it gets in a request) is about to be trimmed: say so before it happens. */

@@ -73,7 +73,10 @@ async function detectNode(root: string): Promise<StackInfo | null> {
   // JavaScript projects pull it in for editor types, and tsc --noEmit over them checks nothing they wrote.
   const usesTsc = Object.values(scripts).some((cmd) => /\btsc\b/.test(String(cmd)));
   const hasTs = usesTsc || (await exists(path.join(root, 'tsconfig.json')));
-  const tsc = [...(await localBin(root, 'typescript', 'tsc')), '--noEmit'];
+  // A tsconfig that only points at others (Vite's: "files": [] and references) gives plain tsc nothing to read: it
+  // exited 0 over a file full of type errors. Build mode checks each referenced project; --noEmit keeps it from writing.
+  const references = readJsonc(path.join(root, 'tsconfig.json'))?.references;
+  const tsc = [...(await localBin(root, 'typescript', 'tsc')), ...(Array.isArray(references) && references.length ? ['-b'] : []), '--noEmit'];
   const eslint = eslintFiles(pkg, await localBin(root, 'eslint', 'eslint'));
   const checkCommand = scripts.typecheck ? String(scripts.typecheck) : hasTs ? 'tsc --noEmit' : undefined;
   return {
