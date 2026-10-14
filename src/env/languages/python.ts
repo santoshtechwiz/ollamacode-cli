@@ -18,6 +18,33 @@ async function usesRuff(root: string): Promise<boolean> {
   return false;
 }
 
+const TEST_FILE = /^(test_.+|.+_test)\.py$/;
+
+/**
+ * The project has tests for pytest to run: a pytest config, a conftest.py, or test files (test_*.py, *_test.py) at the
+ * root or in a folder up to two levels down. Offered pytest in a project with none, a model ran it, got "no tests ran"
+ * (exit 5), and read that as a failure to fix.
+ */
+async function hasTests(root: string): Promise<boolean> {
+  const names = await fs.readdir(root).catch((): string[] => []);
+  if (names.some((n) => n === 'conftest.py' || n === 'pytest.ini' || TEST_FILE.test(n))) return true;
+  for (const name of ['pyproject.toml', 'setup.cfg', 'tox.ini'].filter((n) => names.includes(n))) {
+    const text = await fs.readFile(path.join(root, name), 'utf8').catch(() => '');
+    if (/^\s*\[(tool\.pytest|tool:pytest|pytest)\b/m.test(text)) return true;
+  }
+  const look = async (dir: string, depth: number): Promise<boolean> => {
+    const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const e of entries) {
+      if (e.isFile() && TEST_FILE.test(e.name)) return true;
+      if (e.isDirectory() && depth > 0 && !e.name.startsWith('.') && !['venv', 'node_modules', '__pycache__', 'site-packages'].includes(e.name)) {
+        if (await look(path.join(dir, e.name), depth - 1)) return true;
+      }
+    }
+    return false;
+  };
+  return look(root, 2);
+}
+
 export const PYTHON: Language = {
   id: 'python',
   label: 'Python',
@@ -36,7 +63,7 @@ export const PYTHON: Language = {
     check: (py) => [py, '-m', 'compileall', '-q', '-x', 'venv|site-packages|node_modules|__pycache__', '.'],
     lint: (py) => [py, '-m', 'ruff', 'check', '.'],
   },
-  uses: { lint: usesRuff },
+  uses: { lint: usesRuff, test: hasTests },
   fileScoped: {
     lint: (py) => ({ argv: [py, '-m', 'ruff', 'check'], extensions: ['.py', '.pyi'] }),
   },

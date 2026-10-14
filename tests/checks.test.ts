@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { projectFolderOf, checkCommands } from '../src/agent/turn/after-edit';
+import { detectStacks } from '../src/env/tooling/detector';
 
 describe('after-edit', () => {
   // agent.afterEdit: the person's check runs once after a step that changed files, and the model reads its result.
@@ -268,6 +269,14 @@ describe('before-done', () => {
         fs.writeFileSync(path.join(root, 'space/requirements.txt'), 'diffusers>=0.32.0\ngradio\n');
         const space = await turn(root, [{ toolCalls: [call('1', 'write_file', { path: 'space/run.py', content: 'x = 1' })] }, { content: 'Done.' }], { afterEdit: 'lint' }, []);
         assert.deepEqual(space.ran.filter((r) => r !== 'write_file'), []);
+        // Nor pytest in a project with no tests: offered it, the model ran it, got "no tests ran" (exit 5), and
+        // read that as a failure. A project with test files gets it.
+        const [spaceStack] = await detectStacks(path.join(root, 'space'));
+        assert.equal(spaceStack.test, undefined);
+        fs.mkdirSync(path.join(root, 'space/tests'));
+        fs.writeFileSync(path.join(root, 'space/tests/test_run.py'), 'def test_run(): pass\n');
+        const [tested] = await detectStacks(path.join(root, 'space'));
+        assert.match(String(tested.test?.join(' ')), /-m pytest$/);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
