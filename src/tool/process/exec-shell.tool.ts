@@ -20,6 +20,21 @@ import { formatOutput } from './output/presentation';
 import { runInBackground, keepServingInBackground, SERVING } from './background';
 import type { ShellResult } from './types';
 
+/**
+ * What a command printed when all of it is text the command itself holds: a sentence of a few words, not a short value
+ * like a branch name a command can both take and print. A model that ended its work this way (`echo "Task completed:
+ * …"`) said the same thing eight times over, each worded a little differently.
+ */
+function saidOnly(command: string, stdout: unknown, stderr: unknown): string | null {
+  const said = String(stdout ?? '').trim();
+  if (said.length < 20 || !/\s/.test(said) || String(stderr ?? '').trim()) return null;
+  return said.split(/\r?\n/).every((line) => !line.trim() || command.includes(line.trim())) ? said : null;
+}
+
+const SAID_ONLY =
+  'This command only printed text you wrote into it: nothing was run, checked or changed for it, and the user does not ' +
+  'read it as your answer. To tell the user something, reply in text without calling a tool.';
+
 export default defineTool({
   name: 'exec_shell',
   aliases: ['run_command', 'bash', 'shell', 'sh', 'exec', 'execute_command', 'terminal'],
@@ -40,14 +55,14 @@ export default defineTool({
     return classifyRunCommand(String(args?.command ?? ''), where?.cwd, where?.root, where?.cmd) === 'mutating';
   },
   description:
-    'Run a shell command and return its stdout, stderr and exit code. Runs in the working project when the session record names one, else the workspace root; each call is a fresh shell, so "cd" does not carry over. Pass cwd to run somewhere else. ' +
+    'Run a shell command and return its stdout, stderr and exit code. Runs in the workspace root, so paths in the command start there as file paths do; each call is a fresh shell, so "cd" does not carry over. Pass cwd to run inside a project folder. ' +
     'It waits for the command to exit and gives it no stdin. A server, watcher or long job you do not need to wait for runs with background: true: the result says whether it came up, its URL and output so far, and the id for subprocess_status / stop_subprocess; when it ends you are told. ' +
     'To find files or search their contents, use the find_files and grep_content tools, not a recursive shell listing — they skip node_modules, build output and other system folders, while a raw recursive listing drowns the real matches in that noise. To process many files (count, group, compare, transform), use run_script.',
   parameters: {
     type: 'object',
     properties: {
       command: { type: 'string', description: 'Shell command to execute' },
-      cwd: { type: 'string', pathArg: true, description: 'A workspace-relative directory to run in for this call only. Leave it out to run in the working project (see the session record), or the workspace root when there is none.' },
+      cwd: { type: 'string', pathArg: true, description: 'A workspace-relative directory to run in for this call only. Leave it out to run in the workspace root.' },
       timeout_ms: { type: 'number', description: 'Time limit in ms. Leave it out in a chat: after 2 minutes the user is asked whether to keep waiting. With nobody to ask, the default is 120000.' },
       background: { type: 'boolean', description: 'Run it in the background and return once it has started (a server, watcher or long job).' },
     },
@@ -206,12 +221,14 @@ export default defineTool({
       // A passing build, test, lint or type-check checks every change made before it.
       if (endsOnItsOwn && ctx?.state) ctx.state.verifiedAt = ctx.state.changeSeq ?? 0;
       notePassed(ctx?.state, request.cwd, command);
-      return ok({
+      const result = ok({
         kind: 'command',
         display: presentation,
         truncated,
         data: { ...fullData, ...(shellSnapshot?.group ? { undoableDelete: shellSnapshot.group } : {}) },
       });
+      const said = saidOnly(command, execution.stdout, execution.stderr);
+      return said ? { ...result, saidOnly: said, modelNote: SAID_ONLY } : result;
     }
 
     // It no longer holds for these files, whatever passed before; a completed task it proves is open again.

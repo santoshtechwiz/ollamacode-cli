@@ -95,3 +95,70 @@ describe('reply-budget', () => {
     });
   });
 });
+
+describe('openai-compatible providers', () => {
+  it('openrouter lists only tool-taking models, reads a streamed tool call and its usage, and names a bad key; nvidia the same over its own key', async () => {
+    const http = await import('node:http');
+    const sse = (chunks: unknown[]) => chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') + ': keep-alive\n\ndata: [DONE]\n\n';
+    const server = http.createServer((req, res) => {
+      if (req.headers.authorization !== 'Bearer sk-or-good') { res.writeHead(401); return res.end('{"error":{"message":"No auth"}}'); }
+      if (req.url === '/api/v1/models') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ data: [
+          { id: 'qwen/qwen3-coder', context_length: 262144, supported_parameters: ['tools', 'reasoning'], pricing: { prompt: '0.0000002', completion: '0.0000008' } },
+          { id: 'qwen/qwen3-coder:free', context_length: 262144, supported_parameters: ['tools'], pricing: { prompt: '0', completion: '0' } },
+          { id: 'some/chat-only', context_length: 8192, supported_parameters: ['temperature'] },
+        ] }));
+      }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end(sse([
+        { choices: [{ delta: { reasoning: 'look first' } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'read_file', arguments: '{"path":' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"a.txt"}' } }] } }] },
+        { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+        // OpenRouter sends the token counts after the finish chunk.
+        { choices: [], usage: { prompt_tokens: 1200, completion_tokens: 30 } },
+      ]));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const ENV = ['OPENROUTER_BASE_URL', 'OPENROUTER_API_KEY', 'NVIDIA_BASE_URL', 'NVIDIA_API_KEY'] as const;
+    const saved = Object.fromEntries(ENV.map((k) => [k, process.env[k]]));
+    process.env.OPENROUTER_BASE_URL = process.env.NVIDIA_BASE_URL = `http://127.0.0.1:${(server.address() as any).port}/api/v1`;
+    process.env.OPENROUTER_API_KEY = process.env.NVIDIA_API_KEY = 'sk-or-good';
+    const { getProvider } = await import('../src/model/providers/registry');
+    const provider: any = getProvider('openrouter');
+    try {
+      provider.clearCache();
+      const listed = await provider.listModels();
+      assert.deepEqual(listed, [{ name: 'qwen/qwen3-coder', free: false }, { name: 'qwen/qwen3-coder:free', free: true }]);
+      // Free or paid by its prices; a provider whose list has no prices says so instead of showing nothing.
+      const { byPrice } = await import('../src/model/session');
+      assert.deepEqual(byPrice(listed, 'free').models.map((m) => m.name), ['qwen/qwen3-coder:free']);
+      assert.deepEqual(byPrice(listed, 'paid').models.map((m) => m.name), ['qwen/qwen3-coder']);
+      assert.equal((await provider.modelInfo('qwen/qwen3-coder')).contextLength, 262144);
+      const reply = await provider.streamChat({ model: 'qwen/qwen3-coder', messages: [{ role: 'user', content: 'hi' }], tools: [{}] });
+      assert.deepEqual(reply.toolCalls.map((c: any) => [c.function.name, c.function.arguments]), [['read_file', { path: 'a.txt' }]]);
+      assert.equal(reply.reasoning, 'look first');
+      assert.equal(reply.usage?.promptTokens, 1200, 'usage after the finish chunk is read');
+      process.env.OPENROUTER_API_KEY = 'sk-or-bad';
+      await assert.rejects(provider.streamChat({ model: 'qwen/qwen3-coder', messages: [] }), /Invalid OpenRouter key/);
+
+      // NVIDIA's list says nothing about tools, so it keeps every model, and claims no window it was not told.
+      const nvidia: any = getProvider('nvidia');
+      const nvidiaModels = await nvidia.listModels();
+      assert.equal(nvidiaModels.length, 3);
+      assert.equal(byPrice(nvidiaModels, 'free').priced, false, 'its list gives no prices');
+      assert.equal((await nvidia.modelInfo('qwen/qwen3-coder')).contextLength, undefined);
+      const call = await nvidia.streamChat({ model: 'qwen/qwen3-coder', messages: [{ role: 'user', content: 'hi' }], tools: [{}] });
+      assert.equal(call.toolCalls[0]?.function.name, 'read_file');
+      process.env.NVIDIA_API_KEY = 'nvapi-bad';
+      await assert.rejects(nvidia.streamChat({ model: 'qwen/qwen3-coder', messages: [] }), /Invalid NVIDIA key/);
+    } finally {
+      provider.clearCache();
+      for (const k of ENV) {
+        if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
+      }
+      server.close();
+    }
+  });
+});

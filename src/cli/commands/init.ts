@@ -15,7 +15,7 @@ import {
 } from '../../context/memory';
 import { select, confirm, isInteractive } from '../../ui/prompts';
 import { bold, dim, green, red, cyan, yellow, icons } from '../../ui/ansi';
-import { resolveWantProjectMemory } from '../flags';
+import { resolveWantProjectMemory, priceFlag } from '../flags';
 import { withProgress } from '../../ui/progress';
 import { TcError } from '../../core/errors';
 import { statType } from '../../tool/filesystem/_fs';
@@ -58,7 +58,11 @@ export async function run(flags: any) {
           `                   ocode init --provider ollama-cloud --token <key>\n` +
           `    ${cyan('HuggingFace')}   create a token at huggingface.co/settings/tokens\n` +
           `                   (enable "Make calls to Inference Providers"), then:\n` +
-          `                   ocode init --provider hf --token hf_...\n\n`
+          `                   ocode init --provider hf --token hf_...\n` +
+          `    ${cyan('OpenRouter')}    create a key at openrouter.ai/settings/keys, then:\n` +
+          `                   ocode init --provider openrouter --token sk-or-...\n` +
+          `    ${cyan('NVIDIA')}        create a key at build.nvidia.com, then:\n` +
+          `                   ocode init --provider nvidia --token nvapi-...\n\n`
       );
       process.exitCode = 1;
       return;
@@ -94,7 +98,7 @@ export async function run(flags: any) {
 
   let model;
   try {
-    model = await resolveModel(provider, { model: flags.model, interactive: interactive && !flags.model });
+    model = await resolveModel(provider, { model: flags.model, interactive: interactive && !flags.model, price: priceFlag(flags) });
   } catch (err) {
     process.stdout.write(`\n  ${red(icons.warn)} ${ (err as Error).message}\n`);
     process.exitCode = 1;

@@ -12,6 +12,11 @@ export interface ToolResult {
   hint?: string;
   /** Advice for the model alone: the model's copy of the result carries it, the screen never shows it. */
   modelNote?: string;
+  /**
+   * The call's whole output was text the call itself held (`echo "All done: …"`): nothing was run for it, only said.
+   * The text said. Twice in a row it is the model's answer, given as a command (see the turn).
+   */
+  saidOnly?: string;
   /** Detail for the person alone, shown under `display` on screen and never sent to the model: what it already knows. */
   screen?: string;
   note?: string;

@@ -100,9 +100,9 @@ export class ToolRuntime {
     const changes = classifyCall(resolved, args, { cwd: context.cwd, root: context.root, def }) === 'mutating';
     const lookOnly = changes && (def as ToolDef).writesFiles !== false ? lookOnlyReason(context.state) : null;
     if (lookOnly) {
-      return record(fail(`${resolved} changes things, and ${lookOnly} — not run`, {
+      return record(fail(`${resolved} changes things, and ${lookOnly.reason} — not run`, {
         code: TOOL_ERROR_CODE.EBLOCKED,
-        hint: 'Read, search and answer only. Say what you would change instead of changing it.',
+        hint: lookOnly.hint,
       }));
     }
 
@@ -272,10 +272,21 @@ export class ToolRuntime {
   }
 }
 
-function lookOnlyReason(state: any): string | null {
-  if (state?.planExploring) return 'plan mode only looks until the plan is approved';
-  if (state?.reviewOnly) return 'this mode only reads (switch to Agent mode to make changes)';
-  if (state?.planHeld) return 'the plan shown this turn was not started';
+const ANSWER_ONLY = 'Read, search and answer only. Say what you would change instead of changing it.';
+
+/**
+ * Why a change is refused, and the way on. In plan mode the way on is present_plan: the person's yes in chat is not an
+ * approval, so a plan asked about in text would be refused again on every yes.
+ */
+function lookOnlyReason(state: any): { reason: string; hint: string } | null {
+  if (state?.planExploring) {
+    return {
+      reason: 'plan mode only looks until the plan is approved',
+      hint: 'Call present_plan with the plan: it asks the user to approve it, and once approved the changes run. A yes in chat does not approve a plan.',
+    };
+  }
+  if (state?.reviewOnly) return { reason: 'this mode only reads (switch to Agent mode to make changes)', hint: ANSWER_ONLY };
+  if (state?.planHeld) return { reason: 'the plan shown this turn was not started', hint: ANSWER_ONLY };
   return null;
 }
 

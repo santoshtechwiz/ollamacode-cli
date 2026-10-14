@@ -300,6 +300,17 @@ function bulkArgKey(def?: ToolDef): string | null {
 /* Validation                                                                 */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * What a call sent that the tool does not take, said beside what it does take: a model that sent `code` to a tool
+ * taking `function` was told seven times that `function` was missing, never that `code` was the mistake.
+ */
+function unknownArgs(def: ToolDef, args: Args): string {
+  const properties = Object.keys(def.parameters?.properties ?? {});
+  if (properties.length === 0) return '';
+  const unknown = Object.keys(args).filter((key) => !properties.includes(key));
+  return unknown.length ? `. It does not take ${unknown.join(', ')}; its arguments are ${properties.join(', ')}` : '';
+}
+
 function validateRequired(
   def: ToolDef,
   args: Args,
@@ -324,7 +335,7 @@ function validateRequired(
     }
   }
 
-  return `Missing required argument(s): ${missing.join(', ')}`;
+  return `Missing required argument(s): ${missing.join(', ')}${unknownArgs(def, args)}`;
 }
 
 function validateRequiredGroups(
@@ -345,7 +356,7 @@ function validateRequiredGroups(
     return null;
   }
 
-  return `Missing required argument(s): ${describeGroups(groups)}`;
+  return `Missing required argument(s): ${describeGroups(groups)}${unknownArgs(def, args)}`;
 }
 
 function validateArrayItems(

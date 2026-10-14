@@ -30,6 +30,8 @@ export const CLI_ARGS_DEF = {
   think: { type: 'boolean', description: "render the model's reasoning" },
   check: { type: 'boolean', description: 'connect MCP servers to verify them' },
   'expand-tools': { type: 'boolean', description: 'render full tool output' },
+  free: { type: 'boolean', description: 'only free models (models, init)' },
+  paid: { type: 'boolean', description: 'only paid models (models, init)' },
   project: { type: 'boolean', description: 'seed project memory (init); --no-project skips it' },
 } satisfies ArgsDef;
 
@@ -54,7 +56,7 @@ export const CLI_HELP = `
     ${cyan('ocode init')}                     detect backends, authenticate, pick a model, seed memory
     ${cyan('ocode doctor [--fix]')}           diagnose config, provider, auth and workspace issues
     ${cyan('ocode reindex [prune|clear|status]')} rebuild or clear the workspace index (.ollamacode/index/workspace.db)
-    ${cyan('ocode models')}                   list available models
+    ${cyan('ocode models [--free|--paid]')}   list available models (free or paid where the provider says)
     ${cyan('ocode memory [show|add|forget]')} inspect what the agent remembers about this project
     ${cyan('ocode mcp [--check]')}            list configured MCP servers (--check connects them)
     ${cyan('ocode config [get|set|unset]')}   inspect or change settings
@@ -67,7 +69,7 @@ export const CLI_HELP = `
 
   ${bold('Options')}
     ${cyan('--model <name>')}                 pick a model
-    ${cyan('--provider <ollama|hf>')}         force a provider
+    ${cyan('--provider <name>')}              ollama, ollama-cloud, hf, openrouter, nvidia
     ${cyan('--plan')}                         plan and approve before acting
     ${cyan('-y, --yes')}                      auto-approve risky tools
     ${cyan('--scope <path>')}                 work outside the current directory

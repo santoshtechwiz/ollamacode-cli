@@ -75,6 +75,11 @@ export interface ToolDef {
   shellCommand?: string;
   /** What this call would destroy that no standing approval may cover, or null. */
   dangerReason?: (args: any, where: { cwd: string; root: string }) => string | null;
+  /**
+   * A group whose own "always" is the only standing approval that covers this tool (an MCP server's tools). The session's
+   * "always allow routine changes" does not: the server says the tool changes things ocode cannot see.
+   */
+  grantGroup?: string;
   /** Why this call is asked about every time, even after "always allow" — recoverable but consequential (deletes, git writes). */
   /** `state` is the session's, when the asker has it: what a call would do can depend on it (the working project). */
   confirmReason?: (args: any, where: { cwd: string; root: string; state?: any }) => string | null;
@@ -159,12 +164,20 @@ export interface StreamChatResult {
   metrics?: { promptMs?: number; genMs?: number; loadMs?: number; promptTokensPerSec?: number; genTokensPerSec?: number; };
 }
 
+/** A model as a provider lists it. */
+export interface ModelEntry {
+  name: string;
+  size?: number;
+  /** Costs nothing to use: true or false only where the provider's list says so (OpenRouter's prices); else unset. */
+  free?: boolean;
+}
+
 export interface ProviderDef {
   id: string;
   label: string;
   detect: () => Promise<ProviderDetect>;
   ensureAuth: (opts?: { interactive?: boolean; token?: string; }) => Promise<boolean>;
-  listModels: () => Promise<{ name: string; size?: number; }[]>;
+  listModels: () => Promise<ModelEntry[]>;
   streamChat: (p: StreamChatParams) => Promise<StreamChatResult>;
   tokenEnvVar?: string;
 }
@@ -173,6 +186,15 @@ export interface ProviderDef {
 export interface FileScopedCommand {
   argv: string[];
   extensions: string[];
+}
+
+/** A tsconfig's file list as written: its patterns are relative to `base`, the folder it is in, project-relative. */
+export interface TsconfigScope {
+  base: string;
+  files: string[];
+  include: string[];
+  exclude: string[];
+  allowJs: boolean;
 }
 
 export interface StackInfo {
@@ -192,6 +214,8 @@ export interface StackInfo {
   lint?: string[];
   /** Verbs whose command also takes files: a check after an edit runs on only the changed files with these extensions. */
   fileScoped?: Partial<Record<import('./env/languages/types.ts').Verb, FileScopedCommand>>;
+  /** The files the type check reads, from the tsconfig it uses; unset when ocode cannot tell (see check-plan readsFile). */
+  checkReads?: TsconfigScope;
   marker?: string;
 }
 

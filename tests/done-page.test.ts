@@ -75,11 +75,11 @@ async function turn(root: string, replies: any[], pages: any[]) {
       },
     } as any,
   } as any);
-  return { state, ran, opened, requests, notes, result };
+  return { state, ran, opened, requests, notes, result, history };
 }
 
 describe('agent.beforeDone auto on a web project', () => {
-  it('starts its dev server, opens the page where the system says it listens, and a broken page sends the model back', async (t) => {
+  it('starts its dev server, opens the page where the system says it listens, and a broken page is shown and kept for the model\'s next turn', async (t) => {
     if ((await listeningPorts(process.pid)) === null) return t.skip('this system cannot list listeners');
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-page-'));
     fs.mkdirSync(path.join(root, 'shop/src'), { recursive: true });
@@ -91,20 +91,18 @@ describe('agent.beforeDone auto on a web project', () => {
       t1 = await turn(root, [
         { toolCalls: [call('1', 'write_file', { path: 'shop/src/App.jsx', content: 'export default () => price' })] },
         { content: 'The shop page is ready.' },
-        { toolCalls: [call('2', 'write_file', { path: 'shop/src/App.jsx', content: 'export default () => 3' })] },
-        { content: 'Fixed the price; the page loads.' },
       ], [BROKEN]);
-      assert.deepEqual(t1.ran, ['write_file', 'exec_shell npm run dev (background)', 'check_page', 'write_file', 'check_page'],
-        'the server started once is reused for the second look');
+      assert.deepEqual(t1.ran, ['write_file', 'exec_shell npm run dev (background)', 'check_page']);
       const job = [...t1.state.subprocesses.values()][0];
       const [port] = (await listeningPorts(job.pid))!;
-      assert.deepEqual(t1.opened.map((a) => a.url), [`http://localhost:${port}/`, `http://localhost:${port}/`]);
-      const seen = t1.requests[2].messages;
-      const failure = seen.filter((m: any) => m.role === ROLE.TOOL).map((m: any) => String(m.content)).at(-1);
+      assert.deepEqual(t1.opened.map((a) => a.url), [`http://localhost:${port}/`]);
+      // The answer ends the turn; the broken page is what the model reads when the person asks it to go on.
+      assert.equal(t1.requests.length, 2);
+      assert.equal(t1.result.answer, 'The shop page is ready.');
+      const failure = t1.history.messages.filter((m: any) => m.role === ROLE.TOOL).map((m: any) => String(m.content)).at(-1);
       assert.match(failure, /price is not defined/);
-      assert.match(failure, /ocode ran this check \(agent\.beforeDone\)/);
-      assert.equal(t1.result.answer, 'Fixed the price; the page loads.');
-      assert.equal(t1.notes.at(-1), `Checked before finishing: \`check_page http://localhost:${port}/\` passed.`);
+      assert.match(failure, /ocode ran this check \(agent\.beforeDone\) after your answer/);
+      assert.match(String(t1.notes.at(-1)), /^Not done: `check_page http:\/\/localhost:\d+\/` failed after that answer/);
     } finally {
       t1?.state.reset();
       fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });

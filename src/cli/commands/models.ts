@@ -1,4 +1,5 @@
-import { probeProviders, formatModelSize } from '../../model/session';
+import { probeProviders, formatModelSize, byPrice } from '../../model/session';
+import { priceFlag, type TypedFlags } from '../flags';
 import { loadConfig } from '../../core/config';
 import { resolveProviderId } from '../../model/providers/registry';
 import { bold, dim, green, red, icons } from '../../ui/ansi';
@@ -6,8 +7,9 @@ import { withProgress } from '../../ui/progress';
 
 const MAX_SHOWN = 25;
 
-export async function run(flags: { provider?: string; }) {
+export async function run(flags: Pick<TypedFlags, 'provider' | 'free' | 'paid'>) {
   const cfg = loadConfig();
+  const price = priceFlag(flags);
   const wanted = flags.provider ? resolveProviderId(flags.provider) : null;
 
   const statuses = await withProgress('probing providers', () => probeProviders(), {
@@ -34,9 +36,18 @@ export async function run(flags: { provider?: string; }) {
     }
 
     try {
-      const models = await withProgress(`listing ${provider.label} models`, () => provider.listModels(), {
+      const listed = await withProgress(`listing ${provider.label} models`, () => provider.listModels(), {
         successText: (m) => `found ${m.length} model${m.length === 1 ? '' : 's'} on ${provider.label}`,
       });
+      const { models, priced } = byPrice(listed, price);
+      if (price && !priced) {
+        process.stdout.write(`  ${dim(`${provider.label} does not say which models are free — skipping`)}\n`);
+        continue;
+      }
+      if (price && models.length === 0) {
+        process.stdout.write(`  ${dim(`(no ${price} models)`)}\n`);
+        continue;
+      }
       if (models.length === 0) {
         process.stdout.write(`  ${dim('(no models installed)')}\n`);
         if (provider.id === 'ollama') {
@@ -47,7 +58,8 @@ export async function run(flags: { provider?: string; }) {
       for (const model of models.slice(0, MAX_SHOWN)) {
         const active = cfg.models[provider.id] === model.name ? ` ${green('← default')}` : '';
         const size = formatModelSize(model.size);
-        process.stdout.write(`  ${icons.bullet} ${model.name}${size ? ` ${dim(`(${size})`)}` : ''}${active}\n`);
+        const free = model.free && price !== 'free' ? ` ${green('free')}` : '';
+        process.stdout.write(`  ${icons.bullet} ${model.name}${size ? ` ${dim(`(${size})`)}` : ''}${free}${active}\n`);
       }
       if (models.length > MAX_SHOWN) {
         process.stdout.write(`  ${dim(`…and ${models.length - MAX_SHOWN} more`)}\n`);

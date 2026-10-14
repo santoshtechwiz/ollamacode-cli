@@ -28,10 +28,20 @@ export interface TypedFlags {
   check?: boolean;
   'expand-tools'?: boolean;
   project?: boolean;
+  /** Only free, or only paid, models where the provider's list says which (ocode models, ocode init). */
+  free?: boolean;
+  paid?: boolean;
   prompt?: string;
   /** Run without a saved conversation: nothing is resumed or written, and the project's last session is left alone. Set by `ocode init`. */
   ephemeral?: boolean;
   [key: string]: string | boolean | undefined;
+}
+
+/** --free or --paid as one choice; both, or neither, is no filter. */
+export function priceFlag(flags: Pick<TypedFlags, 'free' | 'paid'>): 'free' | 'paid' | undefined {
+  if (flags.free && !flags.paid) return 'free';
+  if (flags.paid && !flags.free) return 'paid';
+  return undefined;
 }
 
 /** Chat runs from `root` unless `--scope|--root|--cwd` says otherwise. */

@@ -1,7 +1,7 @@
 // The task list: outcomes the work must reach, kept in one place (the session state) and changed only through
-// todo_write. A task is named by its outcome, which is how the model refers to it. A task is completed on evidence: the
-// command that proves it passed with no file changed since, or, for a task no command can prove, what showed it works.
-// Nothing here infers a status from what the model wrote.
+// todo_write. A task is named by its outcome, which is how the model refers to it. The model marks a task done; where a
+// task has a verify command, that command passing completes it and failing opens it again. Nothing here infers a status
+// from what the model wrote.
 
 export type TodoStatus = 'pending' | 'in_progress' | 'completed';
 export const TODO_STATUSES: readonly TodoStatus[] = ['pending', 'in_progress', 'completed'];
@@ -54,7 +54,7 @@ export function checklistOf(todos: readonly TodoItem[] | null | undefined): Chec
 
 /**
  * The list as the model reads it back: one line per task, with what it needs to be done and, for a completed task
- * whose command no longer holds for the files as they are, that it changed since it was checked.
+ * whose command has not passed on the files as they are (never run, or a file changed since), that it has not.
  */
 export function todoLines(todos: readonly TodoItem[] | null | undefined, passed?: PassedNow): string[] {
   return (todos ?? []).map((todo) => {
@@ -62,7 +62,7 @@ export function todoLines(todos: readonly TodoItem[] | null | undefined, passed?
       todo.dependsOn?.length ? `after: ${todo.dependsOn.join('; ')}` : '',
       todo.doneWhen ? `done when: ${todo.doneWhen}` : '',
       todo.verify ? `verify: \`${todo.verify}\`` : '',
-      todo.status === 'completed' && todo.verify && passed && !passed(todo.verify) ? 'changed since it was checked' : '',
+      todo.status === 'completed' && todo.verify && passed && !passed(todo.verify) ? 'its command has not passed on the files as they are' : '',
       todo.reopened ? `reopened: ${todo.reopened}` : '',
     ].filter(Boolean);
     return `${MARK[todo.status]} ${todo.content}${notes.length ? ` — ${notes.join(' · ')}` : ''}`;
@@ -139,11 +139,14 @@ export function applyUpdates(list: readonly TodoItem[], updates: readonly any[])
 }
 
 /**
- * What is wrong with a list the model wants to keep, or null. A task newly completed needs its evidence: its verify
- * command passed with no file changed since, or, with no command, a line saying what showed it works. A task starts
- * or finishes only after the tasks it depends on are completed.
+ * What is wrong with a list the model wants to keep, or null: its shape (names, statuses, one task in progress, the
+ * tasks it depends on). Whether a task is done is the model's to say, as in other agents: a completion is never
+ * refused. Refused until its verify command had passed, a weak model wrote a sentence there, ran the real check, and
+ * reworded the sentence round after round. The evidence still counts where it exists: a task's verify command passing
+ * completes it (completeVerified), failing opens it again (reopenFailed), and the list marks a completed task whose
+ * command has not passed since; the turn's own check before done is what the person reads as checked.
  */
-export function checkTodos(next: readonly TodoItem[], before: readonly TodoItem[], passed: PassedNow): string | null {
+export function checkTodos(next: readonly TodoItem[]): string | null {
   if (next.some((todo) => !todo.content)) return 'Each task needs non-empty content';
   if (!next.every((todo) => (TODO_STATUSES as readonly string[]).includes(todo.status))) return `Each status is one of ${TODO_STATUSES.join(', ')}`;
   const names = new Set<string>();
@@ -153,20 +156,10 @@ export function checkTodos(next: readonly TodoItem[], before: readonly TodoItem[
   }
   if (next.filter((todo) => todo.status === 'in_progress').length > 1) return 'More than one task is in_progress — keep one at a time';
   const status = new Map(next.map((todo) => [todo.content, todo.status]));
-  const wasDone = new Set(before.filter((todo) => todo.status === 'completed').map((todo) => todo.content));
   for (const todo of next) {
     for (const dep of todo.dependsOn ?? []) {
       if (!status.has(dep)) return `"${todo.content}" depends on "${dep}", which is not in the list`;
       if (todo.status !== 'pending' && status.get(dep) !== 'completed') return `"${todo.content}" cannot start before "${dep}" is completed`;
-    }
-    if (todo.status !== 'completed' || wasDone.has(todo.content)) continue;
-    if (todo.verify && !passed(todo.verify)) {
-      return `"${todo.content}" is not completed: \`${todo.verify}\` has not passed on the files as they are now. ` +
-        'Run that command; once it passes, mark the task completed. If no command proves this task, ' +
-        'send verify: "" with status completed and evidence saying what showed it works.';
-    }
-    if (!todo.verify && !todo.evidence) {
-      return `"${todo.content}" is not completed: send evidence with it (what showed it works), or a verify command that proves it.`;
     }
   }
   return null;
@@ -192,5 +185,17 @@ export function completeVerified(todos: readonly TodoItem[], command: string): T
   if (at < 0) return null;
   const waits = (todos[at].dependsOn ?? []).some((dep) => todos.find((t) => t.content === dep)?.status !== 'completed');
   if (waits) return null;
-  return todos.map((todo, i) => (i === at ? { ...todo, status: 'completed' as const } : todo));
+  return startNext(todos.map((todo, i) => (i === at ? { ...todo, status: 'completed' as const } : todo)));
+}
+
+/**
+ * With no task in progress, the first pending one whose tasks it depends on are completed starts: the work goes on to
+ * the next step in the list's order. Used where the list's own events move it (a plan approved, a task's command
+ * passing); a model that never touched the list left every task unticked through a whole build.
+ */
+export function startNext(todos: readonly TodoItem[]): TodoItem[] {
+  if (todos.some((todo) => todo.status === 'in_progress')) return [...todos];
+  const done = new Set(todos.filter((todo) => todo.status === 'completed').map((todo) => todo.content));
+  const at = todos.findIndex((todo) => todo.status === 'pending' && (todo.dependsOn ?? []).every((dep) => done.has(dep)));
+  return at < 0 ? [...todos] : todos.map((todo, i) => (i === at ? { ...todo, status: 'in_progress' as const } : todo));
 }

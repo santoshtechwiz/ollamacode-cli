@@ -165,7 +165,7 @@ function reportTodos(host: ChatTurnContext, result: TurnResult): void {
   const items = checklistOf(state.todos);
   host.render.commitTasks(items);
   const open = items.filter((item) => item.status !== 'done');
-  // A task is done only on evidence, so an answer can say "all done" over a list that is not: the person reads which.
+  // An answer can say "all done" over a list that is not: the person reads which tasks are still open.
   if (open.length && result.stopReason === STOP_REASONS.COMPLETE) {
     host.render.note(`Not finished: ${open.length} of ${items.length} tasks are still open (${open.map((item) => item.title).slice(0, 3).join('; ')}${open.length > 3 ? '; …' : ''}).`, 'warn');
   }
@@ -189,11 +189,13 @@ export async function reportChatTurn(host: ChatTurnContext, result: TurnResult):
 function reportUnchecked(host: ChatTurnContext, result: TurnResult): void {
   const state = (host.workspace as any)?.state;
   if (!state || result.stopReason === STOP_REASONS.CANCELLED || stillRunning(host, result).length) return;
+  // A check that failed after the answer was already said ("Not done: ... failed"): that is why they are unchecked.
+  if (result.failedChecks?.length) return;
   // This turn's changes that no passing check came after.
   const touched = [...new Set(uncheckedChanges(state, { thisTurn: true }).map((c: { path: string }) => c.path))];
   if (touched.length === 0) return;
   const what = touched.length ? `${touched.length} file${touched.length === 1 ? '' : 's'}` : 'files';
-  host.render.note(`Changed ${what} — no build or test ran after the changes, so they are not checked yet.`, 'dim');
+  host.render.note(`Changed ${what} — no build, test or type check has passed since, so the changes are not checked yet.`, 'dim');
 }
 
 /** History this full (of the room it gets in a request) is about to be trimmed: say so before it happens. */

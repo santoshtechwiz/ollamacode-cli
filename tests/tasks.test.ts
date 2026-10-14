@@ -68,33 +68,31 @@ describe('update', () => {
   });
 });
 
-describe('completed only on evidence', () => {
-  it('a task with a verify command completes once it passed on the files as they are, and not before', async () => {
+describe('completing a task', () => {
+  it('takes the model\'s word, as other agents do, and the list says when its command has not passed', async () => {
     const { root, state } = session();
     try {
       state.todos = [{ content: 'The tests pass', status: 'in_progress', verify: 'npm test' }];
+      // Refused until its verify had passed, a weak model wrote a sentence there, ran the real check, and reworded the
+      // sentence round after round: a completion is never refused.
       const early = await write(state, { update: [{ task: 'The tests pass', status: 'completed' }] });
-      assert.equal(early.ok, false);
-      assert.match(early.error, /`npm test` has not passed on the files as they are now\. Run that command/);
+      assert.equal(early.ok, true, early.error);
+      assert.match(describeSession(state), /\[x\] The tests pass — verify: `npm test` · its command has not passed on the files as they are/);
 
       notePassed(state, path.join(root, 'app'), 'npm test');
-      const done = await write(state, { update: [{ task: 'The tests pass', status: 'completed' }] });
-      assert.equal(done.ok, true, done.error);
-
+      assert.doesNotMatch(describeSession(state), /has not passed/);
       state.note('write', 'app/a.ts', 'file');
       assert.equal(passedNow(state, 'npm test'), false);
-      assert.match(describeSession(state), /\[x\] The tests pass — verify: `npm test` · changed since it was checked/);
+      assert.match(describeSession(state), /\[x\] The tests pass — verify: `npm test` · its command has not passed on the files as they are/);
+
+      // A sentence where the command goes is no reason to hold the task open.
+      state.todos = [{ content: 'Errors are handled', status: 'in_progress', verify: 'Code compiles without syntax errors' }];
+      const prose = await write(state, { update: [{ task: 'Errors are handled', status: 'completed' }] });
+      assert.equal(prose.ok, true, prose.error);
+      assert.deepEqual(names(state), ['completed: Errors are handled']);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
-
-  it('a task no command proves needs what showed it works', async () => {
-    const state: any = { todos: [{ content: 'The folder is chosen', status: 'in_progress' }] };
-    const bare = await write(state, { update: [{ task: 'The folder is chosen', status: 'completed' }] });
-    assert.match(bare.error, /send evidence with it/);
-    const r = await write(state, { update: [{ task: 'The folder is chosen', status: 'completed', evidence: 'the user picked ./shop' }] });
-    assert.equal(r.ok, true, r.error);
   });
 
   it('a task already completed is not proved again when the list is written whole', async () => {
@@ -126,8 +124,7 @@ describe('a failed command', () => {
       assert.equal(failed.ok, false);
       assert.equal(state.todos[0].status, 'pending');
       assert.match(state.todos[0].reopened, /failed after it was completed/);
-      const again = await write(state, { update: [{ task: 'It builds', status: 'completed' }] });
-      assert.equal(again.ok, false, 'not completed again until the command passes');
+      assert.equal(passedNow(state, `${check} 0`), true, 'the other command\'s pass still stands');
     } finally {
       state.reset?.();
       fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
@@ -145,7 +142,7 @@ describe('an approved plan', () => {
       );
       const r = await write(state, { update: [{ task: 'The page lists products', doneWhen: 'products from the API show on /', dependsOn: ['The API serves products'] }] });
       assert.equal(r.ok, true, r.error);
-      assert.equal(r.display, '[ ] The API serves products\n[ ] The page lists products — after: The API serves products · done when: products from the API show on /');
+      assert.equal(r.display, '[~] The API serves products\n[ ] The page lists products — after: The API serves products · done when: products from the API show on /');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -153,27 +150,15 @@ describe('an approved plan', () => {
 });
 
 describe('what the session showed', () => {
-  it('a verify that is no command can be taken off, and the task completed on evidence', async () => {
-    const state: any = { todos: [{ content: 'The hook saves notes', status: 'in_progress', verify: 'Read `src/hooks/useNotes.ts`' }] };
-    const stuck = await write(state, { update: [{ task: 'The hook saves notes', status: 'completed' }] });
-    assert.match(stuck.error, /If no command proves this task, send verify: "" with status completed and evidence/);
-    const r = await write(state, { update: [{ task: 'The hook saves notes', status: 'completed', verify: '', evidence: 'a saved note is still there after reload' }] });
-    assert.equal(r.ok, true, r.error);
-    assert.equal(state.todos[0].verify, undefined);
-  });
-
-  it('evidence written before the work is not kept, so it cannot complete the task later', async () => {
+  it('evidence written before the work is not kept: it never says the work was shown to work', async () => {
     const state: any = {};
     await write(state, { todos: [{ content: 'Scaffolded', status: 'in_progress', evidence: 'ls ./notes-app' }] });
     assert.equal(state.todos[0].evidence, undefined);
-    const r = await write(state, { update: [{ task: 'Scaffolded', status: 'completed' }] });
-    assert.equal(r.ok, false);
   });
-
 });
 
 describe('the list follows the work', () => {
-  it('ticks the task in progress when its command passes, and no other', async () => {
+  it('ticks the task in progress when its command passes, and no other, and the next one starts', async () => {
     const { root, state } = session();
     try {
       state.todos = [
@@ -181,8 +166,8 @@ describe('the list follows the work', () => {
         { content: 'Skeletons show while loading', status: 'pending', verify: 'npm run build' },
       ];
       notePassed(state, path.join(root, 'app'), 'npm run build');
-      assert.deepEqual(names(state), ['completed: The page builds', 'pending: Skeletons show while loading'],
-        'a pending task\'s command can pass before its work exists');
+      assert.deepEqual(names(state), ['completed: The page builds', 'in_progress: Skeletons show while loading'],
+        'a pending task\'s command can pass before its work exists: it starts, it is not ticked');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -210,10 +195,7 @@ describe('a session like the notes-app polish run', () => {
       update('4', { task: 'NoteEditor works in dark mode', status: 'in_progress' }),
       { toolCalls: [call('5', 'write_file', { path: 'notes-app/src/NoteEditor.tsx', content: 'b' })] },
       { content: 'All done.' },
-      update('6',
-        { task: 'NoteList works in dark mode', status: 'completed', evidence: 'the page check passed in dark mode' },
-        { task: 'NoteEditor works in dark mode', status: 'completed', evidence: 'the page check passed in dark mode' }),
-      { content: 'Done: both lists work in dark mode.' },
+      { content: 'never asked: the answer ends the turn' },
     ];
     const requests: any[] = [];
     const results: Record<string, any> = {};
@@ -249,27 +231,21 @@ describe('a session like the notes-app polish run', () => {
         },
       });
 
-      // A UI task no command proves is not completed on the model's word.
-      assert.match(results[3].error, /"NoteList works in dark mode" is not completed: send evidence/);
-      // Starting the next task is not refused: the one in progress waits again.
+      // A task is completed on the model's word, and the next one starts.
+      assert.equal(results[3].ok, true, results[3].error);
       assert.equal(results[4].ok, true, results[4].error);
-      // The checks before done ran and passed, then the answer over open tasks went back once, naming them as evidence.
+      // The checks before done ran and passed, and the answer ended the turn: an answer over open tasks is not sent
+      // back to the model (a model sent back learned that answering does not end a turn); the person reads the list.
       assert.ok(notes.includes('Checked before finishing: `npm run build` passed.'), notes.join(' | '));
-      assert.ok(notes.some((n) => /3 tasks are still open after that answer/.test(n)), notes.join(' | '));
-      const settle = requests[6].messages.filter((m: any) => m.role === 'tool').map((m: any) => String(m.content)).at(-1);
-      assert.match(settle, /leaves 3 tasks open \(listed below\)[\s\S]*these checks passed when you answered: `npm run build`/);
-      assert.match(settle, /\[ \] The app builds/);
-      // Settled on evidence; the build task the model left alone stays open, and it is not sent back a second time.
-      assert.equal(results[7].ok, true, results[7].error);
-      assert.equal(requests.length, 8);
-      assert.equal(result.answer, 'Done: both lists work in dark mode.');
-      assert.deepEqual(names(state), ['completed: NoteList works in dark mode', 'completed: NoteEditor works in dark mode', 'pending: The app builds']);
+      assert.equal(requests.length, 6);
+      assert.equal(result.answer, 'All done.');
+      assert.deepEqual(names(state), ['completed: NoteList works in dark mode', 'in_progress: NoteEditor works in dark mode', 'pending: The app builds']);
 
       // The person reads which task is still open, whatever the answer says.
       const shown: string[] = [];
       const host: any = { render: { text: '', markdown: () => {}, note: (t: string) => shown.push(t), commitTasks: () => {} }, workspace: { state }, interactive: false, flags: {} };
       await reportChatTurn(host, { content: result.answer, toolResults: [], iterations: 8, stopReason: STOP_REASONS.COMPLETE } as any, {});
-      assert.ok(shown.includes('Not finished: 1 of 3 tasks are still open (The app builds).'), shown.join(' | '));
+      assert.ok(shown.includes('Not finished: 2 of 3 tasks are still open (NoteEditor works in dark mode; The app builds).'), shown.join(' | '));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -306,8 +282,10 @@ describe('array-item-errors', () => {
   };
 
   describe('a wrong list item says what an item is, from the schema', () => {
-    it('an object item names its fields and what was sent', () => {
+    it('an object item names its fields and what was sent; an argument the tool does not take is named beside the ones it does', () => {
       assert.equal(errorOf('todo_write', { todos: ['Install deps'] }), 'todos[0] must be an object {content, status}, received a string');
+      // Told only that `command` was missing, a model sent `code` again and again: the mistake is the argument it sent.
+      assert.equal(errorOf('exec_shell', { code: 'ls' }), 'Missing required argument(s): command. It does not take code; its arguments are command, cwd, timeout_ms, background');
     });
   });
 });

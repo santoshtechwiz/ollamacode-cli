@@ -1,6 +1,8 @@
 // `npm run eval -- --model <name>`: drive real ocode chat turns through fixed tasks and score how the model behaved.
 // `npm run eval:today -- --model <name>`: the plan, task-list, check-before-done and .NET tasks only; needs no lab repos.
-// `npm run eval -- --mine <dir...>`: group the tool errors in saved sessions, so the next argument fix comes from data.
+// `npm run eval -- --mine <dir...> [--since 2d]`: what went wrong in saved sessions, by kind (an answer given as a
+// command, loops, missing tools, wrong shell syntax, task lists never ticked...) and the tool errors behind it. No model
+// is called. Point it at the folder that holds your projects to see every session at once.
 import { spawn, spawnSync } from 'node:child_process';
 import { cpSync, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -930,8 +932,11 @@ function* sessionFiles(dir, depth = 0) {
 }
 
 function mine() {
-  const dirs = argv.slice(argv.indexOf('--mine') + 1).filter((a) => !a.startsWith('--'));
+  const dirs = argv.slice(argv.indexOf('--mine') + 1).filter((a, i, all) => !a.startsWith('--') && all[i - 1] !== '--since');
   const errors = [];
+  const found = [];
+  const since = /^(\d+)([dh])$/.exec(flag('since') ?? '');
+  const sinceMs = since ? Number(since[1]) * (since[2] === 'd' ? 86_400_000 : 3_600_000) : 0;
   let sessions = 0;
   for (const dir of dirs.length ? dirs : [LAB, join(tmpdir(), 'ocode-eval')]) {
     // A folder that is not there found nothing: say so, rather than report "0 sessions" as if it had been searched.
@@ -943,8 +948,11 @@ function mine() {
     for (const file of sessionFiles(dir)) {
       try {
         const session = JSON.parse(readFileSync(file, 'utf8'));
+        // --since 2d: only sessions from the last days, so what is shown is what today's code still does.
+        if (sinceMs && Number(session.updatedAt ?? statSync(file).mtimeMs) < Date.now() - sinceMs) continue;
         const model = String(session.model ?? '?');
         errors.push(...behaviour(session).errors.map((e) => ({ ...e, model })));
+        for (const hit of patternsIn(session)) found.push({ ...hit, model, file });
         sessions += 1;
       } catch {
         // A session being written or from an older format: skip it.
@@ -952,6 +960,7 @@ function mine() {
     }
   }
   console.log(`${sessions} session(s) · ${errors.length} tool error(s)\n`);
+  reportPatterns(found);
   // A mistake several models make points at the tool's design; one model's alone is that model's problem.
   for (const [key, n] of countErrors(errors)) {
     const example = errors.find((e) => errorKey(e) === key)?.args;
@@ -960,6 +969,94 @@ function mine() {
     console.log(`${String(n).padStart(4)}  ${key}${tag}`);
     if (example) console.log(`        e.g. ${JSON.stringify(example).slice(0, 200)}`);
   }
+}
+
+/**
+ * The kinds of trouble a session shows, whatever the project, language or model: each one a pattern in what the model
+ * did and what ocode answered, found from the saved messages alone. One line per kind, with where to look.
+ */
+const PATTERNS = {
+  'answer-as-command': 'the model gave its answer as a command (echo "…") instead of replying',
+  'same-error-loop': 'the same tool failed the same way 3+ times in a row',
+  'refusal-loop': 'ocode refused the same tool 3+ times in a row (the model kept retrying)',
+  'tool-missing': 'a command failed because a program or module is not installed',
+  'nothing-ran': 'a test or check command ran nothing ("no tests ran", "0 items")',
+  'wrong-shell-syntax': 'a command used syntax the shell does not take (bash on PowerShell or the reverse)',
+  'repeated-passing-command': 'the same passing command ran 3+ times in one turn with no change between',
+  'sent-back-after-answer': "ocode's check failed after the model answered",
+  'tasks-never-ticked': 'a task list was made and files changed, but no task was ever completed',
+  'no-answer': 'the session ends without a reply from the model',
+};
+
+function patternsIn(session) {
+  const messages = session?.messages ?? [];
+  const calls = new Map();
+  const hits = [];
+  const hit = (kind, at, detail) => hits.push({ kind, at, detail: String(detail ?? '').replace(/\s+/g, ' ').slice(0, 140) });
+  let streak = { key: '', n: 0 };
+  let passedInTurn = new Map();
+  let todosMade = false;
+  let anyTicked = false;
+  let changedFiles = false;
+  messages.forEach((m, i) => {
+    if (m.role === 'user') passedInTurn = new Map();
+    for (const c of m.tool_calls ?? []) calls.set(c.id, c);
+    if (m.role !== 'tool') return;
+    const text = String(m.content ?? '');
+    const first = text.split('\n')[0];
+    const call = calls.get(m.tool_call_id);
+    const name = call?.function?.name ?? (/^(?:OK|ERROR) (\S+)/.exec(first)?.[1] ?? '?');
+    const args = call?.function?.arguments ?? {};
+    const command = String(args.command ?? '');
+    const err = /^ERROR (\S+)(?: \[(\w+)\])?/.exec(first);
+    // Loops: the same tool failing the same way, back to back.
+    const key = err ? `${err[1]}|${err[2] ?? ''}` : '';
+    streak = key && key === streak.key ? { key, n: streak.n + 1 } : { key, n: key ? 1 : 0 };
+    if (streak.n === 3) hit(['EBLOCKED', 'EINVAL', 'EAMBIGUOUS', 'ENOMATCH'].includes(err[2]) ? 'refusal-loop' : 'same-error-loop', i, `${err[1]} [${err[2]}] ${first.split(' — ')[1] ?? ''}`);
+    if (name === 'exec_shell') {
+      const out = text.split('\n').slice(1).filter((l) => !/^\[exit \d+\]$/.test(l.trim())).join('\n').trim();
+      if (!err && out.length >= 20 && /\s/.test(out) && out.split('\n').every((l) => !l.trim() || command.includes(l.trim()))) hit('answer-as-command', i, command);
+      const wrongShell = /ParserError|Unexpected token|The term '.*' is not recognized|syntax error near unexpected token|is not recognized as an internal or external command/i.test(text) && /\[ |\]\s*;|-la\b|\$\(|&&|\|/.test(command);
+      if (wrongShell) hit('wrong-shell-syntax', i, command);
+      else if (/No module named|is not recognized as (an internal|the name|a name)|command not found|not found: |cannot find the path|ModuleNotFoundError/i.test(text)) hit('tool-missing', i, command);
+      if (/no tests ran|collected 0 items|No tests found|No test files found|0 passing|No projects matched|Unable to find a project/i.test(text)) hit('nothing-ran', i, command);
+      if (!err && command) {
+        const n = (passedInTurn.get(command) ?? 0) + 1;
+        passedInTurn.set(command, n);
+        if (n === 3) hit('repeated-passing-command', i, command);
+      }
+    }
+    if (['write_file', 'edit_file', 'delete_file', 'apply_patch'].includes(name) && !err) {
+      changedFiles = true;
+      passedInTurn = new Map();
+    }
+    if (/ocode ran this check \(agent\.beforeDone\)/.test(text)) hit('sent-back-after-answer', i, command || first);
+    if (name === 'todo_write' || name === 'present_plan') {
+      if (/\[[ ~x]\]/.test(text)) todosMade = true;
+      if (/^\[x\]/m.test(text)) anyTicked = true;
+    }
+  });
+  if (todosMade && changedFiles && !anyTicked) hit('tasks-never-ticked', messages.length - 1, '');
+  const last = messages.at(-1);
+  if (messages.length && !(last?.role === 'assistant' && !(last.tool_calls?.length) && String(last.content ?? '').trim())) hit('no-answer', messages.length - 1, '');
+  return hits;
+}
+
+function reportPatterns(found) {
+  if (!found.length) return;
+  console.log('what went wrong, by kind (most first):');
+  const kinds = Object.keys(PATTERNS).map((kind) => [kind, found.filter((f) => f.kind === kind)]).filter(([, list]) => list.length).sort((a, b) => b[1].length - a[1].length);
+  for (const [kind, list] of kinds) {
+    const sessions = new Set(list.map((f) => f.file)).size;
+    const models = [...new Set(list.map((f) => f.model))];
+    console.log(`${String(list.length).padStart(4)}  ${kind}: ${PATTERNS[kind]}  (${sessions} session(s), ${models.length > 1 ? `${models.length} models` : models[0]})`);
+    const e = list[0];
+    console.log(`        e.g. ${e.file} message #${e.at + 1}${e.detail ? `: ${e.detail}` : ''}`);
+  }
+  const out = join(tmpdir(), 'ocode-eval', `mine-${Date.now()}.json`);
+  mkdirSync(join(tmpdir(), 'ocode-eval'), { recursive: true });
+  writeFileSync(out, JSON.stringify(found, null, 2));
+  console.log(`\nall findings: ${out}\n`);
 }
 
 if (argv.includes('--mine')) mine();

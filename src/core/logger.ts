@@ -143,6 +143,8 @@ const REDACT_PATHS = [
   '*.authorization',
   '*.HF_TOKEN',
   '*.hf_token',
+  '*.OPENROUTER_API_KEY',
+  '*.NVIDIA_API_KEY',
   'token',
   'apiKey',
   'password',

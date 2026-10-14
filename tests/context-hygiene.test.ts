@@ -271,8 +271,9 @@ describe('context-notice', () => {
       assert.match(written.join(''), /A summary of what was removed is kept/);
     });
 
-    it('/compact keeps the latest request and cuts the rest down', async () => {
+    it('/compact keeps the latest request and cuts the rest down, and the context the status line shows goes down with it', async () => {
       const store = conversation(40);
+      const shownBefore = (await request(store)).inputTokens;
       const before = store.tokenCount;
       const written: string[] = [];
       let saved = 0;
@@ -281,7 +282,9 @@ describe('context-notice', () => {
       assert.equal(store.messages.at(-1)?.content, 'the new question');
       assert.match(String(store.preservedSummary), /Earlier conversation trimmed/);
       assert.equal(saved, 1);
-      assert.match(written.join(''), /compacted/);
+      assert.match(written.join(''), /compacted — \d+ older messages removed/);
+      // It read 50k before and after /compact until the next request: it shows what is left now.
+      assert.ok(store.lastBudget!.inputTokens < shownBefore, `${shownBefore} → ${store.lastBudget!.inputTokens}`);
     });
   });
 });

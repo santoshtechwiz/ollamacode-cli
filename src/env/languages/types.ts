@@ -24,6 +24,12 @@ export interface Language extends ToolchainProvider {
   /** Source file extensions; a project with no marker is still found by these. */
   extensions?: string[];
   commands?: Commands;
+  /**
+   * Verbs whose tool a project opts into (a linter it configures): the verb is offered only where this says the project
+   * uses it. A check run with a tool the project never chose fails for being missing, or holds the code to another
+   * project's style.
+   */
+  uses?: Partial<Record<Verb, (root: string) => Promise<boolean>>>;
   /** Verbs whose command can be given files, built from the runtime command: `ruff check <files>`. */
   fileScoped?: Partial<Record<Verb, (cmd: string) => FileScopedCommand>>;
   /** Custom project detection when markers and commands are not enough. */

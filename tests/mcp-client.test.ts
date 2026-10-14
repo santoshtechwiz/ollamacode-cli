@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { McpClient, quoteForCmd } from '../src/mcp/client';
 import { startMcpServers, mcpReady, mcpServerStatus, closeMcpServers, bridgeTool } from '../src/mcp/registry';
 import '../src/tool/index';
-import { PermissionPolicy } from '../src/tool/policy/permission-policy';
+import { PermissionPolicy, groupGrant } from '../src/tool/policy/permission-policy';
 import { createAgentState } from '../src/agent/state';
 
 const SERVER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-mcp-server.cjs');
@@ -193,9 +193,10 @@ describe('mcp-background', () => {
 
 describe('mcp-tools', () => {
   const client = { name: 'docs', callTool: async () => ({ text: 'ok', isError: false }) } as any;
-  const decide = (def: any, grantAll = false) => {
+  const decide = (def: any, grantAll = false, grants: string[] = []) => {
     const permissions = createAgentState().permissions;
     if (grantAll) permissions.alwaysAllowAll = true;
+    for (const grant of grants) permissions.alwaysAllowTools.add(grant);
     return new PermissionPolicy().decide({
       toolName: def.name, args: {}, toolDef: def, cwd: os.tmpdir(), root: os.tmpdir(),
       permissions, yes: false, policy: 'ask', interactive: true, grantedRoots: [],
@@ -213,9 +214,12 @@ describe('mcp-tools', () => {
       assert.notEqual(await decide(def, true), 'ask');
     });
 
-    it('a tool declared destructive is asked about every time, even under "always"', async () => {
+    it('a tool declared destructive is asked about, even under "always", until that server\'s tools are allowed', async () => {
       const def = bridgeTool(client, { name: 'wipe', annotations: { destructiveHint: true } });
-      assert.equal(await decide(def, true), 'ask');
+      assert.equal(await decide(def, true), 'ask', 'the session\'s routine approval does not cover it');
+      // A browser server's every click waited for a yes: "always" for that server's tools covers them, and only them.
+      assert.equal(await decide(def, false, [groupGrant('docs')]), 'allow');
+      assert.equal(await decide(def, false, [groupGrant('other')]), 'ask');
     });
   });
 

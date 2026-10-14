@@ -25,6 +25,12 @@ describe('autoVerbs before done', () => {
 
   it('type-checks and lints a project whose build would add nothing', () => {
     assert.deepEqual(autoVerbs('done', plainTs, ['src/a.ts'], never), ['check', 'lint']);
+    // A file its tsconfig never reads (a script at the root of a project that checks src/) is not checked by tsc: the
+    // check ran anyway and the answer said "checked" for a file it never looked at.
+    const scoped: StackInfo = { ...plainTs, fileScoped: undefined, checkReads: { base: '', files: [], include: ['src/**/*.ts', 'bin/**/*.js'], exclude: ['node_modules'], allowJs: true } };
+    assert.deepEqual(autoVerbs('done', scoped, ['fizzbuzz.js'], never), []);
+    assert.deepEqual(autoVerbs('done', scoped, ['src/a.ts'], never), ['check']);
+    assert.deepEqual(autoVerbs('done', scoped, ['bin/cli.js'], never), ['check'], 'JavaScript it includes, with allowJs');
   });
 
   it('leaves out lint once it proved slow here, and still builds', () => {
@@ -143,6 +149,8 @@ describe('auto in a session', () => {
       const first = await turn(root, state, [write('1', 'site/src/page.tsx'), { content: 'Done.' }], { lint: 4_000, build: 110_000 });
       assert.deepEqual(first, ['ask model', 'write_file', 'ask model', 'lint: npx eslint src/page.tsx', 'build: npm run build'],
         'nothing timed yet: no check after the edit; lint and build once the model answers');
+      // The checks ocode ran and saw pass cover the change, whatever their command: the turn is not reported unchecked.
+      assert.equal(state.verifiedAt, state.changeSeq);
 
       const second = await turn(root, state, [write('2', 'site/src/page.tsx'), { content: 'Done.' }], { lint: 4_000, build: 110_000 });
       assert.deepEqual(second, ['ask model', 'write_file', 'lint: npx eslint src/page.tsx', 'ask model', 'build: npm run build'],

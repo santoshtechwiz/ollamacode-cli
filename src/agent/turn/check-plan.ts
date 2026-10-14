@@ -4,7 +4,7 @@
 import path from 'node:path';
 import { LANGUAGES, type Verb } from '../../env/languages';
 import { FRAMEWORKS } from '../../env/frameworks';
-import type { StackInfo } from '../../types';
+import type { StackInfo, TsconfigScope } from '../../types';
 
 export type CheckPhase = 'edit' | 'done';
 
@@ -23,6 +23,35 @@ const DOC_EXTENSIONS = new Set(['.md', '.txt', '.rst']);
 
 const extOf = (file: string) => path.extname(file).toLowerCase();
 
+const TS_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts']);
+const JS_EXTENSIONS = new Set(['.js', '.jsx', '.mjs', '.cjs']);
+
+/** A tsconfig pattern as tsc reads it: a last part with no wildcard and no extension is a folder and all under it. */
+function patternRegex(base: string, pattern: string): RegExp {
+  let full = path.posix.normalize(path.posix.join(base || '.', pattern)).replace(/^\.\//, '').replace(/\/$/, '');
+  const last = full.split('/').pop() ?? '';
+  if (!/[*?]/.test(last) && !path.posix.extname(last)) full = full === '.' ? '**/*' : `${full}/**/*`;
+  const source = full
+    .split(/(\*\*\/|\*\*|\*|\?)/)
+    .map((part) => (part === '**/' ? '(?:.*/)?' : part === '**' ? '.*' : part === '*' ? '[^/]*' : part === '?' ? '[^/]' : part.replace(/[.+^${}()|[\]\\]/g, '\\$&')))
+    .join('');
+  return new RegExp(`^${source}$`);
+}
+
+/**
+ * Whether a type check reads this file, project-relative: a TypeScript file (or, with allowJs, a JavaScript one) its
+ * tsconfig lists in files, or matches in include and not in exclude. A file it never reads is not checked by it, so
+ * running it after that change proves nothing about the change.
+ */
+export function readsFile(scope: TsconfigScope, file: string): boolean {
+  const ext = extOf(file);
+  if (!TS_EXTENSIONS.has(ext) && !(scope.allowJs && JS_EXTENSIONS.has(ext))) return false;
+  const rel = path.posix.normalize(file.split(path.sep).join('/'));
+  const at = (pattern: string) => path.posix.normalize(path.posix.join(scope.base || '.', pattern));
+  if (scope.files.some((listed) => at(listed) === rel)) return true;
+  return scope.include.some((p) => patternRegex(scope.base, p).test(rel)) && !scope.exclude.some((p) => patternRegex(scope.base, p).test(rel));
+}
+
 /**
  * The verbs to run in one project, in order, for the files it changed. `lastMs` is how long a verb took in this project
  * before (undefined: never run).
@@ -36,7 +65,8 @@ const extOf = (file: string) => path.extname(file).toLowerCase();
  */
 export function autoVerbs(phase: CheckPhase, stack: StackInfo, files: string[], lastMs: (verb: Verb) => number | undefined): Verb[] {
   const languageFiles = LANGUAGES.find((l) => l.id === stack.id)?.extensions ?? [];
-  const touchesCode = files.some((f) => languageFiles.includes(extOf(f)));
+  // Its own files, and among them, where ocode can tell, only the ones its type check reads.
+  const touchesCode = files.some((f) => languageFiles.includes(extOf(f)) && (!stack.checkReads || readsFile(stack.checkReads, f)));
   const touchesProject = files.some((f) => !DOC_EXTENSIONS.has(extOf(f)));
   const lintable = stack.fileScoped?.lint ? files.some((f) => stack.fileScoped!.lint!.extensions.includes(extOf(f))) : false;
   const buildVerifies = Boolean(stack.build) && (stack.frameworks ?? []).some((label) => FRAMEWORKS.find((f) => f.label === label)?.buildVerifies);

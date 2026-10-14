@@ -74,9 +74,22 @@ export async function runCompact(ctx: any, arg: string = ''): Promise<boolean | 
     return CmdResult.HANDLED;
   }
   ctx.persist?.();
-  const kept = summary && dropped > 0 ? 'A summary of what was removed is kept for the model.' : wantSummary ? 'No summary could be made, so only the trim was done.' : 'Your latest request and its work are kept, with the most recent exchanges that fit.';
-  ctx.write(
-    `  ${green(icons.ok)} compacted ${dim(`— ${before.messages - history.messages.length} older messages removed, ~${before.tokens} → ~${history.tokenCount} tokens. ${kept}`)}\n`,
-  );
+  // The status line shows what the last request sent; it is that much smaller now, not only from the next request on.
+  const freed = before.tokens - history.tokenCount;
+  if (history.lastBudget && freed > 0) {
+    const inputTokens = Math.max(0, history.lastBudget.inputTokens - freed);
+    const limit = history.lastBudget.contextLimit;
+    history.lastBudget = { ...history.lastBudget, inputTokens, historyNeeded: history.tokenCount, utilization: limit > 0 ? inputTokens / limit : 0 };
+  }
+  const removed = before.messages - history.messages.length;
+  const kept = summary && dropped > 0
+    ? 'A summary of what was removed is kept for the model.'
+    : wantSummary && !summary ? 'No summary could be made, so only the trim was done.'
+    : removed === 0
+      // Nothing older than the latest request was left: all of it is that request and its work, which is never cut.
+      ? 'Nothing older could go: the rest is your latest request and its work, which is kept whole. /clear starts fresh.'
+      : 'Your latest request and its work are kept, with the most recent exchanges that fit.';
+  const what = removed > 0 ? `${removed} older messages removed` : 'old tool output shortened';
+  ctx.write(`  ${green(icons.ok)} compacted ${dim(`— ${what}, ~${before.tokens} → ~${history.tokenCount} tokens. ${kept}`)}\n`);
   return CmdResult.HANDLED;
 }

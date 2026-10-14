@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { projectFolderOf, checkCommands } from '../src/agent/turn/after-edit';
+import { detectStacks } from '../src/env/tooling/detector';
 
 describe('after-edit', () => {
   // agent.afterEdit: the person's check runs once after a step that changed files, and the model reads its result.
@@ -255,13 +256,27 @@ describe('before-done', () => {
       }
     });
 
-    it('gives Python\'s ruff only the changed .py files', async () => {
+    it('gives Python\'s ruff only the changed .py files, and only in a project that uses ruff', async () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-py-'));
       try {
         fs.mkdirSync(path.join(root, 'api'));
-        fs.writeFileSync(path.join(root, 'api/pyproject.toml'), '[project]\nname = "api"\n');
+        fs.writeFileSync(path.join(root, 'api/pyproject.toml'), '[project]\nname = "api"\n\n[tool.ruff]\nline-length = 100\n');
         const t = await turn(root, [{ toolCalls: [call('1', 'write_file', { path: 'api/app.py', content: 'x = 1' }), call('2', 'write_file', { path: 'api/README.md', content: '# api' })] }, { content: 'Done.' }], { afterEdit: 'lint' }, []);
         assert.deepEqual(t.ran.filter((r) => r !== 'write_file').map((r) => r.replace(/^\S+ -m ruff/, 'python -m ruff')), ['python -m ruff check app.py in api']);
+        // A Space whose requirements never name ruff: the check failed with "No module named ruff", and the model
+        // installed it with pip and rearranged the project's imports to ruff's taste.
+        fs.mkdirSync(path.join(root, 'space'));
+        fs.writeFileSync(path.join(root, 'space/requirements.txt'), 'diffusers>=0.32.0\ngradio\n');
+        const space = await turn(root, [{ toolCalls: [call('1', 'write_file', { path: 'space/run.py', content: 'x = 1' })] }, { content: 'Done.' }], { afterEdit: 'lint' }, []);
+        assert.deepEqual(space.ran.filter((r) => r !== 'write_file'), []);
+        // Nor pytest in a project with no tests: offered it, the model ran it, got "no tests ran" (exit 5), and
+        // read that as a failure. A project with test files gets it.
+        const [spaceStack] = await detectStacks(path.join(root, 'space'));
+        assert.equal(spaceStack.test, undefined);
+        fs.mkdirSync(path.join(root, 'space/tests'));
+        fs.writeFileSync(path.join(root, 'space/tests/test_run.py'), 'def test_run(): pass\n');
+        const [tested] = await detectStacks(path.join(root, 'space'));
+        assert.match(String(tested.test?.join(' ')), /-m pytest$/);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -279,27 +294,28 @@ describe('before-done', () => {
   });
 
   describe('agent.beforeDone', () => {
-    it('runs the build when the model answers; a failure goes back to it and the turn goes on until it passes', async () => {
+    it('runs the build when the model answers; the answer ends the turn, and a failure is shown and kept for the next message', async () => {
       const root = project();
       try {
         const t = await turn(root, [
           { toolCalls: [call('1', 'write_file', { path: 'site/src/Footer.tsx', content: 'new Date()' })] },
           { content: 'Done: the site is ready.' },
-          { toolCalls: [call('2', 'write_file', { path: 'site/src/Footer.tsx', content: '2026' })] },
-          { content: 'Fixed the footer; the build passes.' },
-        ], { beforeDone: 'build' }, [false, true]);
-        assert.deepEqual(t.ran, ['write_file', 'npm run build in site', 'write_file', 'npm run build in site']);
-        const seen = t.requests[2].messages;
-        const failure = seen.filter((m: any) => m.role === ROLE.TOOL).map((m: any) => String(m.content)).at(-1);
+          { content: 'never asked: the turn ended with the answer' },
+        ], { beforeDone: 'build' }, [false]);
+        // Sent back by itself after answering, a model learned that an answer does not end the turn, and "answered"
+        // through echo commands instead.
+        assert.deepEqual(t.ran, ['write_file', 'npm run build in site']);
+        assert.equal(t.requests.length, 2, 'no request after the answer');
+        assert.equal(t.result.answer, 'Done: the site is ready.');
+        assert.deepEqual(t.notes, ['warn: Not done: `npm run build` failed after that answer. Say "continue" to have the agent fix it.']);
+        assert.deepEqual(t.result.failedChecks, ['npm run build'], 'the person was told: the report after it does not say it again');
+        // The model reads the failure when the person asks it to go on: after its answer, as the call ocode made.
+        const kept = t.history.messages;
+        const failure = kept.filter((m: any) => m.role === ROLE.TOOL).map((m: any) => String(m.content)).at(-1);
         assert.match(failure, /new Date\(\)` while prerendering/);
-        assert.match(failure, /ocode ran this check \(agent\.beforeDone\) when you answered, and it failed: the work is not done/);
-        const said = seen.filter((m: any) => m.role === ROLE.ASSISTANT).at(-1);
-        assert.equal(said.content, 'Done: the site is ready.', 'the answer stays, as what the model said before the check');
-        assert.equal(t.result.answer, 'Fixed the footer; the build passes.');
-        assert.deepEqual(t.notes, [
-          'warn: Not done yet: `npm run build` failed after that answer, so the agent keeps working on what it reports.',
-          'success: Checked before finishing: `npm run build` passed.',
-        ], 'the screen says the first answer was not final, and that the last one was checked');
+        assert.match(failure, /ocode ran this check \(agent\.beforeDone\) after your answer, and it failed; the user was shown it/);
+        const said = kept.filter((m: any) => m.role === ROLE.ASSISTANT);
+        assert.equal(said.filter((m: any) => m.content === 'Done: the site is ready.').length, 1, 'the answer is kept once, before the check');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -325,21 +341,6 @@ describe('before-done', () => {
       try {
         const t = await turn(root, [{ toolCalls: [call('1', 'write_file', { path: 'site/src/Footer.tsx', content: 'x' })] }, { content: 'Done.' }], { afterEdit: 'check', beforeDone: 'build' }, [true]);
         assert.deepEqual(t.limits, [90_000, 300_000]);
-      } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-      }
-    });
-
-    it('lets the answer stand when nothing changed since a failed check', async () => {
-      const root = project();
-      try {
-        const t = await turn(root, [
-          { toolCalls: [call('1', 'write_file', { path: 'site/src/Footer.tsx', content: 'x' })] },
-          { content: 'Done.' },
-          { content: 'I cannot fix the build: it needs a network font.' },
-        ], { beforeDone: 'build' }, [false]);
-        assert.deepEqual(t.ran, ['write_file', 'npm run build in site'], 'not run again with nothing new to check');
-        assert.equal(t.result.answer, 'I cannot fix the build: it needs a network font.');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

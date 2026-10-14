@@ -261,9 +261,15 @@ function askedEveryTime(ctx: PermissionContext): boolean {
   return command !== null && Boolean(dangerousReason(command, ctx.cwd));
 }
 
+/** The standing approval a tool's group gets when the person answers "always" for it. */
+export const groupGrant = (group: string) => `group:${group}`;
+
 class StandingGrantRule implements PermissionRule {
   name = 'standing-grant';
   evaluate(ctx: PermissionContext): PermissionDecision | null {
+    // A grouped tool is covered by its group's approval only, never by the session's routine one.
+    const group = ctx.toolDef?.grantGroup;
+    if (group) return ctx.permissions?.alwaysAllowTools?.has(groupGrant(group)) && !askedEveryTime(ctx) ? 'allow' : null;
     if (isAlwaysAllowed(ctx.permissions, ctx.toolName)) {
       // A standing grant covers only the routine calls.
       if (askedEveryTime(ctx)) {

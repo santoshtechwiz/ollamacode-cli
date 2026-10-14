@@ -1,7 +1,8 @@
 import path from 'node:path';
 import { exists, readJson, detectPackageManager } from '../tooling/probe';
 import { eslintFiles, frameworksOf } from '../frameworks';
-import type { StackInfo } from '../../types';
+import fs from 'node:fs';
+import type { StackInfo, TsconfigScope } from '../../types';
 import type { Language } from './types';
 
 /**
@@ -19,6 +20,49 @@ async function localBin(root: string, pkgName: string, binName: string): Promise
   return ['npx', binName];
 }
 
+/** JSON with the comments and trailing commas tsconfig allows; null when it does not parse. */
+function readJsonc(file: string): any {
+  try {
+    const text = fs.readFileSync(file, 'utf8')
+      // Strings first, so a "//" inside one ("paths": {"@/*": ...}) is kept; then comments and trailing commas.
+      .replace(/("(?:[^"\\]|\\.)*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (_m, str) => str ?? '')
+      .replace(/,(\s*[}\]])/g, '$1');
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/** tsc's own defaults for a tsconfig that lists no exclude. */
+const DEFAULT_EXCLUDE = ['node_modules', 'bower_components', 'jspm_packages'];
+
+/**
+ * The files a type check reads, from the tsconfig it runs with: the project's tsconfig.json, or the one its typecheck
+ * script names with -p. Undefined whenever that cannot be told from the file alone (a check that is not tsc, a build
+ * mode or project references, settings inherited through extends): the check then runs for any source change, as before.
+ */
+function typecheckScope(root: string, command: string | undefined): TsconfigScope | undefined {
+  if (!command || !/\btsc\b/.test(command) || /(^|\s)(-b|--build)(\s|$)/.test(command)) return undefined;
+  const projects = [...command.matchAll(/(?:^|\s)(?:-p|--project)\s+("[^"]+"|\S+)/g)].map((m) => m[1].replace(/^"|"$/g, ''));
+  if (projects.length > 1) return undefined;
+  let file = path.resolve(root, projects[0] ?? 'tsconfig.json');
+  if (!file.endsWith('.json')) file = path.join(file, 'tsconfig.json');
+  const config = readJsonc(file);
+  if (!config || typeof config !== 'object' || config.references) return undefined;
+  const options = config.compilerOptions ?? {};
+  const lists = (key: string) => (Array.isArray(config[key]) ? config[key].map(String) : undefined);
+  const [files, include, exclude] = [lists('files'), lists('include'), lists('exclude')];
+  // What a base config would add is not read here.
+  if (config.extends && ((!files && !include) || options.allowJs === undefined)) return undefined;
+  return {
+    base: path.relative(root, path.dirname(file)).split(path.sep).join('/'),
+    files: files ?? [],
+    include: include ?? (files ? [] : ['**/*']),
+    exclude: exclude ?? [...DEFAULT_EXCLUDE, ...(typeof options.outDir === 'string' ? [options.outDir] : [])],
+    allowJs: options.allowJs === true,
+  };
+}
+
 async function detectNode(root: string): Promise<StackInfo | null> {
   const pkg = await readJson(path.join(root, 'package.json'));
   if (!pkg) return null;
@@ -29,8 +73,12 @@ async function detectNode(root: string): Promise<StackInfo | null> {
   // JavaScript projects pull it in for editor types, and tsc --noEmit over them checks nothing they wrote.
   const usesTsc = Object.values(scripts).some((cmd) => /\btsc\b/.test(String(cmd)));
   const hasTs = usesTsc || (await exists(path.join(root, 'tsconfig.json')));
-  const tsc = [...(await localBin(root, 'typescript', 'tsc')), '--noEmit'];
+  // A tsconfig that only points at others (Vite's: "files": [] and references) gives plain tsc nothing to read: it
+  // exited 0 over a file full of type errors. Build mode checks each referenced project; --noEmit keeps it from writing.
+  const references = readJsonc(path.join(root, 'tsconfig.json'))?.references;
+  const tsc = [...(await localBin(root, 'typescript', 'tsc')), ...(Array.isArray(references) && references.length ? ['-b'] : []), '--noEmit'];
   const eslint = eslintFiles(pkg, await localBin(root, 'eslint', 'eslint'));
+  const checkCommand = scripts.typecheck ? String(scripts.typecheck) : hasTs ? 'tsc --noEmit' : undefined;
   return {
     id: 'node',
     label: hasTs ? 'TypeScript' : 'Node.js',
@@ -44,6 +92,7 @@ async function detectNode(root: string): Promise<StackInfo | null> {
     check: scripts.typecheck ? script('typecheck') : hasTs ? tsc : scripts.lint ? script('lint') : undefined,
     lint: scripts.lint ? script('lint') : undefined,
     fileScoped: eslint ? { lint: eslint } : undefined,
+    checkReads: typecheckScope(root, checkCommand),
     run: scripts.dev ? script('dev') : scripts.start ? (pm === 'npm' ? ['npm', 'start'] : [pm, 'start']) : undefined,
     dev: scripts.dev ? script('dev') : undefined,
   };
