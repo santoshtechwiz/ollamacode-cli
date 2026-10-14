@@ -2,6 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { ROLE } from '../protocol';
+import { commandLine } from '../agent/turn/helpers';
 
 import { resolveShell } from '../tool/process/shell/runtime';
 import { TOOLS } from '../env/toolchains';
@@ -165,15 +166,17 @@ function stackSection(
     const uses = stack.frameworks?.length ? ` with ${stack.frameworks.join(', ')}` : '';
     lines.push(`- ${stack.label}${uses}${loc} (detected from ${stack.marker})`);
 
+    // As they run, quoted where a shell would split them: the model copies these, and an unquoted "a|b" argument
+    // became a pipe in PowerShell.
     const commands = [
-      stack.test && `test: ${stack.test.join(' ')}`,
-      stack.check && `check: ${stack.check.join(' ')}`,
-      stack.build && `build: ${stack.build.join(' ')}`,
-      stack.lint && `lint: ${stack.lint.join(' ')}`,
-      stack.run && `run: ${stack.run.join(' ')}`,
+      stack.test && `test: ${commandLine(stack.test)}`,
+      stack.check && `check: ${commandLine(stack.check)}`,
+      stack.build && `build: ${commandLine(stack.build)}`,
+      stack.lint && `lint: ${commandLine(stack.lint)}`,
+      stack.run && `run: ${commandLine(stack.run)}`,
       stack.dev &&
         stack.run?.join(' ') !== stack.dev.join(' ')
-        ? `dev: ${stack.dev.join(' ')}`
+        ? `dev: ${commandLine(stack.dev)}`
         : null,
     ].filter(Boolean);
 

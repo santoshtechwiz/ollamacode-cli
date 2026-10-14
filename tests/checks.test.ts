@@ -255,13 +255,19 @@ describe('before-done', () => {
       }
     });
 
-    it('gives Python\'s ruff only the changed .py files', async () => {
+    it('gives Python\'s ruff only the changed .py files, and only in a project that uses ruff', async () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ocode-py-'));
       try {
         fs.mkdirSync(path.join(root, 'api'));
-        fs.writeFileSync(path.join(root, 'api/pyproject.toml'), '[project]\nname = "api"\n');
+        fs.writeFileSync(path.join(root, 'api/pyproject.toml'), '[project]\nname = "api"\n\n[tool.ruff]\nline-length = 100\n');
         const t = await turn(root, [{ toolCalls: [call('1', 'write_file', { path: 'api/app.py', content: 'x = 1' }), call('2', 'write_file', { path: 'api/README.md', content: '# api' })] }, { content: 'Done.' }], { afterEdit: 'lint' }, []);
         assert.deepEqual(t.ran.filter((r) => r !== 'write_file').map((r) => r.replace(/^\S+ -m ruff/, 'python -m ruff')), ['python -m ruff check app.py in api']);
+        // A Space whose requirements never name ruff: the check failed with "No module named ruff", and the model
+        // installed it with pip and rearranged the project's imports to ruff's taste.
+        fs.mkdirSync(path.join(root, 'space'));
+        fs.writeFileSync(path.join(root, 'space/requirements.txt'), 'diffusers>=0.32.0\ngradio\n');
+        const space = await turn(root, [{ toolCalls: [call('1', 'write_file', { path: 'space/run.py', content: 'x = 1' })] }, { content: 'Done.' }], { afterEdit: 'lint' }, []);
+        assert.deepEqual(space.ran.filter((r) => r !== 'write_file'), []);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
