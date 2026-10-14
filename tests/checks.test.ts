@@ -299,6 +299,7 @@ describe('before-done', () => {
         assert.equal(t.requests.length, 2, 'no request after the answer');
         assert.equal(t.result.answer, 'Done: the site is ready.');
         assert.deepEqual(t.notes, ['warn: Not done: `npm run build` failed after that answer. Say "continue" to have the agent fix it.']);
+        assert.deepEqual(t.result.failedChecks, ['npm run build'], 'the person was told: the report after it does not say it again');
         // The model reads the failure when the person asks it to go on: after its answer, as the call ocode made.
         const kept = t.history.messages;
         const failure = kept.filter((m: any) => m.role === ROLE.TOOL).map((m: any) => String(m.content)).at(-1);

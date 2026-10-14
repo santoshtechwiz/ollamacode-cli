@@ -320,6 +320,8 @@ export interface TurnResult {
   iterations: number;
   stopReason: StopReason;
   telemetry?: import('./core/telemetry.ts').ModelCallRecord[];
+  /** The checks that failed after the answer (agent.beforeDone), as the person was told: nothing more to say of them. */
+  failedChecks?: string[];
 }
 
 /** Whether the model is asked to think, and whether the user sees it. */

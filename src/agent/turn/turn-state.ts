@@ -64,6 +64,8 @@ export interface TurnState {
   toolCalls: ToolCallRecord[];
   answer: string | undefined;
   stopReason: StopReason | undefined;
+  /** The checks that failed after the answer, by label. */
+  failedChecks?: string[];
   /** Skills whose files a call touched this turn, so each is pointed at once (see skills/notes); started on first use. */
   skillsNoted?: Set<string>;
 }

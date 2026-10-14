@@ -189,6 +189,8 @@ export async function reportChatTurn(host: ChatTurnContext, result: TurnResult):
 function reportUnchecked(host: ChatTurnContext, result: TurnResult): void {
   const state = (host.workspace as any)?.state;
   if (!state || result.stopReason === STOP_REASONS.CANCELLED || stillRunning(host, result).length) return;
+  // A check that failed after the answer was already said ("Not done: ... failed"): that is why they are unchecked.
+  if (result.failedChecks?.length) return;
   // This turn's changes that no passing check came after.
   const touched = [...new Set(uncheckedChanges(state, { thisTurn: true }).map((c: { path: string }) => c.path))];
   if (touched.length === 0) return;

@@ -91,6 +91,7 @@ function buildResult(
     stopReason:
       state.stopReason ?? STOP_REASONS.MAX_ITERATIONS,
     telemetry,
+    ...(state.failedChecks?.length ? { failedChecks: state.failedChecks } : {}),
   };
 }
 
@@ -372,6 +373,7 @@ export async function runTurn(
         // The answer was on screen before the checks ran: say what they found, so it never reads as checked when it is not.
         const told = doneCheckNote(runs, failed.length > 0);
         if (told) callbacks.note?.(...told);
+        if (failed.length) turnState.failedChecks = failed.map((run) => run.label);
         const limit = Number(config.maxToolOutput) || 8000;
         failed.forEach((run, k) => {
           const call = { id: '', type: 'function' as const, function: { name: run.tool, arguments: run.args } };
