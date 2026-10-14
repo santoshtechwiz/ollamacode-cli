@@ -75,7 +75,7 @@ describe('completed only on evidence', () => {
       state.todos = [{ content: 'The tests pass', status: 'in_progress', verify: 'npm test' }];
       const early = await write(state, { update: [{ task: 'The tests pass', status: 'completed' }] });
       assert.equal(early.ok, false);
-      assert.match(early.error, /`npm test` has not passed on the files as they are now\. Run that command/);
+      assert.match(early.error, /verify `npm test` is not a command that has passed on the files as they are now\. Run that command/);
 
       notePassed(state, path.join(root, 'app'), 'npm test');
       const done = await write(state, { update: [{ task: 'The tests pass', status: 'completed' }] });
@@ -84,6 +84,17 @@ describe('completed only on evidence', () => {
       state.note('write', 'app/a.ts', 'file');
       assert.equal(passedNow(state, 'npm test'), false);
       assert.match(describeSession(state), /\[x\] The tests pass — verify: `npm test` · changed since it was checked/);
+
+      // A sentence where the command goes: the model ran the real check, then reworded the sentence over and over.
+      // The refusal names the command that passed, and sending it completes the task.
+      const check = 'python -m compileall -q .';
+      state.todos = [...state.todos, { content: 'Errors are handled', status: 'in_progress', verify: 'Code compiles without syntax errors' }];
+      notePassed(state, path.join(root, 'app'), check);
+      const prose = await write(state, { update: [{ task: 'Errors are handled', status: 'completed' }] });
+      assert.equal(prose.ok, false);
+      assert.match(prose.error, /These commands passed on the files as they are now: `python -m compileall -q \.`\. If one proves this task, send it as verify/);
+      const named = await write(state, { update: [{ task: 'Errors are handled', status: 'completed', verify: check }] });
+      assert.equal(named.ok, true, named.error);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

@@ -1,7 +1,7 @@
 import { TOOL_ERROR_CODE } from '../../protocol';
 import { defineTool } from '../../tool/core/defineTool';
 import { ok, fail } from '../../tool/core/tool-result';
-import { passedNow } from '../../context/workspace-state';
+import { passedCommands, passedNow } from '../../context/workspace-state';
 import { applyUpdates, checkTodos, todoFrom, todoLines, TODO_STATUSES, type TodoItem, type TodoStatus } from '../todos';
 
 const TASK_FIELDS = {
@@ -78,7 +78,7 @@ export default defineTool({
     const next = Array.isArray(args.update) ? applyUpdates(before, args.update as any[]) : (args.todos as any[]).map(todoFrom);
     if (typeof next === 'string') return fail(next, { code: TOOL_ERROR_CODE.EINVAL });
     const passed = (command: string) => passedNow(state, command);
-    const wrong = checkTodos(next, before, passed);
+    const wrong = checkTodos(next, before, passed, passedCommands(state));
     if (wrong) return fail(wrong, { code: TOOL_ERROR_CODE.EINVAL });
     if (state) state.todos = next;
     return ok({ kind: 'status', display: next.length ? todoLines(next, passed).join('\n') : 'Todo list is empty.', data: { todos: next } });

@@ -143,7 +143,7 @@ export function applyUpdates(list: readonly TodoItem[], updates: readonly any[])
  * command passed with no file changed since, or, with no command, a line saying what showed it works. A task starts
  * or finishes only after the tasks it depends on are completed.
  */
-export function checkTodos(next: readonly TodoItem[], before: readonly TodoItem[], passed: PassedNow): string | null {
+export function checkTodos(next: readonly TodoItem[], before: readonly TodoItem[], passed: PassedNow, passedList: readonly string[] = []): string | null {
   if (next.some((todo) => !todo.content)) return 'Each task needs non-empty content';
   if (!next.every((todo) => (TODO_STATUSES as readonly string[]).includes(todo.status))) return `Each status is one of ${TODO_STATUSES.join(', ')}`;
   const names = new Set<string>();
@@ -161,9 +161,14 @@ export function checkTodos(next: readonly TodoItem[], before: readonly TodoItem[
     }
     if (todo.status !== 'completed' || wasDone.has(todo.content)) continue;
     if (todo.verify && !passed(todo.verify)) {
-      return `"${todo.content}" is not completed: \`${todo.verify}\` has not passed on the files as they are now. ` +
-        'Run that command; once it passes, mark the task completed. If no command proves this task, ' +
-        'send verify: "" with status completed and evidence saying what showed it works.';
+      // verify is matched to a command that ran, as written. A model that wrote a sentence there ("Code compiles
+      // without errors") ran the real check, then reworded the sentence, again and again: the commands that did pass
+      // are the ones it can name.
+      const ran = passedList.length
+        ? ` These commands passed on the files as they are now: ${passedList.map((c) => `\`${c}\``).join(', ')}. If one proves this task, send it as verify, exactly as written, with status completed.`
+        : ' Run that command; once it passes, mark the task completed.';
+      return `"${todo.content}" is not completed: verify \`${todo.verify}\` is not a command that has passed on the files as they are now.${ran} ` +
+        'If no command proves this task, send verify: "" with status completed and evidence saying what showed it works.';
     }
     if (!todo.verify && !todo.evidence) {
       return `"${todo.content}" is not completed: send evidence with it (what showed it works), or a verify command that proves it.`;
