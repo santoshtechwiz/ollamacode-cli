@@ -6,7 +6,7 @@ import { isInside } from '../../tool/core/paths';
 import { noteWorkIn } from '../../context/workspace-state';
 import { defineTool } from '../../tool/core/defineTool';
 import { ok, fail } from '../../tool/core/tool-result';
-import { todoLines, type TodoItem } from '../todos';
+import { startNext, todoLines, type TodoItem } from '../todos';
 
 const START = 'Yes, start now';
 const CHANGE = 'Change something';
@@ -49,14 +49,15 @@ function settleFolder(state: any, root: string | undefined, folder: string): voi
 
 /** Approved: plan mode is over, the plan's steps are the task list, and the same turn carries the plan out. */
 function approved(state: any, plan: string, steps: Step[], display: string) {
-  const todos: TodoItem[] = steps.map((step) => ({ content: step.outcome, status: 'pending', ...(step.verify ? { verify: step.verify } : {}) }));
+  // The work starts now, on the first step.
+  const todos: TodoItem[] = startNext(steps.map((step) => ({ content: step.outcome, status: 'pending' as const, ...(step.verify ? { verify: step.verify } : {}) })));
   if (state) {
     state.planExploring = false;
     state.planHeld = false;
     if (todos.length) state.todos = todos;
   }
   const list = todos.length
-    ? `\nIts steps are your task list now:\n${todoLines(todos).join('\n')}\nAs you work, change them with todo_write update: mark the one you start in_progress and completed when it is done (a task with verify is completed for you when that command passes); split, add, reorder or remove tasks when what you find changes the plan.`
+    ? `\nIts steps are your task list now:\n${todoLines(todos).join('\n')}\nAs you work, change them with todo_write update: the first is in progress; mark each completed when it is done and start the next (a task with verify is completed for you when that command passes); split, add, reorder or remove tasks when what you find changes the plan.`
     : '';
   return {
     ...ok({ kind: 'status', display, data: { plan, approved: true } }),

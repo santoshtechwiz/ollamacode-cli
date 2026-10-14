@@ -185,5 +185,17 @@ export function completeVerified(todos: readonly TodoItem[], command: string): T
   if (at < 0) return null;
   const waits = (todos[at].dependsOn ?? []).some((dep) => todos.find((t) => t.content === dep)?.status !== 'completed');
   if (waits) return null;
-  return todos.map((todo, i) => (i === at ? { ...todo, status: 'completed' as const } : todo));
+  return startNext(todos.map((todo, i) => (i === at ? { ...todo, status: 'completed' as const } : todo)));
+}
+
+/**
+ * With no task in progress, the first pending one whose tasks it depends on are completed starts: the work goes on to
+ * the next step in the list's order. Used where the list's own events move it (a plan approved, a task's command
+ * passing); a model that never touched the list left every task unticked through a whole build.
+ */
+export function startNext(todos: readonly TodoItem[]): TodoItem[] {
+  if (todos.some((todo) => todo.status === 'in_progress')) return [...todos];
+  const done = new Set(todos.filter((todo) => todo.status === 'completed').map((todo) => todo.content));
+  const at = todos.findIndex((todo) => todo.status === 'pending' && (todo.dependsOn ?? []).every((dep) => done.has(dep)));
+  return at < 0 ? [...todos] : todos.map((todo, i) => (i === at ? { ...todo, status: 'in_progress' as const } : todo));
 }

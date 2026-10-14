@@ -142,7 +142,7 @@ describe('an approved plan', () => {
       );
       const r = await write(state, { update: [{ task: 'The page lists products', doneWhen: 'products from the API show on /', dependsOn: ['The API serves products'] }] });
       assert.equal(r.ok, true, r.error);
-      assert.equal(r.display, '[ ] The API serves products\n[ ] The page lists products — after: The API serves products · done when: products from the API show on /');
+      assert.equal(r.display, '[~] The API serves products\n[ ] The page lists products — after: The API serves products · done when: products from the API show on /');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -158,7 +158,7 @@ describe('what the session showed', () => {
 });
 
 describe('the list follows the work', () => {
-  it('ticks the task in progress when its command passes, and no other', async () => {
+  it('ticks the task in progress when its command passes, and no other, and the next one starts', async () => {
     const { root, state } = session();
     try {
       state.todos = [
@@ -166,8 +166,8 @@ describe('the list follows the work', () => {
         { content: 'Skeletons show while loading', status: 'pending', verify: 'npm run build' },
       ];
       notePassed(state, path.join(root, 'app'), 'npm run build');
-      assert.deepEqual(names(state), ['completed: The page builds', 'pending: Skeletons show while loading'],
-        'a pending task\'s command can pass before its work exists');
+      assert.deepEqual(names(state), ['completed: The page builds', 'in_progress: Skeletons show while loading'],
+        'a pending task\'s command can pass before its work exists: it starts, it is not ticked');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
