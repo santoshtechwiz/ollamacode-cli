@@ -285,27 +285,27 @@ describe('before-done', () => {
   });
 
   describe('agent.beforeDone', () => {
-    it('runs the build when the model answers; a failure goes back to it and the turn goes on until it passes', async () => {
+    it('runs the build when the model answers; the answer ends the turn, and a failure is shown and kept for the next message', async () => {
       const root = project();
       try {
         const t = await turn(root, [
           { toolCalls: [call('1', 'write_file', { path: 'site/src/Footer.tsx', content: 'new Date()' })] },
           { content: 'Done: the site is ready.' },
-          { toolCalls: [call('2', 'write_file', { path: 'site/src/Footer.tsx', content: '2026' })] },
-          { content: 'Fixed the footer; the build passes.' },
-        ], { beforeDone: 'build' }, [false, true]);
-        assert.deepEqual(t.ran, ['write_file', 'npm run build in site', 'write_file', 'npm run build in site']);
-        const seen = t.requests[2].messages;
-        const failure = seen.filter((m: any) => m.role === ROLE.TOOL).map((m: any) => String(m.content)).at(-1);
+          { content: 'never asked: the turn ended with the answer' },
+        ], { beforeDone: 'build' }, [false]);
+        // Sent back by itself after answering, a model learned that an answer does not end the turn, and "answered"
+        // through echo commands instead.
+        assert.deepEqual(t.ran, ['write_file', 'npm run build in site']);
+        assert.equal(t.requests.length, 2, 'no request after the answer');
+        assert.equal(t.result.answer, 'Done: the site is ready.');
+        assert.deepEqual(t.notes, ['warn: Not done: `npm run build` failed after that answer. Say "continue" to have the agent fix it.']);
+        // The model reads the failure when the person asks it to go on: after its answer, as the call ocode made.
+        const kept = t.history.messages;
+        const failure = kept.filter((m: any) => m.role === ROLE.TOOL).map((m: any) => String(m.content)).at(-1);
         assert.match(failure, /new Date\(\)` while prerendering/);
-        assert.match(failure, /ocode ran this check \(agent\.beforeDone\) when you answered, and it failed: the work is not done/);
-        const said = seen.filter((m: any) => m.role === ROLE.ASSISTANT).at(-1);
-        assert.equal(said.content, 'Done: the site is ready.', 'the answer stays, as what the model said before the check');
-        assert.equal(t.result.answer, 'Fixed the footer; the build passes.');
-        assert.deepEqual(t.notes, [
-          'warn: Not done yet: `npm run build` failed after that answer, so the agent keeps working on what it reports.',
-          'success: Checked before finishing: `npm run build` passed.',
-        ], 'the screen says the first answer was not final, and that the last one was checked');
+        assert.match(failure, /ocode ran this check \(agent\.beforeDone\) after your answer, and it failed; the user was shown it/);
+        const said = kept.filter((m: any) => m.role === ROLE.ASSISTANT);
+        assert.equal(said.filter((m: any) => m.content === 'Done: the site is ready.').length, 1, 'the answer is kept once, before the check');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
@@ -331,21 +331,6 @@ describe('before-done', () => {
       try {
         const t = await turn(root, [{ toolCalls: [call('1', 'write_file', { path: 'site/src/Footer.tsx', content: 'x' })] }, { content: 'Done.' }], { afterEdit: 'check', beforeDone: 'build' }, [true]);
         assert.deepEqual(t.limits, [90_000, 300_000]);
-      } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-      }
-    });
-
-    it('lets the answer stand when nothing changed since a failed check', async () => {
-      const root = project();
-      try {
-        const t = await turn(root, [
-          { toolCalls: [call('1', 'write_file', { path: 'site/src/Footer.tsx', content: 'x' })] },
-          { content: 'Done.' },
-          { content: 'I cannot fix the build: it needs a network font.' },
-        ], { beforeDone: 'build' }, [false]);
-        assert.deepEqual(t.ran, ['write_file', 'npm run build in site'], 'not run again with nothing new to check');
-        assert.equal(t.result.answer, 'I cannot fix the build: it needs a network font.');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

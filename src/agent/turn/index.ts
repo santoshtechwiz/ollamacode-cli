@@ -193,9 +193,11 @@ export async function executeTurn({
   }
 
   const answer = String(result?.content ?? '').trim();
-  // Mid-turn scaffolding is dropped on save, so the answer already recorded before it still counts as last.
-  const last = history.messages.findLast((m: Message) => !(m.id && history.ephemeralIds.has(m.id)));
-  if (answer && !(last?.role === ROLE.ASSISTANT && last?.content === result.content)) {
+  // Mid-turn scaffolding is dropped on save, so the answer already recorded before it still counts as last. So does an
+  // answer a failed check after it was recorded with: it is the last thing the model said.
+  const turnStart = history.messages.findLastIndex((m: Message) => m.role === ROLE.USER);
+  const last = history.messages.slice(turnStart + 1).findLast((m: Message) => m.role === ROLE.ASSISTANT && !(m.id && history.ephemeralIds.has(m.id)));
+  if (answer && last?.content !== result.content) {
     history.addAssistant(result.content);
   }
   if (workspace.state) {

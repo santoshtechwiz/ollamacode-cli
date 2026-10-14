@@ -20,6 +20,21 @@ import { formatOutput } from './output/presentation';
 import { runInBackground, keepServingInBackground, SERVING } from './background';
 import type { ShellResult } from './types';
 
+/**
+ * What a command printed when all of it is text the command itself holds: a sentence of a few words, not a short value
+ * like a branch name a command can both take and print. A model that ended its work this way (`echo "Task completed:
+ * …"`) said the same thing eight times over, each worded a little differently.
+ */
+function saidOnly(command: string, stdout: unknown, stderr: unknown): string | null {
+  const said = String(stdout ?? '').trim();
+  if (said.length < 20 || !/\s/.test(said) || String(stderr ?? '').trim()) return null;
+  return said.split(/\r?\n/).every((line) => !line.trim() || command.includes(line.trim())) ? said : null;
+}
+
+const SAID_ONLY =
+  'This command only printed text you wrote into it: nothing was run, checked or changed for it, and the user does not ' +
+  'read it as your answer. To tell the user something, reply in text without calling a tool.';
+
 export default defineTool({
   name: 'exec_shell',
   aliases: ['run_command', 'bash', 'shell', 'sh', 'exec', 'execute_command', 'terminal'],
@@ -206,12 +221,14 @@ export default defineTool({
       // A passing build, test, lint or type-check checks every change made before it.
       if (endsOnItsOwn && ctx?.state) ctx.state.verifiedAt = ctx.state.changeSeq ?? 0;
       notePassed(ctx?.state, request.cwd, command);
-      return ok({
+      const result = ok({
         kind: 'command',
         display: presentation,
         truncated,
         data: { ...fullData, ...(shellSnapshot?.group ? { undoableDelete: shellSnapshot.group } : {}) },
       });
+      const said = saidOnly(command, execution.stdout, execution.stderr);
+      return said ? { ...result, saidOnly: said, modelNote: SAID_ONLY } : result;
     }
 
     // It no longer holds for these files, whatever passed before; a completed task it proves is open again.

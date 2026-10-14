@@ -36,6 +36,16 @@ describe('exec-shell', () => {
     assert.equal(execution.spawnError, null);
   });
 
+  // A model "answered" through commands like this: the result says it only printed what it was given.
+  test('marks a command whose whole output is text it holds, and not one that computed what it printed', async () => {
+    const said: any = await execShell.execute({ command: `node -e "console.log('Task completed: all files updated')"` }, { cwd: process.cwd(), root: process.cwd() } as any);
+    assert.equal(said.saidOnly, 'Task completed: all files updated');
+    assert.match(String(said.modelNote), /reply in text without calling a tool/);
+    const computed: any = await execShell.execute({ command: `node -e "console.log('total: ' + (40 + 2) + ' files checked')"` }, { cwd: process.cwd(), root: process.cwd() } as any);
+    assert.equal(computed.ok, true);
+    assert.equal(computed.saidOnly, undefined);
+  });
+
   // Non-zero exit
   test('returns failure for a non-zero exit code', async () => {
     const execution = await runCommand(`node -e "console.error('boom'); process.exit(1)"`);

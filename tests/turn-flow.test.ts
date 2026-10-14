@@ -39,9 +39,12 @@ async function turn(replies: Reply[]) {
       },
     } as any,
     toolRunner: {
-      async run(name: string) {
+      async run(name: string, args: any) {
         ran.push(name);
         if (name === 'write_file' || name === 'edit_file') state.mutationCount += 1;
+        // As exec_shell reports a command whose whole output is the text it was given.
+        const echoed = /^echo "(.*)"$/.exec(String(args?.command ?? ''))?.[1];
+        if (name === 'exec_shell' && echoed) return { result: { ok: true, kind: 'command', display: echoed, saidOnly: echoed } };
         if (name === 'exec_shell') return { result: { ok: true, kind: 'command', display: 'tests pass' } };
         return { result: { ok: true, kind: 'text', display: 'ok' } };
       },
@@ -80,6 +83,21 @@ describe('turn flow', () => {
     assert.equal(t.requests.length, 2, 'a closing answer is final: nothing asks the model again');
     assert.deepEqual(t.ran, ['write_file']);
     assert.equal(t.result.content, 'I added main_test.go.');
+    assert.equal(t.result.stopReason, STOP_REASONS.COMPLETE);
+    assert.deepEqual(t.users, ['do the task'], 'the turn injected no message of its own');
+  });
+
+  it('takes an answer given as commands that only print it: told once, the second is the answer', async () => {
+    // nemotron ended its work with eight `echo "Task completed: …"` commands, each worded a little differently.
+    const echo = (id: string, text: string) => ({ toolCalls: [call(id, 'exec_shell', { command: `echo "${text}"` })] });
+    const t = await turn([
+      { toolCalls: [call('1', 'write_file', { path: 'run.py', content: 'x = 1' })] },
+      echo('2', 'All checks passed. The Space is configured.'),
+      echo('3', 'Task completed: run.py updated for image-to-video.'),
+      echo('4', 'never run: the turn ended'),
+    ]);
+    assert.deepEqual(t.ran, ['write_file', 'exec_shell', 'exec_shell']);
+    assert.equal(t.result.content, 'Task completed: run.py updated for image-to-video.');
     assert.equal(t.result.stopReason, STOP_REASONS.COMPLETE);
     assert.deepEqual(t.users, ['do the task'], 'the turn injected no message of its own');
   });

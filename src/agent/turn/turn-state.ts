@@ -40,6 +40,17 @@ export function sameCallStreak(state: TurnState): number {
 }
 
 /**
+ * What the latest calls said and nothing more, newest last: the run of calls at the end of the turn whose whole output
+ * was text the call itself held (ToolResult.saidOnly). Told once that this is not an answer, a model that does it again
+ * has answered: its words are the answer.
+ */
+export function saidOnlyStreak(state: TurnState): string[] {
+  const said: string[] = [];
+  for (let i = state.toolCalls.length - 1; i >= 0 && state.toolCalls[i].result.saidOnly; i--) said.unshift(state.toolCalls[i].result.saidOnly!);
+  return said;
+}
+
+/**
  * How many times this call already ran in the turn with nothing changed since: its earlier runs settled at the mutation
  * count the workspace is still at. Run that often, it would only say the same again.
  */

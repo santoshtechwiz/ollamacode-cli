@@ -210,10 +210,7 @@ describe('a session like the notes-app polish run', () => {
       update('4', { task: 'NoteEditor works in dark mode', status: 'in_progress' }),
       { toolCalls: [call('5', 'write_file', { path: 'notes-app/src/NoteEditor.tsx', content: 'b' })] },
       { content: 'All done.' },
-      update('6',
-        { task: 'NoteList works in dark mode', status: 'completed', evidence: 'the page check passed in dark mode' },
-        { task: 'NoteEditor works in dark mode', status: 'completed', evidence: 'the page check passed in dark mode' }),
-      { content: 'Done: both lists work in dark mode.' },
+      { content: 'never asked: the answer ends the turn' },
     ];
     const requests: any[] = [];
     const results: Record<string, any> = {};
@@ -253,23 +250,18 @@ describe('a session like the notes-app polish run', () => {
       assert.match(results[3].error, /"NoteList works in dark mode" is not completed: send evidence/);
       // Starting the next task is not refused: the one in progress waits again.
       assert.equal(results[4].ok, true, results[4].error);
-      // The checks before done ran and passed, then the answer over open tasks went back once, naming them as evidence.
+      // The checks before done ran and passed, and the answer ended the turn: an answer over open tasks is not sent
+      // back to the model (a model sent back learned that answering does not end a turn); the person reads the list.
       assert.ok(notes.includes('Checked before finishing: `npm run build` passed.'), notes.join(' | '));
-      assert.ok(notes.some((n) => /3 tasks are still open after that answer/.test(n)), notes.join(' | '));
-      const settle = requests[6].messages.filter((m: any) => m.role === 'tool').map((m: any) => String(m.content)).at(-1);
-      assert.match(settle, /leaves 3 tasks open \(listed below\)[\s\S]*these checks passed when you answered: `npm run build`/);
-      assert.match(settle, /\[ \] The app builds/);
-      // Settled on evidence; the build task the model left alone stays open, and it is not sent back a second time.
-      assert.equal(results[7].ok, true, results[7].error);
-      assert.equal(requests.length, 8);
-      assert.equal(result.answer, 'Done: both lists work in dark mode.');
-      assert.deepEqual(names(state), ['completed: NoteList works in dark mode', 'completed: NoteEditor works in dark mode', 'pending: The app builds']);
+      assert.equal(requests.length, 6);
+      assert.equal(result.answer, 'All done.');
+      assert.deepEqual(names(state), ['pending: NoteList works in dark mode', 'in_progress: NoteEditor works in dark mode', 'pending: The app builds']);
 
       // The person reads which task is still open, whatever the answer says.
       const shown: string[] = [];
       const host: any = { render: { text: '', markdown: () => {}, note: (t: string) => shown.push(t), commitTasks: () => {} }, workspace: { state }, interactive: false, flags: {} };
       await reportChatTurn(host, { content: result.answer, toolResults: [], iterations: 8, stopReason: STOP_REASONS.COMPLETE } as any, {});
-      assert.ok(shown.includes('Not finished: 1 of 3 tasks are still open (The app builds).'), shown.join(' | '));
+      assert.ok(shown.includes('Not finished: 3 of 3 tasks are still open (NoteList works in dark mode; NoteEditor works in dark mode; The app builds).'), shown.join(' | '));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
