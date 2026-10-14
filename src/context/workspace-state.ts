@@ -282,13 +282,6 @@ export function passedNow(state: Pick<WorkspaceState, 'root' | 'changeSeq' | 'pa
   return Object.entries(state?.passedAt ?? {}).some(([key, at]) => key.endsWith(suffix) && at === now);
 }
 
-/** The commands that passed, in any folder, with no file changed since: what a task's verify can name now. */
-export function passedCommands(state: Pick<WorkspaceState, 'changeSeq' | 'passedAt'> | null | undefined): string[] {
-  const now = Number(state?.changeSeq ?? 0);
-  const commands = Object.entries(state?.passedAt ?? {}).filter(([, at]) => at === now).map(([key]) => key.slice(key.indexOf('\u0000') + 1));
-  return [...new Set(commands)];
-}
-
 /**
  * A command failed in this folder: whatever passed before no longer holds for the files as they are, and a completed
  * task it proves is open again.

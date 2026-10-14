@@ -56,7 +56,7 @@ function approved(state: any, plan: string, steps: Step[], display: string) {
     if (todos.length) state.todos = todos;
   }
   const list = todos.length
-    ? `\nIts steps are your task list now:\n${todoLines(todos).join('\n')}\nAs you work, change them with todo_write update: mark the one you start in_progress; a task with verify is completed when that command passes, one without it when you send evidence of what showed it works; split, add, reorder or remove tasks when what you find changes the plan.`
+    ? `\nIts steps are your task list now:\n${todoLines(todos).join('\n')}\nAs you work, change them with todo_write update: mark the one you start in_progress and completed when it is done (a task with verify is completed for you when that command passes); split, add, reorder or remove tasks when what you find changes the plan.`
     : '';
   return {
     ...ok({ kind: 'status', display, data: { plan, approved: true } }),

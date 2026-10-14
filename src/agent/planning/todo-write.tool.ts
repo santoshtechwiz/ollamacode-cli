@@ -1,14 +1,14 @@
 import { TOOL_ERROR_CODE } from '../../protocol';
 import { defineTool } from '../../tool/core/defineTool';
 import { ok, fail } from '../../tool/core/tool-result';
-import { passedCommands, passedNow } from '../../context/workspace-state';
+import { passedNow } from '../../context/workspace-state';
 import { applyUpdates, checkTodos, todoFrom, todoLines, TODO_STATUSES, type TodoItem, type TodoStatus } from '../todos';
 
 const TASK_FIELDS = {
   doneWhen: { type: 'string', description: 'What must be true for it to count as done' },
   verify: { type: 'string', description: 'A shell command whose exit 0 proves it, run as written ("npm test", "dotnet build"); "" takes it off. Not a description of how to check' },
   dependsOn: { type: 'array', items: { type: 'string' }, description: 'Outcomes of the tasks that must be completed first' },
-  evidence: { type: 'string', description: 'For a task with no verify command, sent when you complete it: what showed it works' },
+  evidence: { type: 'string', description: 'Sent when you complete it: what showed it works' },
 } as const;
 
 export default defineTool({
@@ -24,9 +24,8 @@ export default defineTool({
     'doneWhen, and verify when a shell command proves it. Change tasks with update, naming each exactly as listed: set a ' +
     'status, add one (add: true), split (add the parts, remove the whole), reorder (after), or remove one when what you ' +
     'learn changes the plan; tasks you do not name stay as they are. todos replaces the whole list. One task ' +
-    'in_progress at a time. A task is completed only on evidence: its verify command passed on the files as they are ' +
-    'now (run it first), or, with no command, evidence sent with the completion saying what showed it works. A verify ' +
-    'command that fails later opens its task again. ' +
+    'in_progress at a time. Mark a task completed when its work is done and shown to work; a task in progress whose ' +
+    'verify command passes is completed for you, and a verify command that fails later opens its task again. ' +
     'Skip this for a one-step request.',
   parameters: {
     type: 'object',
@@ -78,7 +77,7 @@ export default defineTool({
     const next = Array.isArray(args.update) ? applyUpdates(before, args.update as any[]) : (args.todos as any[]).map(todoFrom);
     if (typeof next === 'string') return fail(next, { code: TOOL_ERROR_CODE.EINVAL });
     const passed = (command: string) => passedNow(state, command);
-    const wrong = checkTodos(next, before, passed, passedCommands(state));
+    const wrong = checkTodos(next);
     if (wrong) return fail(wrong, { code: TOOL_ERROR_CODE.EINVAL });
     if (state) state.todos = next;
     return ok({ kind: 'status', display: next.length ? todoLines(next, passed).join('\n') : 'Todo list is empty.', data: { todos: next } });

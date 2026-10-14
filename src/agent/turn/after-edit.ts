@@ -87,6 +87,8 @@ export interface CheckMemory {
   root?: string;
   changeSeq?: number;
   passedAt?: Record<string, number>;
+  /** The change every passing check covers (see workspace-state uncheckedChanges). */
+  verifiedAt?: number;
   /** The session's background jobs: a dev server already running for a project serves its page check. */
   subprocesses?: Map<string, { cwd: string; pid?: number; exited?: boolean; error?: string }>;
 }
@@ -198,6 +200,7 @@ async function runChecks({ command, phase, memory, setting, name, timeoutMs, roo
       if (memory?.root && passedSinceChange(memory as { root: string }, path.resolve(root, folder), run)) {
         const note = `${name} \`${run}\`${where} (${setting}) already passed after the last change; not run again.`;
         notes.push(note);
+        memory.verifiedAt = Number(memory.changeSeq ?? 0);
         const skipped: CheckRun = { tool: TOOL_NAME.EXEC_SHELL, args, label: run, result: { ok: true, kind: 'command' }, passed: true, unfinished: false, note };
         runs.push(skipped);
         folderRuns.push(skipped);
@@ -219,6 +222,9 @@ async function runChecks({ command, phase, memory, setting, name, timeoutMs, roo
       if (memory && isCheckVerb(each) && (!signal?.aborted || took >= FAST_CHECK_MS)) {
         rememberDuration(memory, root, timeKey(each), unfinished ? Math.max(took, timeoutMs) : took);
       }
+      // A check of the project's own, run here and passed: the changes before it are checked, whatever the command
+      // is. Known only from a list of familiar commands, Python's compileall passed and the turn still said unchecked.
+      if (passed && memory) memory.verifiedAt = Number(memory.changeSeq ?? 0);
       const note = data?.background
         ? `${name} \`${run}\`${where} (${setting}) did not finish: it kept running, so it was moved to the background${data.id ? ` as ${data.id}` : ''}; its result is not known.`
         : timedOut

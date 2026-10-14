@@ -149,6 +149,8 @@ describe('auto in a session', () => {
       const first = await turn(root, state, [write('1', 'site/src/page.tsx'), { content: 'Done.' }], { lint: 4_000, build: 110_000 });
       assert.deepEqual(first, ['ask model', 'write_file', 'ask model', 'lint: npx eslint src/page.tsx', 'build: npm run build'],
         'nothing timed yet: no check after the edit; lint and build once the model answers');
+      // The checks ocode ran and saw pass cover the change, whatever their command: the turn is not reported unchecked.
+      assert.equal(state.verifiedAt, state.changeSeq);
 
       const second = await turn(root, state, [write('2', 'site/src/page.tsx'), { content: 'Done.' }], { lint: 4_000, build: 110_000 });
       assert.deepEqual(second, ['ask model', 'write_file', 'lint: npx eslint src/page.tsx', 'ask model', 'build: npm run build'],

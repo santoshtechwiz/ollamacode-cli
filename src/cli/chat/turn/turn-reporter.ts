@@ -165,7 +165,7 @@ function reportTodos(host: ChatTurnContext, result: TurnResult): void {
   const items = checklistOf(state.todos);
   host.render.commitTasks(items);
   const open = items.filter((item) => item.status !== 'done');
-  // A task is done only on evidence, so an answer can say "all done" over a list that is not: the person reads which.
+  // An answer can say "all done" over a list that is not: the person reads which tasks are still open.
   if (open.length && result.stopReason === STOP_REASONS.COMPLETE) {
     host.render.note(`Not finished: ${open.length} of ${items.length} tasks are still open (${open.map((item) => item.title).slice(0, 3).join('; ')}${open.length > 3 ? '; …' : ''}).`, 'warn');
   }
